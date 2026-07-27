@@ -26,6 +26,7 @@ import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
 import com.coolappstore.everdialer.by.svhp.view.components.RivoAnimatedSection
 import com.coolappstore.everdialer.by.svhp.view.components.RivoExpressiveCard
 import com.coolappstore.everdialer.by.svhp.view.components.RivoSwitchListItem
+import com.coolappstore.everdialer.by.svhp.view.components.settingsSearchHighlight
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -45,9 +46,11 @@ private val ColorPink   = Color(0xFFE91E63)
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
-fun RaiseToAnswerScreen(navigator: DestinationsNavigator) {
+fun RaiseToAnswerScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val prefs = koinInject<PreferenceManager>()
     val context = LocalContext.current
+
+    var highlightedKey by remember { mutableStateOf(highlightKey) }
 
     val isSupported = remember { RaiseToAnswerManager.hasRequiredSensors(context) }
     val hasMagnetometer = remember { RaiseToAnswerManager.hasMagnetometer(context) }
@@ -119,6 +122,7 @@ fun RaiseToAnswerScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Outlined.Vibration,
                                 iconContainerColor = ColorTeal,
                                 checked = enabled,
+                                modifier = Modifier.settingsSearchHighlight("enable_raise_to_answer", highlightedKey) { highlightedKey = null },
                                 onCheckedChange = {
                                     if (isSupported) {
                                         enabled = it
@@ -151,6 +155,7 @@ fun RaiseToAnswerScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.ScreenRotation,
                                     iconContainerColor = ColorBlue,
                                     checked = anyAngle || !hasMagnetometer,
+                                    modifier = Modifier.settingsSearchHighlight("answer_any_angle", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         if (hasMagnetometer) {
                                             anyAngle = it
@@ -168,6 +173,7 @@ fun RaiseToAnswerScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.FlipCameraAndroid,
                                     iconContainerColor = ColorOrange,
                                     checked = declineByFlip,
+                                    modifier = Modifier.settingsSearchHighlight("decline_by_flipping", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         declineByFlip = it
                                         prefs.setBoolean(PreferenceManager.KEY_RAISE_TO_ANSWER_DECLINE_FLIP, it)
@@ -196,6 +202,7 @@ fun RaiseToAnswerScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.VolumeUp,
                                     iconContainerColor = ColorPurple,
                                     checked = beepFeedback,
+                                    modifier = Modifier.settingsSearchHighlight("raise_beep_feedback", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         beepFeedback = it
                                         prefs.setBoolean(PreferenceManager.KEY_RAISE_TO_ANSWER_BEEP, it)
@@ -211,6 +218,7 @@ fun RaiseToAnswerScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.Vibration,
                                     iconContainerColor = ColorPink,
                                     checked = vibrateFeedback,
+                                    modifier = Modifier.settingsSearchHighlight("raise_vibrate_feedback", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         vibrateFeedback = it
                                         prefs.setBoolean(PreferenceManager.KEY_RAISE_TO_ANSWER_VIBRATE, it)

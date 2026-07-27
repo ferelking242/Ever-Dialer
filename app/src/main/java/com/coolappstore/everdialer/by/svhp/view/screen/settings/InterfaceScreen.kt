@@ -46,6 +46,7 @@ import com.coolappstore.everdialer.by.svhp.view.components.RivoAnimatedSection
 import com.coolappstore.everdialer.by.svhp.view.components.RivoExpressiveCard
 import com.coolappstore.everdialer.by.svhp.view.components.RivoListItem
 import com.coolappstore.everdialer.by.svhp.view.components.RivoSwitchListItem
+import com.coolappstore.everdialer.by.svhp.view.components.settingsSearchHighlight
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -95,13 +96,15 @@ private fun triggerRestartPrompt(
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
-fun InterfaceScreen(navigator: DestinationsNavigator) {
+fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val prefs = koinInject<PreferenceManager>()
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val keyboardController = LocalSoftwareKeyboardController.current
+
+    var highlightedKey by remember { mutableStateOf(highlightKey) }
 
     var themeMode           by remember { mutableStateOf(prefs.getString(PreferenceManager.KEY_THEME_MODE, "auto") ?: "auto") }
     var dynamicColors       by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_DYNAMIC_COLORS, true)) }
@@ -811,6 +814,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.Palette,
                                     iconContainerColor = ColorPurple,
                                     checked = dynamicColors,
+                                    modifier = Modifier.settingsSearchHighlight("dynamic_colors", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         dynamicColors = it
                                         prefs.setBoolean(PreferenceManager.KEY_DYNAMIC_COLORS, it)
@@ -997,6 +1001,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.Lens,
                                     iconContainerColor = Color(0xFF00BCD4),
                                     checked = liquidGlass,
+                                    modifier = Modifier.settingsSearchHighlight("liquid_glass_toggle", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         liquidGlass = it
                                         prefs.setBoolean(PreferenceManager.KEY_LIQUID_GLASS, it)
@@ -1010,6 +1015,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.Layers,
                                     iconContainerColor = Color(0xFF0097A7),
                                     trailingIcon = Icons.Default.ChevronRight,
+                                    modifier = Modifier.settingsSearchHighlight("liquid_glass_elements_link", highlightedKey) { highlightedKey = null },
                                     onClick = {
                                         navigator.navigate(com.ramcosta.composedestinations.generated.destinations.LiquidGlassElementsScreenDestination)
                                     }
@@ -1023,6 +1029,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.BlurOn,
                                     iconContainerColor = Color(0xFF5C6BC0),
                                     checked = blurEffects,
+                                    modifier = Modifier.settingsSearchHighlight("blur_effects_toggle", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         blurEffects = it
                                         prefs.setBoolean(PreferenceManager.KEY_BLUR_EFFECTS, it)
@@ -1036,6 +1043,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.Layers,
                                     iconContainerColor = Color(0xFF3949AB),
                                     trailingIcon = Icons.Default.ChevronRight,
+                                    modifier = Modifier.settingsSearchHighlight("blur_effects_elements_link", highlightedKey) { highlightedKey = null },
                                     onClick = {
                                         navigator.navigate(com.ramcosta.composedestinations.generated.destinations.BlurEffectsElementsScreenDestination)
                                     }
@@ -1052,6 +1060,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Default.CallEnd,
                                     iconContainerColor = Color(0xFFE53935),
                                     checked = hangupAnimation,
+                                    modifier = Modifier.settingsSearchHighlight("hangup_animation", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         hangupAnimation = it
                                         prefs.setBoolean(PreferenceManager.KEY_HANGUP_ANIMATION, it)
@@ -1077,7 +1086,8 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.CallReceived,
                                     iconContainerColor = ColorGreen,
                                     trailingIcon = Icons.Default.ChevronRight,
-                                    onClick = { navigator.navigate(com.ramcosta.composedestinations.generated.destinations.IncomingCallUIScreenDestination) }
+                                    modifier = Modifier.settingsSearchHighlight("incoming_call_ui_link", highlightedKey) { highlightedKey = null },
+                                    onClick = { navigator.navigate(com.ramcosta.composedestinations.generated.destinations.IncomingCallUIScreenDestination()) }
                                 )
                                 HorizontalDivider(Modifier.padding(horizontal = 16.dp),
                                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -1089,6 +1099,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.Person,
                                     iconContainerColor = ColorBlue,
                                     trailingIcon = Icons.Default.ChevronRight,
+                                    modifier = Modifier.settingsSearchHighlight("caller_ui_link", highlightedKey) { highlightedKey = null },
                                     onClick = { navigator.navigate(com.ramcosta.composedestinations.generated.destinations.CallerUIScreenDestination) }
                                 )
 
@@ -1100,6 +1111,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Default.Dashboard,
                                     iconContainerColor = ColorOrange,
                                     trailingIcon = Icons.Default.ChevronRight,
+                                    modifier = Modifier.settingsSearchHighlight("calls_section_elements", highlightedKey) { highlightedKey = null },
                                     onClick = { showCallUIDialog = true }
                                 )
                                 HorizontalDivider(Modifier.padding(horizontal = 16.dp),
@@ -1110,6 +1122,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Default.MoreVert,
                                     iconContainerColor = ColorPurple,
                                     trailingIcon = Icons.Default.ChevronRight,
+                                    modifier = Modifier.settingsSearchHighlight("context_menu_elements", highlightedKey) { highlightedKey = null },
                                     onClick = { showContextMenuDialog = true }
                                 )
                                 HorizontalDivider(Modifier.padding(horizontal = 16.dp),
@@ -1120,6 +1133,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Default.ViewWeek,
                                     iconContainerColor = ColorIndigo,
                                     trailingIcon = Icons.Default.ChevronRight,
+                                    modifier = Modifier.settingsSearchHighlight("tab_sections", highlightedKey) { highlightedKey = null },
                                     onClick = { showTabSectionsDialog = true }
                                 )
                                 HorizontalDivider(Modifier.padding(horizontal = 16.dp),
@@ -1130,6 +1144,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Default.Tab,
                                     iconContainerColor = ColorIndigo,
                                     trailingIcon = Icons.Default.ChevronRight,
+                                    modifier = Modifier.settingsSearchHighlight("default_tab_section", highlightedKey) { highlightedKey = null },
                                     onClick = { showDefaultTabDialog = true }
                                 )
                             }
@@ -1151,6 +1166,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.Animation,
                                     iconContainerColor = ColorBlue,
                                     checked = scrollAnimation,
+                                    modifier = Modifier.settingsSearchHighlight("scroll_animation", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         scrollAnimation = it
                                         prefs.setBoolean(PreferenceManager.KEY_SCROLL_ANIMATION, it)
@@ -1175,6 +1191,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.ViewStream,
                                     iconContainerColor = ColorTeal,
                                     checked = pillNav,
+                                    modifier = Modifier.settingsSearchHighlight("pill_style_nav", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         pillNav = it
                                         prefs.setBoolean(PreferenceManager.KEY_PILL_NAV, it)
@@ -1188,6 +1205,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.SimCard,
                                     iconContainerColor = ColorGreen,
                                     checked = showSimsInCallLogs,
+                                    modifier = Modifier.settingsSearchHighlight("show_sims_call_logs", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         showSimsInCallLogs = it
                                         prefs.setBoolean(PreferenceManager.KEY_SHOW_SIMS_IN_CALL_LOGS, it)
@@ -1203,6 +1221,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.AutoDelete,
                                     iconContainerColor = ColorRed,
                                     checked = autoDeleteUnknownEnabled,
+                                    modifier = Modifier.settingsSearchHighlight("auto_delete_unknown_calllog", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = { enabled ->
                                         autoDeleteUnknownEnabled = enabled
                                         prefs.setBoolean(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_ENABLED, enabled)
@@ -1266,6 +1285,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.Schedule,
                                     iconContainerColor = ColorAmber,
                                     checked = callTimeFormat24h,
+                                    modifier = Modifier.settingsSearchHighlight("call_time_format", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         callTimeFormat24h = it
                                         prefs.setBoolean(PreferenceManager.KEY_CALL_TIME_FORMAT_24H, it)
@@ -1279,6 +1299,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.ViewStream,
                                     iconContainerColor = ColorTeal,
                                     checked = iconOnlyNav,
+                                    modifier = Modifier.settingsSearchHighlight("icon_only_bottom_bar", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = { iconOnlyNav = it; prefs.setBoolean(PreferenceManager.KEY_ICON_ONLY_NAV, it) }
                                 )
                                 HorizontalDivider(Modifier.padding(horizontal = 16.dp),
@@ -1289,6 +1310,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.Dialpad,
                                     iconContainerColor = ColorAmber,
                                     checked = openDialpadDefault,
+                                    modifier = Modifier.settingsSearchHighlight("open_dialpad_default", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {
                                         openDialpadDefault = it
                                         prefs.setBoolean(PreferenceManager.KEY_OPEN_DIALPAD_DEFAULT, it)
@@ -1313,6 +1335,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.TextFields,
                                     iconContainerColor = ColorAmber,
                                     checked = showFirstLetter,
+                                    modifier = Modifier.settingsSearchHighlight("avatar_first_letter", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = { showFirstLetter = it; prefs.setBoolean(PreferenceManager.KEY_SHOW_FIRST_LETTER, it) }
                                 )
                                 HorizontalDivider(Modifier.padding(horizontal = 16.dp),
@@ -1323,6 +1346,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.ColorLens,
                                     iconContainerColor = ColorBlue,
                                     checked = colorfulAvatars,
+                                    modifier = Modifier.settingsSearchHighlight("colorful_avatars", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = { colorfulAvatars = it; prefs.setBoolean(PreferenceManager.KEY_COLORFUL_AVATARS, it) }
                                 )
                                 HorizontalDivider(Modifier.padding(horizontal = 16.dp),
@@ -1333,6 +1357,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                     leadingIcon = Icons.Outlined.AccountCircle,
                                     iconContainerColor = ColorGreen,
                                     checked = showPicture,
+                                    modifier = Modifier.settingsSearchHighlight("avatar_picture", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = { showPicture = it; prefs.setBoolean(PreferenceManager.KEY_SHOW_PICTURE, it) }
                                 )
                             }
@@ -1355,6 +1380,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator) {
                                 supporting = "Choose the app icon displayed on your home screen",
                                 leadingIcon = Icons.Outlined.Apps,
                                 iconContainerColor = ColorIndigo,
+                                modifier = Modifier.settingsSearchHighlight("app_icon_link", highlightedKey) { highlightedKey = null },
                                 onClick = {
                                     navigator.navigate(com.ramcosta.composedestinations.generated.destinations.AppIconScreenDestination)
                                 }

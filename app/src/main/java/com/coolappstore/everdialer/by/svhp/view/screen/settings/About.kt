@@ -38,6 +38,7 @@ import com.coolappstore.everdialer.by.svhp.controller.util.openLink
 import com.coolappstore.everdialer.by.svhp.view.components.RivoAnimatedSection
 import com.coolappstore.everdialer.by.svhp.view.components.RivoExpressiveCard
 import com.coolappstore.everdialer.by.svhp.view.components.RivoListItem
+import com.coolappstore.everdialer.by.svhp.view.components.settingsSearchHighlight
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -52,8 +53,9 @@ private val ColorTeal      = Color(0xFF009688)
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
-fun AboutAppScreen(navigator: DestinationsNavigator) {
+fun AboutAppScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val context = LocalContext.current
+    var highlightedKey by remember { mutableStateOf(highlightKey) }
 
     var visible by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
@@ -153,6 +155,7 @@ fun AboutAppScreen(navigator: DestinationsNavigator) {
                         headline = "Made By Hari :)",
                         leadingIcon = Icons.Outlined.Person,
                         iconContainerColor = ColorBlue,
+                        modifier = Modifier.settingsSearchHighlight("made_by_hari", highlightedKey) { highlightedKey = null },
                         onClick = { openLink(context, TELEGRAM_DEV_URL) }
                     )
                     HorizontalDivider(
@@ -164,6 +167,7 @@ fun AboutAppScreen(navigator: DestinationsNavigator) {
                         supporting = "GitHub Repository",
                         leadingIcon = Icons.Outlined.Code,
                         iconContainerColor = ColorGreen,
+                        modifier = Modifier.settingsSearchHighlight("source_code", highlightedKey) { highlightedKey = null },
                         onClick = { openLink(context, GITHUB_URL) }
                     )
                 }
@@ -179,6 +183,7 @@ fun AboutAppScreen(navigator: DestinationsNavigator) {
                         supporting = "Bug Reports | Feature request | Announcements | Support",
                         leadingIcon = Icons.Outlined.Groups,
                         iconContainerColor = ColorDeepPurp,
+                        modifier = Modifier.settingsSearchHighlight("telegram_support", highlightedKey) { highlightedKey = null },
                         onClick = { openLink(context, TELEGRAM_SUPPORT_URL) }
                     )
                     HorizontalDivider(
@@ -190,6 +195,7 @@ fun AboutAppScreen(navigator: DestinationsNavigator) {
                         supporting = "Discover | Explore | Cool Apps | Support",
                         leadingIcon = Icons.Outlined.StarOutline,
                         iconContainerColor = ColorCyan,
+                        modifier = Modifier.settingsSearchHighlight("telegram_channel", highlightedKey) { highlightedKey = null },
                         onClick = { openLink(context, TELEGRAM_CHANNEL_URL) }
                     )
                     HorizontalDivider(
@@ -201,6 +207,7 @@ fun AboutAppScreen(navigator: DestinationsNavigator) {
                         supporting = "Tweaks | Tools | Modify | Customize",
                         leadingIcon = Icons.Outlined.Build,
                         iconContainerColor = ColorTeal,
+                        modifier = Modifier.settingsSearchHighlight("other_app_link", highlightedKey) { highlightedKey = null },
                         onClick = { openLink(context, EVERLASTING_TWEAK_URL) }
                     )
                 }

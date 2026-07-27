@@ -48,6 +48,7 @@ import com.coolappstore.everdialer.by.svhp.view.components.RivoExpressiveCard
 import com.coolappstore.everdialer.by.svhp.view.components.RivoListItem
 import com.coolappstore.everdialer.by.svhp.view.components.RivoSwitchListItem
 import com.coolappstore.everdialer.by.svhp.view.components.RivoAvatar
+import com.coolappstore.everdialer.by.svhp.view.components.settingsSearchHighlight
 import com.coolappstore.everdialer.by.svhp.modal.`interface`.IContactsRepository
 import com.coolappstore.everdialer.by.svhp.modal.data.Contact
 import androidx.compose.foundation.lazy.LazyColumn
@@ -65,11 +66,13 @@ import org.koin.compose.koinInject
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
-fun BiometricScreen(navigator: DestinationsNavigator) {
+fun BiometricScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val prefs: PreferenceManager = koinInject()
     val contactsRepo: IContactsRepository = koinInject()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    var highlightedKey by remember { mutableStateOf(highlightKey) }
 
     var biometricsType by remember { mutableStateOf(prefs.getString(PreferenceManager.KEY_BIOMETRICS_TYPE, "") ?: "") }
     var appLockEnabled by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_BIOMETRICS_APP_LOCK, false)) }
@@ -161,6 +164,7 @@ fun BiometricScreen(navigator: DestinationsNavigator) {
                     leadingIcon = Icons.Default.Fingerprint,
                     iconContainerColor = Color(0xFF6750A4),
                     trailingIcon = Icons.Default.ChevronRight,
+                    modifier = Modifier.settingsSearchHighlight("auth_method", highlightedKey) { highlightedKey = null },
                     onClick = { showTypeSheet = true }
                 )
             }
@@ -180,6 +184,7 @@ fun BiometricScreen(navigator: DestinationsNavigator) {
                             leadingIcon = Icons.Default.LockOpen,
                             iconContainerColor = Color(0xFF2196F3),
                             checked = appLockEnabled,
+                            modifier = Modifier.settingsSearchHighlight("lock_app_open", highlightedKey) { highlightedKey = null },
                             onCheckedChange = {
                                 appLockEnabled = it
                                 prefs.setBoolean(PreferenceManager.KEY_BIOMETRICS_APP_LOCK, it)
@@ -192,6 +197,7 @@ fun BiometricScreen(navigator: DestinationsNavigator) {
                             leadingIcon = Icons.Default.PhonePaused,
                             iconContainerColor = Color(0xFF4CAF50),
                             checked = callLockEnabled,
+                            modifier = Modifier.settingsSearchHighlight("lock_call_actions", highlightedKey) { highlightedKey = null },
                             onCheckedChange = {
                                 callLockEnabled = it
                                 prefs.setBoolean(PreferenceManager.KEY_BIOMETRICS_CALL_LOCK, it)

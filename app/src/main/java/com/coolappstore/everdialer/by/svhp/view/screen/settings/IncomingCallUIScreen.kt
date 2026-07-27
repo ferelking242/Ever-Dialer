@@ -17,6 +17,7 @@ import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
 import com.coolappstore.everdialer.by.svhp.view.components.RivoAnimatedSection
 import com.coolappstore.everdialer.by.svhp.view.components.RivoExpressiveCard
 import com.coolappstore.everdialer.by.svhp.view.components.RivoListItem
+import com.coolappstore.everdialer.by.svhp.view.components.settingsSearchHighlight
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.generated.destinations.DefaultMessageAppScreenDestination
@@ -26,8 +27,9 @@ import org.koin.compose.koinInject
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
-fun IncomingCallUIScreen(navigator: DestinationsNavigator) {
+fun IncomingCallUIScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val prefs: PreferenceManager = koinInject()
+    var highlightedKey by remember { mutableStateOf(highlightKey) }
     val messageAppLabel = when (prefs.getString(PreferenceManager.KEY_DEFAULT_MESSAGE_APP, "sms")) {
         "whatsapp" -> "WhatsApp"
         "telegram" -> "Telegram"
@@ -72,6 +74,7 @@ fun IncomingCallUIScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Default.Send,
                                 iconContainerColor = Color(0xFF29B6F6),
                                 trailingIcon = Icons.Default.ChevronRight,
+                                modifier = Modifier.settingsSearchHighlight("default_message_link", highlightedKey) { highlightedKey = null },
                                 onClick = { navigator.navigate(DefaultMessageAppScreenDestination) }
                             )
                         }

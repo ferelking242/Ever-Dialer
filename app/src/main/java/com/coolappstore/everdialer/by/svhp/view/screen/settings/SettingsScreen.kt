@@ -19,11 +19,6 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -51,6 +46,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -72,6 +69,7 @@ import com.coolappstore.everdialer.by.svhp.view.components.RivoExpressiveCard
 import com.coolappstore.everdialer.by.svhp.view.components.RivoListItem
 import com.coolappstore.everdialer.by.svhp.view.components.RivoSwitchListItem
 import com.coolappstore.everdialer.by.svhp.view.components.ScrollHapticsEffect
+import com.coolappstore.everdialer.by.svhp.view.components.settingsSearchHighlight
 import com.coolappstore.everdialer.by.svhp.view.components.UpdateAvailableDialog
 import com.coolappstore.everdialer.by.svhp.view.components.UpdateCheckingDialog
 import com.coolappstore.everdialer.by.svhp.view.components.UpdateDownloadingDialog
@@ -878,6 +876,7 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
     // or notes, and there's no Filter button since there's nothing to filter by category.
     var settingsSearchQuery by remember { mutableStateOf("") }
     val settingsSearchEntries = listOf(
+        // ── Rows that live directly on this screen ──────────────────────────
         SettingsSearchEntry("Check For Updates", "Current version: v$APP_VERSION", "check_for_updates", Icons.Default.SystemUpdate, ColorAmber),
         SettingsSearchEntry("Rate and Review", "Share your feedback about Ever Dialer", "rate_and_review", Icons.Default.Star, ColorCyan),
         SettingsSearchEntry("Check Ratings and Reviews", "See what others are saying about Ever Dialer", "check_ratings", Icons.Default.Reviews, ColorGreen),
@@ -895,7 +894,76 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
         SettingsSearchEntry("Auto Check For Updates", "Automatically check for updates when the app opens", "auto_check_updates", Icons.Default.Autorenew, ColorAmber),
         SettingsSearchEntry("Create Backup", "Save app configuration and notes", "create_backup", Icons.Default.Backup, ColorGreen),
         SettingsSearchEntry("Restore Backup", "Restore app configuration and notes", "restore_backup", Icons.Default.Restore, ColorBrown),
-        SettingsSearchEntry("About Ever Dialer", "Version $APP_VERSION · Developer info", "about_app", Icons.Outlined.Info, ColorBluGrey)
+        SettingsSearchEntry("About Ever Dialer", "Version $APP_VERSION · Developer info", "about_app", Icons.Outlined.Info, ColorBluGrey),
+
+        // ── App Settings screen ──────────────────────────────────────────────
+        SettingsSearchEntry("Call Settings", "SIM, contacts to display, call behavior", "nav_call_settings", Icons.Outlined.Call, ColorTeal) { it.navigate(AppSettingsScreenDestination(highlightKey = "nav_call_settings")) },
+        SettingsSearchEntry("4G/5G Switcher", "Quickly switch network mode per app", "network_switcher", Icons.Outlined.NetworkCell, ColorBlue) { it.navigate(AppSettingsScreenDestination(highlightKey = "network_switcher")) },
+        SettingsSearchEntry("Integrate Notes Section", "Show notes alongside call recordings", "integrate_notes", Icons.Outlined.Notes, ColorGreen) { it.navigate(AppSettingsScreenDestination(highlightKey = "integrate_notes")) },
+        SettingsSearchEntry("Delete Notes With Recording", "Remove the note when its recording is deleted", "delete_notes_with_recording", Icons.Outlined.NoteAlt, ColorRed) { it.navigate(AppSettingsScreenDestination(highlightKey = "delete_notes_with_recording")) },
+
+        // ── Call Settings screen ─────────────────────────────────────────────
+        SettingsSearchEntry("Default SIM", "Which SIM is used to place calls", "default_sim", Icons.Outlined.SimCard, ColorGreen) { it.navigate(CallSettingsScreenDestination(highlightKey = "default_sim")) },
+        SettingsSearchEntry("Contacts to display", "Choose which accounts' contacts are shown", "contacts_to_display", Icons.Outlined.Contacts, ColorBlue) { it.navigate(CallSettingsScreenDestination(highlightKey = "contacts_to_display")) },
+        SettingsSearchEntry("Proximity Sensor on in background", "Turn off screen when phone is near ear during a call", "proximity_sensor_bg", Icons.Outlined.Sensors, ColorTeal) { it.navigate(CallSettingsScreenDestination(highlightKey = "proximity_sensor_bg")) },
+        SettingsSearchEntry("Pocket Mode Prevention", "Block accidental answer/decline when phone is in pocket", "pocket_mode_prevention", Icons.Outlined.Sensors, ColorAmber) { it.navigate(CallSettingsScreenDestination(highlightKey = "pocket_mode_prevention")) },
+        SettingsSearchEntry("Floating Ongoing Call", "Draggable floating bubble during calls", "floating_ongoing_call", Icons.Outlined.Sensors, ColorBlue) { it.navigate(CallSettingsScreenDestination(highlightKey = "floating_ongoing_call")) },
+        SettingsSearchEntry("Direct Call on Tap", "Tap a call log entry to call directly", "direct_call_on_tap", Icons.Outlined.Call, ColorGreen) { it.navigate(CallSettingsScreenDestination(highlightKey = "direct_call_on_tap")) },
+        SettingsSearchEntry("Auto Speaker", "Switch to loudspeaker when phone is away from ear", "auto_speaker", Icons.Outlined.VolumeUp, ColorRed) { it.navigate(CallSettingsScreenDestination(highlightKey = "auto_speaker")) },
+        SettingsSearchEntry("Auto Redial", "Automatically redial on rejected/unanswered/busy calls", "auto_redial", Icons.Default.Replay, ColorBlue) { it.navigate(CallSettingsScreenDestination(highlightKey = "auto_redial")) },
+
+        // ── Raise to Answer screen ───────────────────────────────────────────
+        SettingsSearchEntry("Enable Raise to Answer", "Answer calls by raising the phone to your ear", "enable_raise_to_answer", Icons.Outlined.Vibration, ColorTeal) { it.navigate(RaiseToAnswerScreenDestination(highlightKey = "enable_raise_to_answer")) },
+        SettingsSearchEntry("Answer at Any Angle", "Raise to Answer sensitivity", "answer_any_angle", Icons.Outlined.Vibration, ColorTeal) { it.navigate(RaiseToAnswerScreenDestination(highlightKey = "answer_any_angle")) },
+        SettingsSearchEntry("Decline by Flipping", "Flip the phone face down to decline a call", "decline_by_flipping", Icons.Outlined.Vibration, ColorRed) { it.navigate(RaiseToAnswerScreenDestination(highlightKey = "decline_by_flipping")) },
+        SettingsSearchEntry("Raise to Answer Beep Feedback", "Play a beep when raise/flip is detected", "raise_beep_feedback", Icons.Outlined.Vibration, ColorAmber) { it.navigate(RaiseToAnswerScreenDestination(highlightKey = "raise_beep_feedback")) },
+        SettingsSearchEntry("Raise to Answer Vibrate Feedback", "Vibrate when raise/flip is detected", "raise_vibrate_feedback", Icons.Outlined.Vibration, ColorPurple) { it.navigate(RaiseToAnswerScreenDestination(highlightKey = "raise_vibrate_feedback")) },
+
+        // ── Sound & Vibration screen ──────────────────────────────────────────
+        SettingsSearchEntry("DTMF Tone", "Play tones when dialing digits", "dtmf_tone", Icons.Outlined.VolumeUp, ColorBlue) { it.navigate(SoundVibrationScreenDestination(highlightKey = "dtmf_tone")) },
+        SettingsSearchEntry("Dial Pad Tone", "Choose the dialpad key tone", "dialpad_tone", Icons.Outlined.VolumeUp, ColorTeal) { it.navigate(SoundVibrationScreenDestination(highlightKey = "dialpad_tone")) },
+        SettingsSearchEntry("Ringtone Settings", "Choose your incoming call ringtone", "ringtone_settings", Icons.Outlined.VolumeUp, ColorAmber) { it.navigate(SoundVibrationScreenDestination(highlightKey = "ringtone_settings")) },
+        SettingsSearchEntry("Do Not Disturb", "Manage Do Not Disturb access", "dnd_settings", Icons.Outlined.VolumeUp, ColorIndigo) { it.navigate(SoundVibrationScreenDestination(highlightKey = "dnd_settings")) },
+
+        // ── Authentication (Biometric) screen ────────────────────────────────
+        SettingsSearchEntry("Authentication Method", "System biometrics, PIN, or password", "auth_method", Icons.Default.Fingerprint, Color(0xFF6750A4)) { it.navigate(BiometricScreenDestination(highlightKey = "auth_method")) },
+        SettingsSearchEntry("Lock App on Open", "Require authentication whenever the app opens", "lock_app_open", Icons.Default.Fingerprint, ColorRed) { it.navigate(BiometricScreenDestination(highlightKey = "lock_app_open")) },
+        SettingsSearchEntry("Lock Call Actions", "Require authentication for sensitive call actions", "lock_call_actions", Icons.Default.Fingerprint, ColorTeal) { it.navigate(BiometricScreenDestination(highlightKey = "lock_call_actions")) },
+
+        // ── Interface screen ──────────────────────────────────────────────────
+        SettingsSearchEntry("Dynamic Colors", "Match app colors to your wallpaper (Material You)", "dynamic_colors", Icons.Outlined.Palette, ColorPurple) { it.navigate(InterfaceScreenDestination(highlightKey = "dynamic_colors")) },
+        SettingsSearchEntry("Material Liquid You Glass", "Liquid glass visual effects", "liquid_glass_toggle", Icons.Outlined.Palette, ColorBlue) { it.navigate(InterfaceScreenDestination(highlightKey = "liquid_glass_toggle")) },
+        SettingsSearchEntry("Elements to have liquid glass effect", "Choose where liquid glass effects apply", "liquid_glass_elements_link", Icons.Outlined.Palette, ColorBlue) { it.navigate(InterfaceScreenDestination(highlightKey = "liquid_glass_elements_link")) },
+        SettingsSearchEntry("Material Blur Effects", "Blur effects across the interface", "blur_effects_toggle", Icons.Outlined.Palette, ColorIndigo) { it.navigate(InterfaceScreenDestination(highlightKey = "blur_effects_toggle")) },
+        SettingsSearchEntry("Elements to have blur effect", "Choose where blur effects apply", "blur_effects_elements_link", Icons.Outlined.Palette, ColorIndigo) { it.navigate(InterfaceScreenDestination(highlightKey = "blur_effects_elements_link")) },
+        SettingsSearchEntry("Hangup Animation", "Animate the screen when a call ends", "hangup_animation", Icons.Outlined.Palette, ColorRed) { it.navigate(InterfaceScreenDestination(highlightKey = "hangup_animation")) },
+        SettingsSearchEntry("Incoming Call UI", "Customize the incoming call screen", "incoming_call_ui_link", Icons.Outlined.Palette, ColorGreen) { it.navigate(InterfaceScreenDestination(highlightKey = "incoming_call_ui_link")) },
+        SettingsSearchEntry("Caller UI", "Customize the in-call screen layout", "caller_ui_link", Icons.Outlined.Palette, ColorGreen) { it.navigate(InterfaceScreenDestination(highlightKey = "caller_ui_link")) },
+        SettingsSearchEntry("Calls Section Elements", "Choose what shows in the Calls tab", "calls_section_elements", Icons.Outlined.Palette, ColorTeal) { it.navigate(InterfaceScreenDestination(highlightKey = "calls_section_elements")) },
+        SettingsSearchEntry("Context Menu Elements", "Choose what shows in long-press menus", "context_menu_elements", Icons.Outlined.Palette, ColorTeal) { it.navigate(InterfaceScreenDestination(highlightKey = "context_menu_elements")) },
+        SettingsSearchEntry("Tab Sections", "Choose which bottom tabs are visible", "tab_sections", Icons.Outlined.Palette, ColorAmber) { it.navigate(InterfaceScreenDestination(highlightKey = "tab_sections")) },
+        SettingsSearchEntry("Default Tab Section", "Which tab opens when you launch the app", "default_tab_section", Icons.Outlined.Palette, ColorAmber) { it.navigate(InterfaceScreenDestination(highlightKey = "default_tab_section")) },
+        SettingsSearchEntry("Scroll Animation", "Animate list scrolling", "scroll_animation", Icons.Outlined.Palette, ColorBlue) { it.navigate(InterfaceScreenDestination(highlightKey = "scroll_animation")) },
+        SettingsSearchEntry("Pill Style Navigation", "Pill-shaped bottom navigation bar", "pill_style_nav", Icons.Outlined.Palette, ColorPurple) { it.navigate(InterfaceScreenDestination(highlightKey = "pill_style_nav")) },
+        SettingsSearchEntry("Show Sims In Call Logs", "Show which SIM a call used in the call log", "show_sims_call_logs", Icons.Outlined.Palette, ColorGreen) { it.navigate(InterfaceScreenDestination(highlightKey = "show_sims_call_logs")) },
+        SettingsSearchEntry("Auto Delete Unknown No in call log", "Automatically clean up unknown-number entries", "auto_delete_unknown_calllog", Icons.Outlined.Palette, ColorRed) { it.navigate(InterfaceScreenDestination(highlightKey = "auto_delete_unknown_calllog")) },
+        SettingsSearchEntry("Call Time Format in call logs", "12-hour or 24-hour time format", "call_time_format", Icons.Outlined.Palette, ColorTeal) { it.navigate(InterfaceScreenDestination(highlightKey = "call_time_format")) },
+        SettingsSearchEntry("Icon-Only Bottom Bar", "Hide labels on the bottom navigation bar", "icon_only_bottom_bar", Icons.Outlined.Palette, ColorIndigo) { it.navigate(InterfaceScreenDestination(highlightKey = "icon_only_bottom_bar")) },
+        SettingsSearchEntry("Open Dialpad by Default", "Launch straight into the dialpad", "open_dialpad_default", Icons.Outlined.Palette, ColorBlue) { it.navigate(InterfaceScreenDestination(highlightKey = "open_dialpad_default")) },
+        SettingsSearchEntry("Show First Letter in Avatar", "Fallback avatar shows a contact's initial", "avatar_first_letter", Icons.Outlined.Palette, ColorAmber) { it.navigate(InterfaceScreenDestination(highlightKey = "avatar_first_letter")) },
+        SettingsSearchEntry("Use Colorful Avatars", "Give fallback avatars varied colors", "colorful_avatars", Icons.Outlined.Palette, ColorPurple) { it.navigate(InterfaceScreenDestination(highlightKey = "colorful_avatars")) },
+        SettingsSearchEntry("Show Picture in Avatar", "Show a contact's photo in their avatar", "avatar_picture", Icons.Outlined.Palette, ColorGreen) { it.navigate(InterfaceScreenDestination(highlightKey = "avatar_picture")) },
+        SettingsSearchEntry("App Icon", "Choose a custom launcher icon", "app_icon_link", Icons.Outlined.Palette, ColorRed) { it.navigate(InterfaceScreenDestination(highlightKey = "app_icon_link")) },
+
+        // ── Incoming Call UI screen ───────────────────────────────────────────
+        SettingsSearchEntry("Default Message", "Quick-reply message shown for incoming calls", "default_message_link", Icons.Outlined.Message, ColorBlue) { it.navigate(IncomingCallUIScreenDestination(highlightKey = "default_message_link")) },
+
+        // ── About screen ───────────────────────────────────────────────────────
+        SettingsSearchEntry("Made By Hari", "Developer info", "made_by_hari", Icons.Outlined.Info, ColorBluGrey) { it.navigate(AboutAppScreenDestination(highlightKey = "made_by_hari")) },
+        SettingsSearchEntry("Source Code", "View Ever Dialer's source on GitHub", "source_code", Icons.Outlined.Info, ColorBluGrey) { it.navigate(AboutAppScreenDestination(highlightKey = "source_code")) },
+        SettingsSearchEntry("Telegram App Support Group", "Get help and discuss the app", "telegram_support", Icons.Outlined.Info, ColorBlue) { it.navigate(AboutAppScreenDestination(highlightKey = "telegram_support")) },
+        SettingsSearchEntry("App Recommending Channel in Telegram", "Follow for app announcements", "telegram_channel", Icons.Outlined.Info, ColorBlue) { it.navigate(AboutAppScreenDestination(highlightKey = "telegram_channel")) },
+        SettingsSearchEntry("My Other App (Everlasting Android Tweak)", "Check out the developer's other app", "other_app_link", Icons.Outlined.Info, ColorIndigo) { it.navigate(AboutAppScreenDestination(highlightKey = "other_app_link")) }
     )
     val filteredSettingsResults = if (settingsSearchQuery.isBlank()) emptyList()
         else settingsSearchEntries.filter {
@@ -904,6 +972,13 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
     // The key of the setting row that should scroll into view and flash, most recently
     // requested from a search result tap. Rows read this via settingsSearchHighlight().
     var highlightedSettingKey by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(settingsSearchQuery.isNotBlank()) {
+        if (settingsSearchQuery.isNotBlank()) {
+            listState.animateScrollToItem(0)
+        }
+    }
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     // ── Screen ────────────────────────────────────────────────────────────────
     Scaffold(
@@ -919,7 +994,7 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
         ScrollHapticsEffect(listState = listState)
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().padding(padding).alpha(alpha).offset(y = offsetY),
+            modifier = Modifier.fillMaxSize().padding(padding).alpha(alpha).offset(y = offsetY).imePadding(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -974,8 +1049,14 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
                                     iconContainerColor = entry.iconContainerColor,
                                     trailingIcon = Icons.Default.ChevronRight,
                                     onClick = {
+                                        keyboardController?.hide()
+                                        focusManager.clearFocus(force = true)
                                         settingsSearchQuery = ""
-                                        highlightedSettingKey = entry.key
+                                        if (entry.navigateTo != null) {
+                                            entry.navigateTo.invoke(navigator)
+                                        } else {
+                                            highlightedSettingKey = entry.key
+                                        }
                                     }
                                 )
                                 if (index < filteredSettingsResults.size - 1) CardDivider()
@@ -1107,7 +1188,7 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
                     Column {
                         SectionLabel("Appearance")
                         RivoExpressiveCard {
-                            RivoListItem(headline = "Interface", supporting = "Themes, colors, and layout", leadingIcon = Icons.Outlined.Palette, iconContainerColor = ColorPurple, trailingIcon = Icons.Default.ChevronRight, modifier = Modifier.settingsSearchHighlight("interface", highlightedSettingKey) { highlightedSettingKey = null }, onClick = { navigator.navigate(InterfaceScreenDestination) })
+                            RivoListItem(headline = "Interface", supporting = "Themes, colors, and layout", leadingIcon = Icons.Outlined.Palette, iconContainerColor = ColorPurple, trailingIcon = Icons.Default.ChevronRight, modifier = Modifier.settingsSearchHighlight("interface", highlightedSettingKey) { highlightedSettingKey = null }, onClick = { navigator.navigate(InterfaceScreenDestination()) })
                         }
                     }
                 }
@@ -1247,7 +1328,7 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
                                 iconContainerColor = Color(0xFF6750A4),
                                 trailingIcon = Icons.Default.ChevronRight,
                                 modifier = Modifier.settingsSearchHighlight("authentication", highlightedSettingKey) { highlightedSettingKey = null },
-                                onClick = { navigator.navigate(BiometricScreenDestination) }
+                                onClick = { navigator.navigate(BiometricScreenDestination()) }
                             )
                         }
                     }
@@ -1268,7 +1349,7 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
                                 iconContainerColor = ColorTeal,
                                 trailingIcon = Icons.Default.ChevronRight,
                                 modifier = Modifier.settingsSearchHighlight("app_settings", highlightedSettingKey) { highlightedSettingKey = null },
-                                onClick = { navigator.navigate(AppSettingsScreenDestination) }
+                                onClick = { navigator.navigate(AppSettingsScreenDestination()) }
                             )
                             CardDivider()
                             val hiderMenuHidden = remember(prefs.settingsChanged.collectAsState().value) {
@@ -1426,7 +1507,7 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
                     Column {
                         SectionLabel("About")
                         RivoExpressiveCard {
-                            RivoListItem(headline = "About Ever Dialer", supporting = "Version $APP_VERSION · Developer info", leadingIcon = Icons.Outlined.Info, iconContainerColor = ColorBluGrey, trailingIcon = Icons.Default.ChevronRight, modifier = Modifier.settingsSearchHighlight("about_app", highlightedSettingKey) { highlightedSettingKey = null }, onClick = { navigator.navigate(AboutAppScreenDestination) })
+                            RivoListItem(headline = "About Ever Dialer", supporting = "Version $APP_VERSION · Developer info", leadingIcon = Icons.Outlined.Info, iconContainerColor = ColorBluGrey, trailingIcon = Icons.Default.ChevronRight, modifier = Modifier.settingsSearchHighlight("about_app", highlightedSettingKey) { highlightedSettingKey = null }, onClick = { navigator.navigate(AboutAppScreenDestination()) })
                         }
                     }
                 }
@@ -1439,50 +1520,16 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
     }
 }
 
-/**
- * Applied to a settings row so that tapping a search result can reveal *where* that setting
- * lives (scrolling it into view and flashing it) instead of silently firing its action. Uses
- * BringIntoViewRequester rather than a computed LazyColumn index, since several rows above are
- * conditionally shown (banners, hidden feature toggles) and would otherwise shift the index.
- */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun Modifier.settingsSearchHighlight(
-    key: String,
-    highlightedKey: String?,
-    onConsumed: () -> Unit
-): Modifier {
-    val requester = remember(key) { BringIntoViewRequester() }
-    val isHighlighted = highlightedKey == key
-    val flash = remember(key) { Animatable(0f) }
-    val highlightColor = MaterialTheme.colorScheme.primary
-    LaunchedEffect(isHighlighted) {
-        if (isHighlighted) {
-            requester.bringIntoView()
-            flash.snapTo(1f)
-            flash.animateTo(0f, animationSpec = tween(1200))
-            onConsumed()
-        }
-    }
-    return this
-        .bringIntoViewRequester(requester)
-        .drawWithContent {
-            drawContent()
-            if (flash.value > 0f) {
-                drawRoundRect(
-                    color = highlightColor.copy(alpha = 0.30f * flash.value),
-                    cornerRadius = CornerRadius(16.dp.toPx())
-                )
-            }
-        }
-}
-
 private data class SettingsSearchEntry(
     val title: String,
     val subtitle: String,
     val key: String,
     val icon: ImageVector,
-    val iconContainerColor: Color
+    val iconContainerColor: Color,
+    // When null, the row lives on this screen and is highlighted in place. When set, the
+    // search result belongs to a nested settings screen — navigate there and let that
+    // screen pick up `highlightKey` to scroll/flash the row once it composes.
+    val navigateTo: ((DestinationsNavigator) -> Unit)? = null
 )
 
 private sealed class UpdateDialogState {

@@ -52,6 +52,7 @@ import com.coolappstore.everdialer.by.svhp.view.components.RivoAnimatedSection
 import com.coolappstore.everdialer.by.svhp.view.components.RivoExpressiveCard
 import com.coolappstore.everdialer.by.svhp.view.components.RivoListItem
 import com.coolappstore.everdialer.by.svhp.view.components.RivoSwitchListItem
+import com.coolappstore.everdialer.by.svhp.view.components.settingsSearchHighlight
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.generated.destinations.SoundVibrationScreenDestination
@@ -241,9 +242,11 @@ fun ContactsToDisplayDialog(
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
-fun CallSettingsScreen(navigator: DestinationsNavigator) {
+fun CallSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val prefs = koinInject<PreferenceManager>()
     val context = LocalContext.current
+
+    var highlightedKey by remember { mutableStateOf(highlightKey) }
 
     var proximityBg by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_PROXIMITY_BG, true)) }
     var pocketModePrevention by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_POCKET_MODE_PREVENTION, false)) }
@@ -344,6 +347,7 @@ fun CallSettingsScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Outlined.SimCard,
                                 iconContainerColor = ColorGreen,
                                 trailingIcon = Icons.Default.ChevronRight,
+                                modifier = Modifier.settingsSearchHighlight("default_sim", highlightedKey) { highlightedKey = null },
                                 onClick = { showSimDialog = true }
                             )
                             HorizontalDivider(
@@ -356,6 +360,7 @@ fun CallSettingsScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Outlined.Contacts,
                                 iconContainerColor = ColorBlue,
                                 trailingIcon = Icons.Default.ChevronRight,
+                                modifier = Modifier.settingsSearchHighlight("contacts_to_display", highlightedKey) { highlightedKey = null },
                                 onClick = { showContactsToDisplayDialog = true }
                             )
                         }
@@ -375,6 +380,7 @@ fun CallSettingsScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Outlined.Sensors,
                                 iconContainerColor = ColorTeal,
                                 checked = proximityBg,
+                                modifier = Modifier.settingsSearchHighlight("proximity_sensor_bg", highlightedKey) { highlightedKey = null },
                                 onCheckedChange = {
                                     proximityBg = it
                                     prefs.setBoolean(PreferenceManager.KEY_PROXIMITY_BG, it)
@@ -390,6 +396,7 @@ fun CallSettingsScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Outlined.Sensors,
                                 iconContainerColor = ColorAmber,
                                 checked = pocketModePrevention,
+                                modifier = Modifier.settingsSearchHighlight("pocket_mode_prevention", highlightedKey) { highlightedKey = null },
                                 onCheckedChange = {
                                     pocketModePrevention = it
                                     prefs.setBoolean(PreferenceManager.KEY_POCKET_MODE_PREVENTION, it)
@@ -405,6 +412,7 @@ fun CallSettingsScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Outlined.Sensors,
                                 iconContainerColor = ColorBlue,
                                 checked = floatingCall,
+                                modifier = Modifier.settingsSearchHighlight("floating_ongoing_call", highlightedKey) { highlightedKey = null },
                                 onCheckedChange = { newValue ->
                                     if (newValue && !Settings.canDrawOverlays(context)) {
                                         context.startActivity(
@@ -429,6 +437,7 @@ fun CallSettingsScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Outlined.Call,
                                 iconContainerColor = ColorGreen,
                                 checked = directCallOnTap,
+                                modifier = Modifier.settingsSearchHighlight("direct_call_on_tap", highlightedKey) { highlightedKey = null },
                                 onCheckedChange = {
                                     directCallOnTap = it
                                     prefs.setBoolean(PreferenceManager.KEY_DIRECT_CALL_ON_TAP, it)
@@ -444,6 +453,7 @@ fun CallSettingsScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Outlined.VolumeUp,
                                 iconContainerColor = ColorPink,
                                 checked = autoSpeaker,
+                                modifier = Modifier.settingsSearchHighlight("auto_speaker", highlightedKey) { highlightedKey = null },
                                 onCheckedChange = {
                                     autoSpeaker = it
                                     prefs.setBoolean(PreferenceManager.KEY_AUTO_SPEAKER, it)
@@ -463,7 +473,8 @@ fun CallSettingsScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Outlined.Vibration,
                                 iconContainerColor = Color(0xFF009688),
                                 trailingIcon = Icons.Default.ChevronRight,
-                                onClick = { navigator.navigate(RaiseToAnswerScreenDestination) }
+                                modifier = Modifier.settingsSearchHighlight("raise_to_answer_link", highlightedKey) { highlightedKey = null },
+                                onClick = { navigator.navigate(RaiseToAnswerScreenDestination()) }
                             )
                             HorizontalDivider(
                                 Modifier.padding(horizontal = 16.dp),
@@ -476,6 +487,7 @@ fun CallSettingsScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Default.Replay,
                                 iconContainerColor = Color(0xFF2196F3),
                                 checked = autoRedial,
+                                modifier = Modifier.settingsSearchHighlight("auto_redial", highlightedKey) { highlightedKey = null },
                                 onCheckedChange = {
                                     autoRedial = it
                                     prefs.setBoolean(PreferenceManager.KEY_AUTO_REDIAL_ENABLED, it)
@@ -498,7 +510,8 @@ fun CallSettingsScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Outlined.VolumeUp,
                                 iconContainerColor = ColorBlue,
                                 trailingIcon = Icons.Default.ChevronRight,
-                                onClick = { navigator.navigate(SoundVibrationScreenDestination) }
+                                modifier = Modifier.settingsSearchHighlight("sound_vibration_link", highlightedKey) { highlightedKey = null },
+                                onClick = { navigator.navigate(SoundVibrationScreenDestination()) }
                             )
                         }
                     }

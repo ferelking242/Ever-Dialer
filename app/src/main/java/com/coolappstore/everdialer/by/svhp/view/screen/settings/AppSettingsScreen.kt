@@ -24,6 +24,7 @@ import com.coolappstore.everdialer.by.svhp.view.components.RivoExpressiveCard
 import com.coolappstore.everdialer.by.svhp.view.components.RivoListItem
 import com.coolappstore.everdialer.by.svhp.view.components.RivoSwitchListItem
 import com.coolappstore.everdialer.by.svhp.view.components.ScrollToTopButton
+import com.coolappstore.everdialer.by.svhp.view.components.settingsSearchHighlight
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.generated.destinations.CallSettingsScreenDestination
@@ -36,12 +37,15 @@ private val ColorTeal = Color(0xFF00897B)
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
-fun AppSettingsScreen(navigator: DestinationsNavigator) {
+fun AppSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val prefs = koinInject<PreferenceManager>()
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val showButton by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
+
+    // Row to scroll to and flash on arrival, coming from Settings' search. Cleared once consumed.
+    var highlightedKey by remember { mutableStateOf(highlightKey) }
 
     var integrateNotes by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_INTEGRATE_NOTES, true)) }
     var deleteNotesWithRecording by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_DELETE_NOTES_WITH_RECORDING, false)) }
@@ -80,7 +84,8 @@ fun AppSettingsScreen(navigator: DestinationsNavigator) {
                         leadingIcon = Icons.Outlined.Call,
                         iconContainerColor = ColorTeal,
                         trailingIcon = Icons.Default.ChevronRight,
-                        onClick = { navigator.navigate(CallSettingsScreenDestination) }
+                        modifier = Modifier.settingsSearchHighlight("nav_call_settings", highlightedKey) { highlightedKey = null },
+                        onClick = { navigator.navigate(CallSettingsScreenDestination()) }
                     )
                     CardDivider()
                     RivoListItem(
@@ -89,6 +94,7 @@ fun AppSettingsScreen(navigator: DestinationsNavigator) {
                         leadingIcon = Icons.Outlined.SignalCellularAlt,
                         iconContainerColor = Color(0xFF00897B),
                         trailingIcon = Icons.Default.ChevronRight,
+                        modifier = Modifier.settingsSearchHighlight("network_switcher", highlightedKey) { highlightedKey = null },
                         onClick = {
                             try {
                                 context.startActivity(
@@ -107,6 +113,7 @@ fun AppSettingsScreen(navigator: DestinationsNavigator) {
                         leadingIcon = Icons.Default.Note,
                         iconContainerColor = Color(0xFFE53935),
                         checked = integrateNotes,
+                        modifier = Modifier.settingsSearchHighlight("integrate_notes", highlightedKey) { highlightedKey = null },
                         onCheckedChange = {
                             integrateNotes = it
                             prefs.setBoolean(PreferenceManager.KEY_INTEGRATE_NOTES, it)
@@ -121,6 +128,7 @@ fun AppSettingsScreen(navigator: DestinationsNavigator) {
                                 leadingIcon = Icons.Default.DeleteSweep,
                                 iconContainerColor = Color(0xFF6D4C41),
                                 checked = deleteNotesWithRecording,
+                                modifier = Modifier.settingsSearchHighlight("delete_notes_with_recording", highlightedKey) { highlightedKey = null },
                                 onCheckedChange = {
                                     deleteNotesWithRecording = it
                                     prefs.setBoolean(PreferenceManager.KEY_DELETE_NOTES_WITH_RECORDING, it)

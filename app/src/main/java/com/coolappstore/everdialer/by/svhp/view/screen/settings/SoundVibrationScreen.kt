@@ -27,6 +27,7 @@ import com.coolappstore.everdialer.by.svhp.view.components.RivoAnimatedSection
 import com.coolappstore.everdialer.by.svhp.view.components.RivoExpressiveCard
 import com.coolappstore.everdialer.by.svhp.view.components.RivoListItem
 import com.coolappstore.everdialer.by.svhp.view.components.RivoSwitchListItem
+import com.coolappstore.everdialer.by.svhp.view.components.settingsSearchHighlight
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -40,9 +41,11 @@ private val ColorPurple = Color(0xFF9C27B0)
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
-fun SoundVibrationScreen(navigator: DestinationsNavigator) {
+fun SoundVibrationScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val prefs = koinInject<PreferenceManager>()
     val context = LocalContext.current
+
+    var highlightedKey by remember { mutableStateOf(highlightKey) }
 
     var dtmfTone by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_DTMF_TONE, false)) }
     var dialpadToneStyle by remember {
@@ -88,6 +91,7 @@ fun SoundVibrationScreen(navigator: DestinationsNavigator) {
                             leadingIcon = Icons.Outlined.Audiotrack,
                             iconContainerColor = ColorGreen,
                             checked = dtmfTone,
+                            modifier = Modifier.settingsSearchHighlight("dtmf_tone", highlightedKey) { highlightedKey = null },
                             onCheckedChange = {
                                 dtmfTone = it
                                 prefs.setBoolean(PreferenceManager.KEY_DTMF_TONE, it)
@@ -102,6 +106,7 @@ fun SoundVibrationScreen(navigator: DestinationsNavigator) {
                             supporting = "${dialpadToneStyle.label} — ${dialpadToneStyle.description}",
                             leadingIcon = toneStyleIcon(dialpadToneStyle),
                             iconContainerColor = ColorPurple,
+                            modifier = Modifier.settingsSearchHighlight("dialpad_tone", highlightedKey) { highlightedKey = null },
                             onClick = { showToneStyleDialog = true }
                         )
                     }
@@ -116,6 +121,7 @@ fun SoundVibrationScreen(navigator: DestinationsNavigator) {
                             supporting = "Open system sound settings",
                             leadingIcon = Icons.Outlined.MusicNote,
                             iconContainerColor = ColorPink,
+                            modifier = Modifier.settingsSearchHighlight("ringtone_settings", highlightedKey) { highlightedKey = null },
                             onClick = { context.startActivity(Intent(Settings.ACTION_SOUND_SETTINGS)) }
                         )
                         HorizontalDivider(
@@ -127,6 +133,7 @@ fun SoundVibrationScreen(navigator: DestinationsNavigator) {
                             supporting = "Manage interruption settings",
                             leadingIcon = Icons.Outlined.DoNotDisturb,
                             iconContainerColor = ColorBlue,
+                            modifier = Modifier.settingsSearchHighlight("dnd_settings", highlightedKey) { highlightedKey = null },
                             onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)) }
                         )
                     }
