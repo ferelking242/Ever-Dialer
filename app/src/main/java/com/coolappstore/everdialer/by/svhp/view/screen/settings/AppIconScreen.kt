@@ -49,7 +49,8 @@ internal fun buildIcons(context: android.content.Context) = listOf(
     AppIconEntry("phone",    "Phone",   "MainActivityPhoneIcon",        context.resources.getIdentifier("ic_launcher_phone",        "mipmap", context.packageName)),
     AppIconEntry("custom_phone", "Vertical phone", "MainActivityCustomPhoneIcon", context.resources.getIdentifier("ic_launcher_custom_phone", "mipmap", context.packageName)),
     AppIconEntry("google",   "Google",  "MainActivityGoogleDialerIcon", context.resources.getIdentifier("ic_launcher_google_dialer","mipmap", context.packageName)),
-    AppIconEntry("nothing",  "NOTHING", "MainActivityNothingIcon",      context.resources.getIdentifier("ic_launcher_nothing",      "mipmap", context.packageName))
+    AppIconEntry("nothing",  "NOTHING", "MainActivityNothingIcon",      context.resources.getIdentifier("ic_launcher_nothing",      "mipmap", context.packageName)),
+    AppIconEntry("lineageos", "LineageOS Dialer", "MainActivityLineageOSIcon", context.resources.getIdentifier("ic_launcher_lineageos", "mipmap", context.packageName))
 )
 
 internal fun applyIcon(context: android.content.Context, icons: List<AppIconEntry>, entry: AppIconEntry) {

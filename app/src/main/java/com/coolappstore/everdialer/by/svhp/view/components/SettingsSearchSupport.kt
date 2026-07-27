@@ -13,7 +13,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.awaitFrame
 import kotlinx.coroutines.delay
 
 /**
@@ -49,7 +48,7 @@ fun Modifier.settingsSearchHighlight(
                     succeeded = true
                 } catch (_: Exception) {
                     // Not laid out yet — wait and retry.
-                    if (attempt == 0) delay(120) else awaitFrame()
+                    delay(if (attempt == 0) 120L else 60L)
                 }
                 attempt++
             }

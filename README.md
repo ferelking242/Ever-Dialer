@@ -236,3 +236,4 @@ The source code of Rate and Review are open, Check it out: [Click Here](https://
 ┈➤ [ShizuCallRecorder](https://github.com/kitsumed/ShizuCallRecorder)<br><br>
 ┈➤ [Network Switch](https://github.com/aunchagaonkar/NetworkSwitch)<br><br>
 ┈➤ [Raise To Answer](https://github.com/TheLastProject/RaiseToAnswer)
+┈➤ [LineageOS Dialer](https://github.com/Lineageos/android_packages_apps_Dialer)

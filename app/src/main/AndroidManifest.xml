@@ -286,6 +286,20 @@
             </intent-filter>
         </activity-alias>
 
+        <activity-alias
+            android:name=".MainActivityLineageOSIcon"
+            android:targetActivity=".MainActivity"
+            android:label="@string/app_name"
+            android:icon="@mipmap/ic_launcher_lineageos"
+            android:roundIcon="@mipmap/ic_launcher_lineageos_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- Recent Calls Home Screen Widget -->
         <receiver
             android:name=".widget.RecentCallsWidgetProvider"
