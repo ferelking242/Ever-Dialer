@@ -53,16 +53,73 @@ internal fun buildIcons(context: android.content.Context) = listOf(
     AppIconEntry("lineageos", "LineageOS Dialer", "MainActivityLineageOSIcon", context.resources.getIdentifier("ic_launcher_lineageos", "mipmap", context.packageName))
 )
 
-internal fun applyIcon(context: android.content.Context, icons: List<AppIconEntry>, entry: AppIconEntry) {
+// Curated App Name presets. "default" reuses the same alias as the Default app icon in
+// combination with whatever icon is currently selected — see aliasNameFor() below, which
+// computes a combined icon+name alias so changing one never resets the other.
+internal fun buildAppNamePresets(context: android.content.Context) = listOf(
+    AppIconEntry("default",          "Ever Dialer (Default)", null, context.resources.getIdentifier("ic_launcher", "mipmap", context.packageName)),
+    AppIconEntry("name_call",        "Call",                  null, context.resources.getIdentifier("ic_launcher", "mipmap", context.packageName)),
+    AppIconEntry("name_dial",        "Dial",                  null, context.resources.getIdentifier("ic_launcher", "mipmap", context.packageName)),
+    AppIconEntry("name_truephone",   "True Phone",             null, context.resources.getIdentifier("ic_launcher", "mipmap", context.packageName)),
+    AppIconEntry("name_phonedialer", "Phone Dialer",           null, context.resources.getIdentifier("ic_launcher", "mipmap", context.packageName)),
+    AppIconEntry("name_phone",       "Phone",                  null, context.resources.getIdentifier("ic_launcher", "mipmap", context.packageName)),
+    AppIconEntry("name_dialer",      "Dialer",                 null, context.resources.getIdentifier("ic_launcher", "mipmap", context.packageName))
+)
+
+private fun iconSuffix(iconKey: String): String = when (iconKey) {
+    "default"      -> "Default"
+    "phone"        -> "Phone"
+    "custom_phone" -> "CustomPhone"
+    "google"       -> "Google"
+    "nothing"      -> "Nothing"
+    "lineageos"    -> "LineageOS"
+    else           -> "Default"
+}
+
+private fun plainIconAliasName(iconKey: String): String = when (iconKey) {
+    "default"      -> "MainActivityDefaultIcon"
+    "phone"        -> "MainActivityPhoneIcon"
+    "custom_phone" -> "MainActivityCustomPhoneIcon"
+    "google"       -> "MainActivityGoogleDialerIcon"
+    "nothing"      -> "MainActivityNothingIcon"
+    "lineageos"    -> "MainActivityLineageOSIcon"
+    else           -> "MainActivityDefaultIcon"
+}
+
+private fun nameSuffix(nameKey: String): String? = when (nameKey) {
+    "name_call"        -> "Call"
+    "name_dial"        -> "Dial"
+    "name_truephone"   -> "TruePhone"
+    "name_phonedialer" -> "PhoneDialer"
+    "name_phone"       -> "Phone"
+    "name_dialer"      -> "Dialer"
+    else               -> null // "default" — no separate name alias needed
+}
+
+/** Resolves the exact activity-alias short name for a given (icon, name) combination. */
+internal fun aliasNameFor(iconKey: String, nameKey: String): String {
+    val nSuffix = nameSuffix(nameKey) ?: return plainIconAliasName(iconKey)
+    return "MainActivityName$nSuffix${iconSuffix(iconKey)}"
+}
+
+private val ALL_ICON_KEYS = listOf("default", "phone", "custom_phone", "google", "nothing", "lineageos")
+private val ALL_NAME_KEYS = listOf("default", "name_call", "name_dial", "name_truephone", "name_phonedialer", "name_phone", "name_dialer")
+
+private fun allLauncherAliasNames(): List<String> =
+    ALL_ICON_KEYS.flatMap { icon -> ALL_NAME_KEYS.map { name -> aliasNameFor(icon, name) } }.distinct()
+
+/**
+ * Only one launcher activity-alias may ever be enabled at a time — enabling more than one
+ * would show multiple separate launcher icons for this app. This disables every possible
+ * icon×name combo alias, then enables only [targetAliasName].
+ */
+internal fun applyLauncherAlias(context: android.content.Context, targetAliasName: String) {
     val pm  = context.packageManager
     val pkg = context.packageName
 
-    val allAliasComponents = icons.mapNotNull { it.aliasName }.distinct()
-        .map { ComponentName(pkg, "$pkg.$it") }
+    val allAliasComponents = allLauncherAliasNames().map { ComponentName(pkg, "$pkg.$it") }
+    val target = ComponentName(pkg, "$pkg.$targetAliasName")
 
-    val target = ComponentName(pkg, "$pkg.${entry.aliasName}")
-
-    // Enable only the selected alias; disable all others
     allAliasComponents.forEach { component ->
         val state = if (component == target)
             PackageManager.COMPONENT_ENABLED_STATE_ENABLED
@@ -70,6 +127,16 @@ internal fun applyIcon(context: android.content.Context, icons: List<AppIconEntr
             PackageManager.COMPONENT_ENABLED_STATE_DISABLED
         pm.setComponentEnabledSetting(component, state, PackageManager.DONT_KILL_APP)
     }
+}
+
+internal fun applyIcon(context: android.content.Context, prefs: PreferenceManager, entry: AppIconEntry) {
+    val currentNameKey = prefs.getString(PreferenceManager.KEY_APP_NAME_PRESET, "default") ?: "default"
+    applyLauncherAlias(context, aliasNameFor(entry.key, currentNameKey))
+}
+
+internal fun applyAppNamePreset(context: android.content.Context, prefs: PreferenceManager, entry: AppIconEntry) {
+    val currentIconKey = prefs.getString(KEY_SELECTED_APP_ICON, "default") ?: "default"
+    applyLauncherAlias(context, aliasNameFor(currentIconKey, entry.key))
 }
 
 private fun loadBitmapFromRes(context: android.content.Context, @DrawableRes resId: Int): Bitmap? {
@@ -139,7 +206,7 @@ fun AppIconScreen(navigator: DestinationsNavigator) {
                         .clickable {
                             selectedKey = entry.key
                             prefs.setString(KEY_SELECTED_APP_ICON, entry.key)
-                            applyIcon(context, icons, entry)
+                            applyIcon(context, prefs, entry)
                         }
                         .padding(8.dp)
                 ) {

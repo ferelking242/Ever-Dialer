@@ -235,5 +235,5 @@ The source code of Rate and Review are open, Check it out: [Click Here](https://
 ┈➤ [P Dialer](https://github.com/MoHamed-B-M/Pdialer) <br><br>
 ┈➤ [ShizuCallRecorder](https://github.com/kitsumed/ShizuCallRecorder)<br><br>
 ┈➤ [Network Switch](https://github.com/aunchagaonkar/NetworkSwitch)<br><br>
-┈➤ [Raise To Answer](https://github.com/TheLastProject/RaiseToAnswer)
+┈➤ [Raise To Answer](https://github.com/TheLastProject/RaiseToAnswer)<br><br>
 ┈➤ [LineageOS Dialer](https://github.com/Lineageos/android_packages_apps_Dialer)

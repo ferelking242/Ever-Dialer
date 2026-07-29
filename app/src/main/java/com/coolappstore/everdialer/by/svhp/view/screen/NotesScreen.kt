@@ -84,26 +84,35 @@ fun NotesScreen(navController: NavController, navigator: DestinationsNavigator, 
     }
 
     var notes by remember { mutableStateOf(NoteManager.getAllNotes(context)) }
+    // Keep the bottom pill hidden (and the in-screen search bar hidden below) only while this
+    // screen is showing one highlighted match opened from unified Search. Normal entry into this
+    // tab (tab tap, nav rail, swipe) always goes through `NavController.enterNotesTab()`, which
+    // guarantees a brand new instance of this screen with `highlightQuery = null` — so the only
+    // time this can legitimately start "true" is when Search itself navigated here with a real
+    // query. `isSearchResultView` stays independently mutable (rather than just a derived value)
+    // so the BackHandler below can clear it without needing to touch navigation/back-stack state.
+    var isSearchResultView by remember { mutableStateOf(!highlightQuery.isNullOrBlank()) }
+    val effectiveHighlightQuery = if (isSearchResultView) highlightQuery else null
     // Set when this screen was opened by tapping a note in the unified search results — scrolls
     // to and visually highlights the matched word/phrase within that specific note.
-    val matchedNote = remember(notes, highlightQuery) {
-        if (highlightQuery.isNullOrBlank()) null
+    val matchedNote = remember(notes, effectiveHighlightQuery) {
+        if (effectiveHighlightQuery.isNullOrBlank()) null
         else notes.firstOrNull {
-            it.contactName.contains(highlightQuery, ignoreCase = true) ||
-                    it.phoneNumber.contains(highlightQuery, ignoreCase = true) ||
-                    it.content.contains(highlightQuery, ignoreCase = true)
+            it.contactName.contains(effectiveHighlightQuery, ignoreCase = true) ||
+                    it.phoneNumber.contains(effectiveHighlightQuery, ignoreCase = true) ||
+                    it.content.contains(effectiveHighlightQuery, ignoreCase = true)
         }
     }
-    // Keep the bottom pill hidden (and the in-screen search bar hidden below) for the whole
-    // lifetime of this screen when it was opened to show one highlighted match from unified
-    // Search, rather than as the normal "Notes" bottom-nav tab.
-    val isSearchResultView = !highlightQuery.isNullOrBlank()
     androidx.compose.runtime.DisposableEffect(isSearchResultView) {
         com.coolappstore.everdialer.by.svhp.view.components.NavBarVisibilityState.hideForSearchResult = isSearchResultView
         onDispose { com.coolappstore.everdialer.by.svhp.view.components.NavBarVisibilityState.hideForSearchResult = false }
     }
+    // If this same screen instance is re-targeted with a new highlightQuery (e.g. the user opens
+    // another note straight from Search while already here), re-enter search-result mode.
+    androidx.compose.runtime.LaunchedEffect(highlightQuery) {
+        if (!highlightQuery.isNullOrBlank()) isSearchResultView = true
+    }
 
-    var showOverflow by remember { mutableStateOf(false) }
     var selectionMode by remember { mutableStateOf(false) }
     var selectedNotes by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showNotesSelectionMenu by remember { mutableStateOf(false) }
@@ -226,25 +235,6 @@ fun NotesScreen(navController: NavController, navigator: DestinationsNavigator, 
                             Icon(Icons.Default.Tune, contentDescription = "Settings")
                         }
                     }
-                    Box {
-                        IconButton(onClick = { showOverflow = true }) {
-                            Icon(Icons.Default.MoreVert, "More")
-                        }
-                        RivoDropdownMenu(
-                            expanded = showOverflow,
-                            onDismissRequest = { showOverflow = false }
-                        ) {
-                            RivoDropdownMenuItem(
-                                text     = "Hide Notes",
-                                icon     = Icons.Default.VisibilityOff,
-                                iconTint = androidx.compose.ui.graphics.Color(0xFF607D8B),
-                                onClick  = {
-                                    showOverflow = false
-                                    prefs.setBoolean(PreferenceManager.KEY_TAB_SHOW_NOTES, false)
-                                    navigator.navigateUp()
-                                }
-                            )
-                        }                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )

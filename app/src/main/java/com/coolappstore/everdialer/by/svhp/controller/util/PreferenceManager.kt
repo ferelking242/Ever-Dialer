@@ -228,6 +228,7 @@ class PreferenceManager(context: Context) {
         // Default Message app for the incoming-call screen's Message quick action.
         // Values: "sms" (default), "whatsapp", "telegram", "ask"
         const val KEY_DEFAULT_MESSAGE_APP = "default_message_app"
+        const val KEY_APP_NAME_PRESET = "app_name_preset"
 
         const val KEY_CONTACTS_HIDER_CODE         = "contacts_hider_code"          // numeric secret code string
         const val KEY_CONTACTS_HIDER_IDS          = "contacts_hider_ids"           // comma-separated contact IDs

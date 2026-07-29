@@ -42,12 +42,6 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import org.koin.compose.koinInject
 import kotlin.math.roundToInt
 
-/** State for the floating "ghost" copy of a button shown while it's being dragged. */
-private data class DragGhostState(
-    val spec: CallButtonSpec,
-    val windowPosition: Offset
-)
-
 /**
  * Drag detection that claims the gesture the instant a finger goes down, instead of waiting for
  * touch-slop to be exceeded in a particular direction (as `detectDragGestures` / long-press
@@ -117,12 +111,6 @@ fun CallerUIScreen(navigator: DestinationsNavigator) {
         }
     }
 
-    // Drag-ghost overlay state: while a button is being dragged, a floating copy of it is drawn
-    // in a layer above *everything* (including the card that would otherwise clip it), so it can
-    // be dragged anywhere on screen — not just within the small preview card's bounds.
-    var dragGhost by remember { mutableStateOf<DragGhostState?>(null) }
-    var overlayRootWindowOffset by remember { mutableStateOf(Offset.Zero) }
-
     // True while any button in the preview is actively being dragged. Used to freeze the outer
     // settings list's scrolling for the duration of the drag, so the screen never scrolls out
     // from under a finger that's mid-drag (which previously made drags feel like they got cut
@@ -141,7 +129,7 @@ fun CallerUIScreen(navigator: DestinationsNavigator) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Caller UI", fontWeight = FontWeight.Bold) },
+                title = { Text("Ongoing Call UI", fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = { navigator.navigateUp() }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -155,7 +143,6 @@ fun CallerUIScreen(navigator: DestinationsNavigator) {
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .onGloballyPositioned { overlayRootWindowOffset = it.positionInWindow() }
         ) {
         LazyColumn(
             modifier = Modifier
@@ -278,7 +265,6 @@ fun CallerUIScreen(navigator: DestinationsNavigator) {
                                         freeformPositions.clear()
                                         CallButtonPrefs.setFreeformPositions(prefs, emptyMap())
                                     },
-                                    onDragGhostChange = { dragGhost = it },
                                     onDragActiveChanged = { isDraggingAnyButton = it }
                                 )
                             }
@@ -434,32 +420,6 @@ fun CallerUIScreen(navigator: DestinationsNavigator) {
             }
         }
 
-        // Floating drag-ghost — deliberately rendered as a sibling of (not nested inside) the
-        // scrollable content and the card that clips it, at the top of this Box's z-order, so a
-        // dragged button is visible anywhere on screen instead of being clipped to the card.
-        dragGhost?.let { ghost ->
-            val density = LocalDensity.current
-            val localPos = ghost.windowPosition - overlayRootWindowOffset
-            val sizeDp = 64.dp
-            val sizePx = with(density) { sizeDp.toPx() }
-            Box(
-                modifier = Modifier
-                    .offset { IntOffset((localPos.x - sizePx / 2f).roundToInt(), (localPos.y - sizePx / 2f).roundToInt()) }
-                    .size(sizeDp)
-                    .zIndex(100f)
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.95f),
-                    shadowElevation = 12.dp,
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(ghost.spec.icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
-                    }
-                }
-            }
-        }
         }
     }
 }
@@ -469,19 +429,21 @@ fun CallerUIScreen(navigator: DestinationsNavigator) {
  * call screen (a 3-per-row grid of circular icon buttons with a label underneath, plus the red
  * Hang Up pill at the bottom) so what you see here is what you'll see on an actual call.
  *
- * Bug fix: the previous version only accepted drags starting on a tiny 20dp drag-handle icon,
- * detected via `detectDragGesturesAfterLongPress` nested inside the settings screen's scrolling
- * list — the outer scroll routinely won the gesture before the long-press even registered, so
- * dragging effectively never worked. This version makes the *entire* button tile a drag target
- * and reorders by continuously comparing the dragged tile's live position against every other
- * tile's on-screen position (via [onGloballyPositioned]) rather than assuming a fixed 1-column
- * layout, so it works correctly across the multi-column grid too.
+ * Only *enabled* buttons are included in [gridIds] — a button unticked in the show/hide menu is
+ * fully removed from the preview (and the real call screen) rather than shown dimmed out.
  *
- * Hang Up is intentionally excluded from the draggable grid: [CallButtonPrefs.getOrder] always
+ * The dragged tile is moved directly via its own live offset (the same technique
+ * [FreeformButtonsArea] uses), and reordering is resolved by continuously comparing that live
+ * position against every other tile's last-measured on-screen position (via
+ * [onGloballyPositioned]). This mirrors Freeform's drag handling exactly instead of routing the
+ * dragged tile through a separate window-coordinate-translated ghost overlay, which was fragile
+ * and could cause drags to feel like they got cut short or dropped in the wrong place.
+ *
+ * Hang Up is intentionally excluded from the draggable grid — [CallButtonPrefs.getOrder] always
  * forces it back to the last position and [CallButtonPrefs.getActiveActionIds] excludes it
  * entirely, since the real call screen always renders it separately as the dedicated end-call
- * action — so it's shown here the same way, as a fixed preview matching the current width
- * setting rather than a reorderable tile.
+ * action. With Freeform on, Hang Up instead becomes a draggable tile inside
+ * [FreeformButtonsArea] (see there), so it can be positioned anywhere too.
  */
 @Composable
 private fun FeatureButtonsPreview(
@@ -494,19 +456,17 @@ private fun FeatureButtonsPreview(
     onFreeformPositionsChanged: () -> Unit,
     onOrderChanged: () -> Unit,
     onResetLayout: () -> Unit,
-    onDragGhostChange: (DragGhostState?) -> Unit,
     onDragActiveChanged: (Boolean) -> Unit
 ) {
-    val gridIds = buttonOrder.filter { it != CallButtonPrefs.ID_HANGUP }
+    // Disabled (unticked) buttons are dropped entirely — not shown dimmed/blanked out.
+    val gridIds = buttonOrder.filter { it != CallButtonPrefs.ID_HANGUP && (enabledMap[it] ?: true) }
 
     var draggingId by remember { mutableStateOf<String?>(null) }
-    // Absolute (window-coordinate) center of the floating ghost while a drag is in progress.
-    // Deliberately kept at this stable parent scope (not inside the per-tile Column below) so it
-    // survives tiles being reordered/recomposed mid-drag instead of resetting to zero.
-    var currentGhostCenter by remember { mutableStateOf(Offset.Zero) }
-    // Each tile's last-measured on-screen bounds (in window coordinates), used both to hit-test
-    // the dragged tile's current position against every other tile, and to know where to start
-    // the floating ghost from.
+    // Live drag offset of the currently-dragged tile — the tile itself moves with the finger
+    // (no separate ghost), matching how Freeform's tiles are dragged.
+    var dragOffset by remember { mutableStateOf(Offset.Zero) }
+    // Each tile's last-measured on-screen bounds, used to hit-test the dragged tile's current
+    // position against every other tile to decide when to swap.
     val tileBounds = remember { mutableStateMapOf<String, Rect>() }
 
     // ── Freeform toggle — sits above the "Preview" heading. When on, buttons can be dropped
@@ -562,8 +522,10 @@ private fun FeatureButtonsPreview(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (freeformEnabled) {
+                // Hang Up joins the draggable canvas in Freeform mode, so it can be positioned
+                // anywhere too instead of staying pinned below as a fixed preview.
                 FreeformButtonsArea(
-                    gridIds = gridIds,
+                    gridIds = gridIds + CallButtonPrefs.ID_HANGUP,
                     enabledMap = enabledMap,
                     freeformPositions = freeformPositions,
                     onDragActiveChanged = onDragActiveChanged,
@@ -575,41 +537,41 @@ private fun FeatureButtonsPreview(
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         rowIds.forEach { id ->
                             val spec = CallButtonPrefs.specFor(id) ?: return@forEach
-                            val isEnabled = enabledMap[id] ?: true
                             val isDragging = draggingId == id
+                            val tileOffset = if (isDragging) dragOffset else Offset.Zero
 
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
+                                    .zIndex(if (isDragging) 1f else 0f)
                                     .onGloballyPositioned { coords ->
                                         tileBounds[id] = Rect(
                                             offset = coords.positionInWindow(),
                                             size = coords.size.toSize()
                                         )
                                     }
-                                    // The original tile fades out while its floating ghost (rendered
-                                    // above everything, unclipped by this card) takes over showing
-                                    // where it's being dragged to.
-                                    .alpha(if (isDragging) 0f else 1f)
+                                    // The tile itself follows the finger while dragging — same
+                                    // technique as FreeformButtonsArea — instead of fading out in
+                                    // favor of a separately window-coordinate-translated ghost.
+                                    .offset { IntOffset(tileOffset.x.roundToInt(), tileOffset.y.roundToInt()) }
                                     .immediateDrag(
                                         key = id,
                                         onDragStart = {
                                             draggingId = id
+                                            dragOffset = Offset.Zero
                                             onDragActiveChanged(true)
-                                            currentGhostCenter = tileBounds[id]?.center ?: Offset.Zero
-                                            onDragGhostChange(DragGhostState(spec, currentGhostCenter))
                                         },
                                         onDrag = { delta ->
-                                            currentGhostCenter += delta
-                                            onDragGhostChange(DragGhostState(spec, currentGhostCenter))
+                                            dragOffset += delta
+                                            val currentCenter = (tileBounds[id]?.center ?: Offset.Zero) + dragOffset
 
                                             val targetId = tileBounds
-                                                .filterKeys { it != id }
-                                                .minByOrNull { (_, rect) -> (rect.center - currentGhostCenter).getDistance() }
+                                                .filterKeys { it != id && it in gridIds }
+                                                .minByOrNull { (_, rect) -> (rect.center - currentCenter).getDistance() }
                                                 ?.key
                                             if (targetId != null) {
                                                 val targetRect = tileBounds.getValue(targetId)
-                                                if ((targetRect.center - currentGhostCenter).getDistance() < targetRect.width / 2f) {
+                                                if ((targetRect.center - currentCenter).getDistance() < targetRect.width / 2f) {
                                                     val fromIndex = buttonOrder.indexOf(id)
                                                     val toIndex = buttonOrder.indexOf(targetId)
                                                     if (fromIndex != -1 && toIndex != -1 && fromIndex != toIndex) {
@@ -621,8 +583,8 @@ private fun FeatureButtonsPreview(
                                         },
                                         onDragEnd = {
                                             draggingId = null
+                                            dragOffset = Offset.Zero
                                             onDragActiveChanged(false)
-                                            onDragGhostChange(null)
                                             onOrderChanged()
                                         }
                                     )
@@ -630,15 +592,14 @@ private fun FeatureButtonsPreview(
                             ) {
                                 Surface(
                                     shape = CircleShape,
-                                    color = if (isEnabled) Color.White.copy(alpha = 0.16f)
-                                            else Color.White.copy(alpha = 0.08f),
+                                    color = Color.White.copy(alpha = 0.16f),
                                     modifier = Modifier.size(56.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             spec.icon,
                                             contentDescription = null,
-                                            tint = if (isEnabled) Color.White else Color.White.copy(alpha = 0.35f),
+                                            tint = Color.White,
                                             modifier = Modifier.size(24.dp)
                                         )
                                     }
@@ -646,7 +607,7 @@ private fun FeatureButtonsPreview(
                                 Text(
                                     spec.label,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = if (isEnabled) Color.White.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.35f),
+                                    color = Color.White.copy(alpha = 0.85f),
                                     maxLines = 1,
                                     modifier = Modifier.padding(top = 6.dp)
                                 )
@@ -659,23 +620,25 @@ private fun FeatureButtonsPreview(
                         }
                     }
                 }
-            }
 
-            Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(28.dp))
 
-            // Fixed (non-draggable) Hang Up preview, matching the current width setting below.
-            val isCircle = hangupWidth <= 0.1f
-            Surface(
-                shape = if (isCircle) CircleShape else RoundedCornerShape(28.dp),
-                color = Color(0xFFD32F2F),
-                modifier = if (isCircle) Modifier.size(56.dp)
-                    else Modifier.fillMaxWidth(hangupWidth.coerceIn(0.1f, 1.0f)).height(56.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Default.CallEnd, null, tint = Color.White, modifier = Modifier.size(22.dp))
-                        if (hangupWidth > 0.5f) {
-                            Text("End Call", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                // Fixed (non-draggable) Hang Up preview, matching the current width setting
+                // below. Only shown outside Freeform — in Freeform, Hang Up is a draggable tile
+                // inside FreeformButtonsArea above instead.
+                val isCircle = hangupWidth <= 0.1f
+                Surface(
+                    shape = if (isCircle) CircleShape else RoundedCornerShape(28.dp),
+                    color = Color(0xFFD32F2F),
+                    modifier = if (isCircle) Modifier.size(56.dp)
+                        else Modifier.fillMaxWidth(hangupWidth.coerceIn(0.1f, 1.0f)).height(56.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.CallEnd, null, tint = Color.White, modifier = Modifier.size(22.dp))
+                            if (hangupWidth > 0.5f) {
+                                Text("End Call", color = Color.White, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 }
@@ -686,7 +649,7 @@ private fun FeatureButtonsPreview(
     Spacer(Modifier.height(8.dp))
     Text(
         if (freeformEnabled)
-            "Drag a button anywhere in the preview to place it. Hang Up always stays fixed at the bottom, matching the real call screen."
+            "Drag any button — including Hang Up — anywhere in the preview to place it."
         else
             "Drag a button anywhere to reorder it. Hang Up always stays last, matching the real call screen.",
         style = MaterialTheme.typography.labelSmall,
@@ -715,8 +678,8 @@ private fun FreeformButtonsArea(
     val tileWidthPx = with(density) { 76.dp.toPx() }
     val tileHeightPx = with(density) { 88.dp.toPx() }
 
-    fun defaultFraction(index: Int): Offset {
-        val (x, y) = CallButtonPrefs.defaultFreeformFraction(index, gridIds.size)
+    fun defaultFraction(id: String, index: Int): Offset {
+        val (x, y) = CallButtonPrefs.defaultFreeformFraction(id, index, gridIds.size)
         return Offset(x, y)
     }
 
@@ -734,10 +697,12 @@ private fun FreeformButtonsArea(
         val containerWidthPx = with(density) { maxWidth.toPx() }
         val containerHeightPx = with(density) { maxHeight.toPx() }
 
+        // gridIds is pre-filtered to already-enabled buttons plus (optionally) Hang Up, so every
+        // tile rendered here is always shown at full strength — nothing dimmed/blanked out.
         gridIds.forEachIndexed { index, id ->
             val spec = CallButtonPrefs.specFor(id) ?: return@forEachIndexed
-            val isEnabled = enabledMap[id] ?: true
-            val fraction = freeformPositions[id] ?: defaultFraction(index)
+            val isHangup = id == CallButtonPrefs.ID_HANGUP
+            val fraction = freeformPositions[id] ?: defaultFraction(id, index)
             val isDragging = draggingId == id
 
             Column(
@@ -758,7 +723,7 @@ private fun FreeformButtonsArea(
                         },
                         onDrag = { delta ->
                             if (containerWidthPx > 0f && containerHeightPx > 0f) {
-                                val current = freeformPositions[id] ?: defaultFraction(index)
+                                val current = freeformPositions[id] ?: defaultFraction(id, index)
                                 val newX = (current.x + delta.x / containerWidthPx).coerceIn(0f, 1f)
                                 val newY = (current.y + delta.y / containerHeightPx).coerceIn(0f, 1f)
                                 freeformPositions[id] = Offset(newX, newY)
@@ -773,15 +738,14 @@ private fun FreeformButtonsArea(
             ) {
                 Surface(
                     shape = CircleShape,
-                    color = if (isEnabled) Color.White.copy(alpha = 0.16f)
-                            else Color.White.copy(alpha = 0.08f),
+                    color = if (isHangup) Color(0xFFD32F2F) else Color.White.copy(alpha = 0.16f),
                     modifier = Modifier.size(56.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             spec.icon,
                             contentDescription = null,
-                            tint = if (isEnabled) Color.White else Color.White.copy(alpha = 0.35f),
+                            tint = Color.White,
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -789,7 +753,7 @@ private fun FreeformButtonsArea(
                 Text(
                     spec.label,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (isEnabled) Color.White.copy(alpha = 0.85f) else Color.White.copy(alpha = 0.35f),
+                    color = Color.White.copy(alpha = 0.85f),
                     maxLines = 1,
                     modifier = Modifier.padding(top = 6.dp)
                 )

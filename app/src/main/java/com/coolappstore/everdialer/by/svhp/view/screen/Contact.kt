@@ -74,6 +74,7 @@ import com.coolappstore.everdialer.by.svhp.modal.data.ContactAccount
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.PaddingValues
+import com.coolappstore.everdialer.by.svhp.view.components.enterNotesTab
 
 @OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
 @Destination<RootGraph>(style = TabTransitionStyle::class)
@@ -151,10 +152,7 @@ fun ContactScreen(navController: NavController, navigator: DestinationsNavigator
                                 } else {
                                     // swipe left from Contacts → Notes (wrap around)
                                     scope.launch {
-                                        navController.navigate(NotesScreenDestination.route) {
-                                            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                            launchSingleTop = true; restoreState = true
-                                        }
+                                        navController.enterNotesTab()
                                     }
                                 }
                             }

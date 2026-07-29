@@ -938,7 +938,7 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
         SettingsSearchEntry("Elements to have blur effect", "Choose where blur effects apply", "blur_effects_elements_link", Icons.Outlined.Palette, ColorIndigo) { it.navigate(InterfaceScreenDestination(highlightKey = "blur_effects_elements_link")) },
         SettingsSearchEntry("Hangup Animation", "Animate the screen when a call ends", "hangup_animation", Icons.Outlined.Palette, ColorRed) { it.navigate(InterfaceScreenDestination(highlightKey = "hangup_animation")) },
         SettingsSearchEntry("Incoming Call UI", "Customize the incoming call screen", "incoming_call_ui_link", Icons.Outlined.Palette, ColorGreen) { it.navigate(InterfaceScreenDestination(highlightKey = "incoming_call_ui_link")) },
-        SettingsSearchEntry("Caller UI", "Customize the in-call screen layout", "caller_ui_link", Icons.Outlined.Palette, ColorGreen) { it.navigate(InterfaceScreenDestination(highlightKey = "caller_ui_link")) },
+        SettingsSearchEntry("Ongoing Call UI", "Customize the in-call screen layout", "caller_ui_link", Icons.Outlined.Palette, ColorGreen) { it.navigate(InterfaceScreenDestination(highlightKey = "caller_ui_link")) },
         SettingsSearchEntry("Calls Section Elements", "Choose what shows in the Calls tab", "calls_section_elements", Icons.Outlined.Palette, ColorTeal) { it.navigate(InterfaceScreenDestination(highlightKey = "calls_section_elements")) },
         SettingsSearchEntry("Context Menu Elements", "Choose what shows in long-press menus", "context_menu_elements", Icons.Outlined.Palette, ColorTeal) { it.navigate(InterfaceScreenDestination(highlightKey = "context_menu_elements")) },
         SettingsSearchEntry("Tab Sections", "Choose which bottom tabs are visible", "tab_sections", Icons.Outlined.Palette, ColorAmber) { it.navigate(InterfaceScreenDestination(highlightKey = "tab_sections")) },
@@ -954,6 +954,7 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
         SettingsSearchEntry("Use Colorful Avatars", "Give fallback avatars varied colors", "colorful_avatars", Icons.Outlined.Palette, ColorPurple) { it.navigate(InterfaceScreenDestination(highlightKey = "colorful_avatars")) },
         SettingsSearchEntry("Show Picture in Avatar", "Show a contact's photo in their avatar", "avatar_picture", Icons.Outlined.Palette, ColorGreen) { it.navigate(InterfaceScreenDestination(highlightKey = "avatar_picture")) },
         SettingsSearchEntry("App Icon", "Choose a custom launcher icon", "app_icon_link", Icons.Outlined.Palette, ColorRed) { it.navigate(InterfaceScreenDestination(highlightKey = "app_icon_link")) },
+        SettingsSearchEntry("App Name", "Change the name shown for the app", "app_name_link", Icons.Outlined.Badge, ColorTeal) { it.navigate(InterfaceScreenDestination(highlightKey = "app_name_link")) },
 
         // ── Incoming Call UI screen ───────────────────────────────────────────
         SettingsSearchEntry("Default Message", "Quick-reply message shown for incoming calls", "default_message_link", Icons.Outlined.Message, ColorBlue) { it.navigate(IncomingCallUIScreenDestination(highlightKey = "default_message_link")) },

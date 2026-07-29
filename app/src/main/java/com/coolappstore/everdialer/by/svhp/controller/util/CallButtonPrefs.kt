@@ -142,8 +142,11 @@ object CallButtonPrefs {
     }
 
     /** Default freeform fraction for a button at [index] within [totalCount], matching where it
-     *  would sit in the normal 3-per-row grid — so turning Freeform on doesn't jumble the layout. */
-    fun defaultFreeformFraction(index: Int, totalCount: Int): Pair<Float, Float> {
+     *  would sit in the normal 3-per-row grid — so turning Freeform on doesn't jumble the layout.
+     *  Hang Up ([ID_HANGUP]) is special-cased to default to bottom-center, matching where it sits
+     *  as the dedicated end-call action outside the grid, instead of falling into the grid pattern. */
+    fun defaultFreeformFraction(id: String, index: Int, totalCount: Int): Pair<Float, Float> {
+        if (id == ID_HANGUP) return 0.5f to 0.92f
         val rows = if (totalCount <= 0) 1 else ((totalCount + 2) / 3)
         val col = index % 3
         val row = index / 3

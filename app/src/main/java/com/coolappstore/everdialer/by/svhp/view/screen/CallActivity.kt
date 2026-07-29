@@ -770,6 +770,18 @@ fun ExpressiveCallScreen(
                 }
                 isManuallyRecording = !isManuallyRecording
             }
+            // Only reached when Freeform is on — Hang Up is otherwise rendered separately as the
+            // fixed, dedicated end-call action below/beside the grid.
+            CallButtonPrefs.ID_HANGUP -> AnimatedCallButton(
+                icon = Icons.Default.CallEnd, label = "Hang Up", isActive = true,
+                btnColor = Color(0xFFD32F2F), activeBtnColor = Color(0xFFD32F2F),
+                fgColor = Color.White, activeFgColor = Color.White
+            ) {
+                if (noteText.isNotBlank() && phoneNumber.isNotEmpty()) {
+                    NoteManager.writeNote(context, contactName, phoneNumber, noteText)
+                }
+                try { call.disconnect() } catch (_: Exception) {}
+            }
             CallButtonPrefs.ID_MORE -> Box {
                 AnimatedCallButton(
                     icon = Icons.Default.MoreHoriz, label = "More", isActive = showMoreMenu,
@@ -857,6 +869,17 @@ fun ExpressiveCallScreen(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
+    // Guard against extreme system "Display size" / font-scale accessibility settings pushing
+    // critical controls (like End Call) off screen — clamp the effective density used for this
+    // screen's layout (not the system's global text rendering) to a sane range.
+    val rawDensity = LocalDensity.current
+    val clampedCallDensity = remember(rawDensity.density, rawDensity.fontScale) {
+        androidx.compose.ui.unit.Density(
+            density = rawDensity.density,
+            fontScale = rawDensity.fontScale.coerceIn(0.85f, 1.30f)
+        )
+    }
+
     val dialpadOffsetY by animateFloatAsState(
         targetValue = if (showDialpad) 0f else 1f,
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioNoBouncy),
@@ -868,6 +891,7 @@ fun ExpressiveCallScreen(
         label = "dialpadAlpha"
     )
 
+    androidx.compose.runtime.CompositionLocalProvider(LocalDensity provides clampedCallDensity) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -956,41 +980,57 @@ fun ExpressiveCallScreen(
                     // Right panel: controls
                     if (effectiveCallState != Call.STATE_RINGING) {
                         Surface(modifier = Modifier.weight(1f).fillMaxHeight(), color = overlayColor) {
-                            Column(
-                                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                FeatureButtonsLayout(
-                                    activeButtonIds = activeButtonIds,
-                                    freeformEnabled = freeformEnabled,
-                                    freeformPositions = freeformPositions,
-                                    rowSpacing = 16.dp
-                                ) { id -> RenderFeatureButton(id) }
-                                Spacer(modifier = Modifier.height(16.dp))
-                                AnimatedVisibility(visible = showNoteWindow, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
-                                    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-                                        Column(modifier = Modifier.padding(16.dp)) {
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                                Text("Note — $contactName", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                                                IconButton(onClick = { if (phoneNumber.isNotEmpty()) NoteManager.writeNote(context, contactName, phoneNumber, noteText); showNoteWindow = false }, modifier = Modifier.size(32.dp)) {
-                                                    Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                            Column(modifier = Modifier.fillMaxSize()) {
+                                // Scrollable area: feature buttons + note editor. Independent of
+                                // display/font scale — this area shrinks and scrolls internally,
+                                // it never pushes the End Call button below the visible screen.
+                                Column(
+                                    modifier = Modifier.weight(1f).fillMaxWidth()
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    FeatureButtonsLayout(
+                                        activeButtonIds = if (freeformEnabled) activeButtonIds + CallButtonPrefs.ID_HANGUP else activeButtonIds,
+                                        freeformEnabled = freeformEnabled,
+                                        freeformPositions = freeformPositions,
+                                        rowSpacing = 16.dp
+                                    ) { id -> RenderFeatureButton(id) }
+                                    AnimatedVisibility(visible = showNoteWindow, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                                        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                                            Column(modifier = Modifier.padding(16.dp)) {
+                                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("Note — $contactName", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                                                    IconButton(onClick = { if (phoneNumber.isNotEmpty()) NoteManager.writeNote(context, contactName, phoneNumber, noteText); showNoteWindow = false }, modifier = Modifier.size(32.dp)) {
+                                                        Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                                                    }
                                                 }
+                                                Spacer(Modifier.height(8.dp))
+                                                OutlinedTextField(value = noteText, onValueChange = { noteText = it }, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 140.dp), placeholder = { Text("Type your note...") }, shape = RoundedCornerShape(12.dp), minLines = 3, colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant))
                                             }
-                                            Spacer(Modifier.height(8.dp))
-                                            OutlinedTextField(value = noteText, onValueChange = { noteText = it }, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 140.dp), placeholder = { Text("Type your note...") }, shape = RoundedCornerShape(12.dp), minLines = 3, colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = MaterialTheme.colorScheme.primary, unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant))
                                         }
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(20.dp))
-                                val endInteraction2 = remember { MutableInteractionSource() }
-                                val endPressed2 by endInteraction2.collectIsPressedAsState()
-                                val endRadius2 by animateDpAsState(if (endPressed2) 16.dp else 32.dp, spring(stiffness = Spring.StiffnessMedium), label = "endRadius2")
-                                Surface(
-                                    onClick = { if (noteText.isNotBlank() && phoneNumber.isNotEmpty()) NoteManager.writeNote(context, contactName, phoneNumber, noteText); try { call.disconnect() } catch (_: Exception) {} },
-                                    modifier = Modifier.fillMaxWidth(0.8f).height(64.dp).scale(if (endPressed2) 0.96f else 1f),
-                                    shape = RoundedCornerShape(endRadius2), color = Color(0xFFD32F2F), interactionSource = endInteraction2
-                                ) { Box(contentAlignment = Alignment.Center) { Icon(Icons.Default.CallEnd, null, tint = Color.White, modifier = Modifier.size(28.dp)) } }
+                                // Fixed footer: End Call button — always visible, never affected
+                                // by how tall the scrollable content above is, regardless of
+                                // system font/display scale. Hidden in Freeform mode, where Hang
+                                // Up is instead a draggable tile inside FeatureButtonsLayout above.
+                                if (!freeformEnabled) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    val endInteraction2 = remember { MutableInteractionSource() }
+                                    val endPressed2 by endInteraction2.collectIsPressedAsState()
+                                    val endRadius2 by animateDpAsState(if (endPressed2) 16.dp else 32.dp, spring(stiffness = Spring.StiffnessMedium), label = "endRadius2")
+                                    Surface(
+                                        onClick = { if (noteText.isNotBlank() && phoneNumber.isNotEmpty()) NoteManager.writeNote(context, contactName, phoneNumber, noteText); try { call.disconnect() } catch (_: Exception) {} },
+                                        modifier = Modifier.fillMaxWidth(0.8f).heightIn(min = 56.dp).scale(if (endPressed2) 0.96f else 1f),
+                                        shape = RoundedCornerShape(endRadius2), color = Color(0xFFD32F2F), interactionSource = endInteraction2
+                                    ) { Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 12.dp)) { Icon(Icons.Default.CallEnd, null, tint = Color.White, modifier = Modifier.size(28.dp)) } }
+                                }
+                                }
                             }
                         }
                     } else {
@@ -1134,7 +1174,7 @@ fun ExpressiveCallScreen(
                             Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                 // Feature Buttons — order & visibility from Settings → Appearance → Caller UI
                                 FeatureButtonsLayout(
-                                    activeButtonIds = activeButtonIds,
+                                    activeButtonIds = if (freeformEnabled) activeButtonIds + CallButtonPrefs.ID_HANGUP else activeButtonIds,
                                     freeformEnabled = freeformEnabled,
                                     freeformPositions = freeformPositions,
                                     rowSpacing = 20.dp
@@ -1196,6 +1236,7 @@ fun ExpressiveCallScreen(
                                     }
                                 }
 
+                                if (!freeformEnabled) {
                                 Spacer(modifier = Modifier.height(48.dp))
 
                                 // ── Hangup Button with configurable width ──────────────
@@ -1227,6 +1268,7 @@ fun ExpressiveCallScreen(
                                             Icon(Icons.Default.CallEnd, null, tint = Color.White, modifier = Modifier.size(32.dp))
                                         }
                                     }
+                                }
                                 }
                             }
                         }
@@ -1498,6 +1540,7 @@ fun ExpressiveCallScreen(
             }
         }
     }
+    }
 }
 
 // ─── In-Call Dial Pad ──────────────────────────────────────────────────────────
@@ -1536,7 +1579,7 @@ private fun FeatureButtonsLayout(
         val containerHeightPx = with(density) { maxHeight.toPx() }
 
         activeButtonIds.forEachIndexed { index, id ->
-            val (fx, fy) = freeformPositions[id] ?: CallButtonPrefs.defaultFreeformFraction(index, activeButtonIds.size)
+            val (fx, fy) = freeformPositions[id] ?: CallButtonPrefs.defaultFreeformFraction(id, index, activeButtonIds.size)
             Box(
                 modifier = Modifier.offset {
                     val cx = fx * containerWidthPx - tileWidthPx / 2f

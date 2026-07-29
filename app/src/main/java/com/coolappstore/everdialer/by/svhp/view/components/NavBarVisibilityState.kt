@@ -3,6 +3,10 @@ package com.coolappstore.everdialer.by.svhp.view.components
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.navigation.NavController
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import com.ramcosta.composedestinations.generated.destinations.NotesScreenDestination
 
 /**
  * Shared flag that lets a tab screen (e.g. the Recordings tab while it's showing the
@@ -37,4 +41,32 @@ object NavBarVisibilityState {
      * above, since the user is viewing one specific search match rather than browsing the tab.
      */
     var hideForSearchResult by mutableStateOf(false)
+}
+
+/**
+ * Navigates to the Notes tab as a normal bottom-nav tab entry (tab tap, nav rail, swipe-to-Notes)
+ * — always landing on the plain Notes view with its search bar and the bottom nav pill visible.
+ *
+ * Uses the exact same popUpTo(start destination, saveState = true) + launchSingleTop pattern every
+ * other tab uses, so the back stack stays shallow and switching to/from other tabs keeps working
+ * normally. The one difference is restoreState = false: Notes always pushes a brand new instance
+ * with highlightQuery = null explicitly, instead of risking a restored saved instance that could
+ * still be carrying a stale highlightQuery (and hidden chrome) from an earlier unified-Search visit.
+ */
+fun NavController.enterNotesTab() {
+    val alreadyShowingNormalNotes =
+        currentDestination?.hierarchy?.any { it.route == NotesScreenDestination.route } == true &&
+            !NavBarVisibilityState.hideForSearchResult
+    NavBarVisibilityState.hideForSearchResult = false
+    if (alreadyShowingNormalNotes) return
+
+    navigate(NotesScreenDestination(highlightQuery = null).route) {
+        // Same popUpTo(start destination, saveState = true) pattern every other tab uses, so the
+        // back stack never grows unbounded and other tabs keep behaving normally. restoreState is
+        // deliberately left false (unlike other tabs) so Notes never restores a previously-saved
+        // instance that could still be carrying a stale highlightQuery from an earlier Search visit.
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = false
+    }
 }

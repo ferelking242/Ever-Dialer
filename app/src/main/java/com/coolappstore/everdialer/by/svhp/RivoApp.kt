@@ -1,7 +1,7 @@
 package com.coolappstore.everdialer.by.svhp
 
 import com.coolappstore.evercallrecorder.by.svhp.ShizuApplication
-import com.coolappstore.everdialer.by.svhp.view.screen.settings.KEY_SELECTED_APP_ICON
+import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
 import com.coolappstore.everdialer.by.svhp.view.screen.settings.applyIcon
 import com.coolappstore.everdialer.by.svhp.view.screen.settings.buildIcons
 import org.koin.android.ext.koin.androidContext
@@ -22,11 +22,11 @@ class RivoApp : ShizuApplication() {
 
     private fun restoreSavedAppIcon() {
         try {
-            val prefs = getSharedPreferences("rivo_prefs", MODE_PRIVATE)
-            val savedKey = prefs.getString(KEY_SELECTED_APP_ICON, "default") ?: "default"
+            val prefs = PreferenceManager(this)
+            val savedKey = prefs.getString(com.coolappstore.everdialer.by.svhp.view.screen.settings.KEY_SELECTED_APP_ICON, "default") ?: "default"
             val icons = buildIcons(this)
             val entry = icons.find { it.key == savedKey } ?: icons.first()
-            applyIcon(this, icons, entry)
+            applyIcon(this, prefs, entry)
         } catch (_: Exception) {}
     }
 }

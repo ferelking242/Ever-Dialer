@@ -55,6 +55,13 @@ private val ColorTeal      = Color(0xFF009688)
 @Composable
 fun AboutAppScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val context = LocalContext.current
+    val prefs = org.koin.compose.koinInject<com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager>()
+    val selectedAppNameKey = prefs.getString(
+        com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager.KEY_APP_NAME_PRESET, "default"
+    ) ?: "default"
+    val displayAppName = buildAppNamePresets(context).firstOrNull { it.key == selectedAppNameKey }?.label
+        ?.substringBefore(" (Default)")
+        ?: com.coolappstore.everdialer.by.svhp.APP_NAME
     var highlightedKey by remember { mutableStateOf(highlightKey) }
 
     var visible by remember { mutableStateOf(false) }
@@ -107,7 +114,7 @@ fun AboutAppScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
             Spacer(modifier = Modifier.height(20.dp))
 
             Text(
-                "Ever Dialer",
+                displayAppName,
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.ExtraBold,
                 modifier = Modifier.alpha(alpha)

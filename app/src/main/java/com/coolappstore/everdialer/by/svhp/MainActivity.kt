@@ -57,6 +57,7 @@ import com.coolappstore.everdialer.by.svhp.view.components.Android14WelcomeDialo
 import com.coolappstore.everdialer.by.svhp.view.components.TelegramJoinDialog
 import com.coolappstore.everdialer.by.svhp.view.components.FullScreenIntentDialog
 import com.coolappstore.everdialer.by.svhp.view.components.BottomBar
+import com.coolappstore.everdialer.by.svhp.view.components.enterNotesTab
 import com.coolappstore.everdialer.by.svhp.liquidglass.LocalLiquidGlassBackdrop
 import com.coolappstore.everdialer.by.svhp.liquidglass.backdrops.rememberLayerBackdrop
 import com.coolappstore.everdialer.by.svhp.liquidglass.backdrops.layerBackdrop
@@ -392,6 +393,13 @@ class MainActivity : FragmentActivity() {
                     val showRecordingsRail = prefs2.getBoolean(PreferenceManager.KEY_TAB_SHOW_RECORDINGS, true)
 
                     fun navTo(route: String) {
+                        // Always open Notes fresh from the rail — enterNotesTab() guarantees a
+                        // brand new instance with no leftover highlightQuery, so the search bar
+                        // and nav rail can never come back hidden from a previous search visit.
+                        if (route == NotesScreenDestination.route) {
+                            navController.enterNotesTab()
+                            return
+                        }
                         navController.navigate(route) {
                             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
                             launchSingleTop = true

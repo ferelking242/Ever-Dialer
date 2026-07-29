@@ -220,8 +220,16 @@ fun BottomBar(navController: NavController) {
     }
 
     fun navigate(route: String) {
-        // If already on this route, do nothing (prevents double-tap freeze)
-        if (currentDestination?.hierarchy?.any { it.route == route } == true) return
+        // Tapping the Notes tab always means "show the normal Notes view" — enterNotesTab()
+        // guarantees a fresh instance with no leftover highlightQuery/hidden chrome, whether
+        // Notes was already selected (in a hidden search-result state) or not selected at all.
+        if (route == NotesScreenDestination.route) {
+            navController.enterNotesTab()
+            return
+        }
+        // If already on this route, do nothing (prevents double-tap freeze).
+        val alreadyOnRoute = currentDestination?.hierarchy?.any { it.route == route } == true
+        if (alreadyOnRoute) return
         navController.navigate(route) {
             popUpTo(navController.graph.findStartDestination().id) { saveState = true }
             launchSingleTop = true

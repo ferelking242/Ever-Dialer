@@ -127,6 +127,14 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
     var blurEffects         by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_BLUR_EFFECTS, false)) }
     var hangupAnimation     by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_HANGUP_ANIMATION, true)) }
 
+    // App Name preset picker
+    var showAppNameDialog by remember { mutableStateOf(false) }
+    val appNamePresets = remember { buildAppNamePresets(context) }
+    var selectedAppNameKey by remember {
+        mutableStateOf(prefs.getString(PreferenceManager.KEY_APP_NAME_PRESET, "default") ?: "default")
+    }
+
+
     // Call UI section checkboxes dialog
     var showCallUIDialog   by remember { mutableStateOf(false) }
     var callUIShowToday    by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_CALL_UI_SHOW_TODAY, true)) }
@@ -1092,9 +1100,9 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                                 HorizontalDivider(Modifier.padding(horizontal = 16.dp),
                                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-                                // ── Caller UI → separate page ─────────────────────────
+                                // ── Ongoing Call UI → separate page ─────────────────────────
                                 RivoListItem(
-                                    headline = "Caller UI",
+                                    headline = "Ongoing Call UI",
                                     supporting = "Customize the in-call screen layout and controls",
                                     leadingIcon = Icons.Outlined.Person,
                                     iconContainerColor = ColorBlue,
@@ -1365,11 +1373,11 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                     }
                 }
 
-                // ── App Icon ─────────────────────────────────────────
+                // ── App ─────────────────────────────────────────
                 item {
                     Column {
                         Text(
-                            "App Icon",
+                            "App",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.padding(start = 12.dp, bottom = 8.dp)
@@ -1386,10 +1394,56 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                                 }
                             )
                         }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        RivoExpressiveCard {
+                            RivoListItem(
+                                headline = "App Name",
+                                supporting = "Currently: " + (appNamePresets.firstOrNull { it.key == selectedAppNameKey }?.label ?: "Ever Dialer (Default)"),
+                                leadingIcon = Icons.Outlined.Badge,
+                                iconContainerColor = ColorTeal,
+                                modifier = Modifier.settingsSearchHighlight("app_name_link", highlightedKey) { highlightedKey = null },
+                                onClick = { showAppNameDialog = true }
+                            )
+                        }
                     }
                 }
 
                 item { Spacer(modifier = Modifier.height(100.dp)) }
+            }
+
+            if (showAppNameDialog) {
+                AlertDialog(
+                    onDismissRequest = { showAppNameDialog = false },
+                    title = { Text("App Name") },
+                    text = {
+                        Column {
+                            appNamePresets.forEach { entry ->
+                                val isSelected = selectedAppNameKey == entry.key
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            selectedAppNameKey = entry.key
+                                            prefs.setString(PreferenceManager.KEY_APP_NAME_PRESET, entry.key)
+                                            applyAppNamePreset(context, prefs, entry)
+                                            showAppNameDialog = false
+                                        }
+                                        .padding(vertical = 10.dp)
+                                ) {
+                                    RadioButton(selected = isSelected, onClick = null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(entry.label, style = MaterialTheme.typography.bodyLarge)
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showAppNameDialog = false }) { Text("Done") }
+                    }
+                )
             }
 
 

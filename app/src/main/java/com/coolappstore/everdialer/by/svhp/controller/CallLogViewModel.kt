@@ -48,7 +48,6 @@ class CallLogViewModel(
         override fun onChange(selfChange: Boolean) {
             debounceJob?.cancel()
             debounceJob = viewModelScope.launch {
-                delay(300)
                 fetchLogs(forceRefresh = true)
             }
         }

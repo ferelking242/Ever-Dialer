@@ -300,6 +300,514 @@
             </intent-filter>
         </activity-alias>
 
+        <!-- App Name presets combined with the currently selected icon — only one
+             alias total is ever enabled at a time (see applyLauncherAlias in AppIconScreen.kt),
+             so a name change here keeps whatever custom icon is already active. -->
+
+        <activity-alias
+            android:name=".MainActivityNameCallDefault"
+            android:targetActivity=".MainActivity"
+            android:label="Call"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameCallPhone"
+            android:targetActivity=".MainActivity"
+            android:label="Call"
+            android:icon="@mipmap/ic_launcher_phone"
+            android:roundIcon="@mipmap/ic_launcher_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameCallCustomPhone"
+            android:targetActivity=".MainActivity"
+            android:label="Call"
+            android:icon="@mipmap/ic_launcher_custom_phone"
+            android:roundIcon="@mipmap/ic_launcher_custom_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameCallGoogle"
+            android:targetActivity=".MainActivity"
+            android:label="Call"
+            android:icon="@mipmap/ic_launcher_google_dialer"
+            android:roundIcon="@mipmap/ic_launcher_google_dialer_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameCallNothing"
+            android:targetActivity=".MainActivity"
+            android:label="Call"
+            android:icon="@mipmap/ic_launcher_nothing"
+            android:roundIcon="@mipmap/ic_launcher_nothing_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameCallLineageOS"
+            android:targetActivity=".MainActivity"
+            android:label="Call"
+            android:icon="@mipmap/ic_launcher_lineageos"
+            android:roundIcon="@mipmap/ic_launcher_lineageos_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialDefault"
+            android:targetActivity=".MainActivity"
+            android:label="Dial"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialPhone"
+            android:targetActivity=".MainActivity"
+            android:label="Dial"
+            android:icon="@mipmap/ic_launcher_phone"
+            android:roundIcon="@mipmap/ic_launcher_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialCustomPhone"
+            android:targetActivity=".MainActivity"
+            android:label="Dial"
+            android:icon="@mipmap/ic_launcher_custom_phone"
+            android:roundIcon="@mipmap/ic_launcher_custom_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialGoogle"
+            android:targetActivity=".MainActivity"
+            android:label="Dial"
+            android:icon="@mipmap/ic_launcher_google_dialer"
+            android:roundIcon="@mipmap/ic_launcher_google_dialer_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialNothing"
+            android:targetActivity=".MainActivity"
+            android:label="Dial"
+            android:icon="@mipmap/ic_launcher_nothing"
+            android:roundIcon="@mipmap/ic_launcher_nothing_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialLineageOS"
+            android:targetActivity=".MainActivity"
+            android:label="Dial"
+            android:icon="@mipmap/ic_launcher_lineageos"
+            android:roundIcon="@mipmap/ic_launcher_lineageos_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameTruePhoneDefault"
+            android:targetActivity=".MainActivity"
+            android:label="True Phone"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameTruePhonePhone"
+            android:targetActivity=".MainActivity"
+            android:label="True Phone"
+            android:icon="@mipmap/ic_launcher_phone"
+            android:roundIcon="@mipmap/ic_launcher_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameTruePhoneCustomPhone"
+            android:targetActivity=".MainActivity"
+            android:label="True Phone"
+            android:icon="@mipmap/ic_launcher_custom_phone"
+            android:roundIcon="@mipmap/ic_launcher_custom_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameTruePhoneGoogle"
+            android:targetActivity=".MainActivity"
+            android:label="True Phone"
+            android:icon="@mipmap/ic_launcher_google_dialer"
+            android:roundIcon="@mipmap/ic_launcher_google_dialer_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameTruePhoneNothing"
+            android:targetActivity=".MainActivity"
+            android:label="True Phone"
+            android:icon="@mipmap/ic_launcher_nothing"
+            android:roundIcon="@mipmap/ic_launcher_nothing_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameTruePhoneLineageOS"
+            android:targetActivity=".MainActivity"
+            android:label="True Phone"
+            android:icon="@mipmap/ic_launcher_lineageos"
+            android:roundIcon="@mipmap/ic_launcher_lineageos_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhoneDialerDefault"
+            android:targetActivity=".MainActivity"
+            android:label="Phone Dialer"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhoneDialerPhone"
+            android:targetActivity=".MainActivity"
+            android:label="Phone Dialer"
+            android:icon="@mipmap/ic_launcher_phone"
+            android:roundIcon="@mipmap/ic_launcher_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhoneDialerCustomPhone"
+            android:targetActivity=".MainActivity"
+            android:label="Phone Dialer"
+            android:icon="@mipmap/ic_launcher_custom_phone"
+            android:roundIcon="@mipmap/ic_launcher_custom_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhoneDialerGoogle"
+            android:targetActivity=".MainActivity"
+            android:label="Phone Dialer"
+            android:icon="@mipmap/ic_launcher_google_dialer"
+            android:roundIcon="@mipmap/ic_launcher_google_dialer_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhoneDialerNothing"
+            android:targetActivity=".MainActivity"
+            android:label="Phone Dialer"
+            android:icon="@mipmap/ic_launcher_nothing"
+            android:roundIcon="@mipmap/ic_launcher_nothing_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhoneDialerLineageOS"
+            android:targetActivity=".MainActivity"
+            android:label="Phone Dialer"
+            android:icon="@mipmap/ic_launcher_lineageos"
+            android:roundIcon="@mipmap/ic_launcher_lineageos_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhoneDefault"
+            android:targetActivity=".MainActivity"
+            android:label="Phone"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhonePhone"
+            android:targetActivity=".MainActivity"
+            android:label="Phone"
+            android:icon="@mipmap/ic_launcher_phone"
+            android:roundIcon="@mipmap/ic_launcher_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhoneCustomPhone"
+            android:targetActivity=".MainActivity"
+            android:label="Phone"
+            android:icon="@mipmap/ic_launcher_custom_phone"
+            android:roundIcon="@mipmap/ic_launcher_custom_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhoneGoogle"
+            android:targetActivity=".MainActivity"
+            android:label="Phone"
+            android:icon="@mipmap/ic_launcher_google_dialer"
+            android:roundIcon="@mipmap/ic_launcher_google_dialer_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhoneNothing"
+            android:targetActivity=".MainActivity"
+            android:label="Phone"
+            android:icon="@mipmap/ic_launcher_nothing"
+            android:roundIcon="@mipmap/ic_launcher_nothing_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNamePhoneLineageOS"
+            android:targetActivity=".MainActivity"
+            android:label="Phone"
+            android:icon="@mipmap/ic_launcher_lineageos"
+            android:roundIcon="@mipmap/ic_launcher_lineageos_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialerDefault"
+            android:targetActivity=".MainActivity"
+            android:label="Dialer"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialerPhone"
+            android:targetActivity=".MainActivity"
+            android:label="Dialer"
+            android:icon="@mipmap/ic_launcher_phone"
+            android:roundIcon="@mipmap/ic_launcher_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialerCustomPhone"
+            android:targetActivity=".MainActivity"
+            android:label="Dialer"
+            android:icon="@mipmap/ic_launcher_custom_phone"
+            android:roundIcon="@mipmap/ic_launcher_custom_phone_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialerGoogle"
+            android:targetActivity=".MainActivity"
+            android:label="Dialer"
+            android:icon="@mipmap/ic_launcher_google_dialer"
+            android:roundIcon="@mipmap/ic_launcher_google_dialer_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialerNothing"
+            android:targetActivity=".MainActivity"
+            android:label="Dialer"
+            android:icon="@mipmap/ic_launcher_nothing"
+            android:roundIcon="@mipmap/ic_launcher_nothing_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias
+            android:name=".MainActivityNameDialerLineageOS"
+            android:targetActivity=".MainActivity"
+            android:label="Dialer"
+            android:icon="@mipmap/ic_launcher_lineageos"
+            android:roundIcon="@mipmap/ic_launcher_lineageos_round"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- Recent Calls Home Screen Widget -->
         <receiver
             android:name=".widget.RecentCallsWidgetProvider"

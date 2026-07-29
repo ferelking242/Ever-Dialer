@@ -98,6 +98,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinActivityViewModel
 import kotlin.math.abs
+import com.coolappstore.everdialer.by.svhp.view.components.enterNotesTab
 
 @Destination<RootGraph>(style = TabTransitionStyle::class)
 @OptIn(ExperimentalFoundationApi::class)
@@ -240,10 +241,7 @@ fun FavoritesScreen(navController: NavController, navigator: DestinationsNavigat
                                 } else {
                                     if (notesEnabled) {
                                         scope.launch {
-                                            navController.navigate(NotesScreenDestination.route) {
-                                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                                launchSingleTop = true; restoreState = true
-                                            }
+                                            navController.enterNotesTab()
                                         }
                                     }
                                 }
