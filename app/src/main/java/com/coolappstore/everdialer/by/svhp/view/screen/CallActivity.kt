@@ -572,6 +572,13 @@ fun ExpressiveCallScreen(
             CallButtonPrefs.ID_BLUETOOTH
         )
     }
+    // Bluetooth is only actually shown while a headset is connected for this call — otherwise
+    // it's dropped from the grid entirely (not just hidden in an empty slot), so the remaining
+    // buttons reflow to fill the freed-up space instead of leaving a blank row/column behind.
+    val displayedButtonIds = remember(activeButtonIds, isBluetoothConnected) {
+        if (isBluetoothConnected) activeButtonIds
+        else activeButtonIds.filter { it != CallButtonPrefs.ID_BLUETOOTH }
+    }
     // Freeform layout — when enabled in Settings → Appearance → Caller UI, buttons are rendered
     // at the exact custom positions configured there instead of the fixed 3-per-row grid. The
     // real call screen only *renders* this saved layout; dragging/editing happens in Settings.
@@ -723,6 +730,9 @@ fun ExpressiveCallScreen(
             ) {
                 CallService.setAudioRoute(if (isSpeakerOn) CallAudioState.ROUTE_EARPIECE else CallAudioState.ROUTE_SPEAKER)
             }
+            // displayedButtonIds already excludes Bluetooth entirely while no headset is
+            // connected, so this branch only ever runs while it actually is connected — no
+            // reserved blank slot needed anymore, the grid simply reflows around its absence.
             CallButtonPrefs.ID_BLUETOOTH -> if (isBluetoothConnected) {
                 AnimatedCallButton(
                     icon = if (isBluetoothActive) Icons.Default.Bluetooth else Icons.Default.BluetoothDisabled,
@@ -732,20 +742,6 @@ fun ExpressiveCallScreen(
                 ) {
                     if (isBluetoothActive) CallService.setAudioRoute(CallAudioState.ROUTE_EARPIECE)
                     else CallService.setAudioRoute(CallAudioState.ROUTE_BLUETOOTH)
-                }
-            } else {
-                // No Bluetooth headset connected this call — reserve the same grid slot instead
-                // of rendering nothing, otherwise Arrangement.SpaceEvenly redistributes the
-                // remaining buttons in this row across the freed-up space, which visually
-                // "moves" every button after it in the saved order — differently from call to
-                // call depending on whether a headset happens to be connected that time.
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Box(modifier = Modifier.size(68.dp))
-                    Text(
-                        text = "",
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
                 }
             }
             CallButtonPrefs.ID_RECORD -> AnimatedCallButton(
@@ -775,7 +771,8 @@ fun ExpressiveCallScreen(
             CallButtonPrefs.ID_HANGUP -> AnimatedCallButton(
                 icon = Icons.Default.CallEnd, label = "Hang Up", isActive = true,
                 btnColor = Color(0xFFD32F2F), activeBtnColor = Color(0xFFD32F2F),
-                fgColor = Color.White, activeFgColor = Color.White
+                fgColor = Color.White, activeFgColor = Color.White,
+                labelColor = controlBtnFg
             ) {
                 if (noteText.isNotBlank() && phoneNumber.isNotEmpty()) {
                     NoteManager.writeNote(context, contactName, phoneNumber, noteText)
@@ -989,10 +986,10 @@ fun ExpressiveCallScreen(
                                         .verticalScroll(rememberScrollState())
                                         .padding(horizontal = 16.dp, vertical = 16.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
+                                    verticalArrangement = Arrangement.Bottom
                                 ) {
                                     FeatureButtonsLayout(
-                                        activeButtonIds = if (freeformEnabled) activeButtonIds + CallButtonPrefs.ID_HANGUP else activeButtonIds,
+                                        activeButtonIds = if (freeformEnabled) displayedButtonIds + CallButtonPrefs.ID_HANGUP else displayedButtonIds,
                                         freeformEnabled = freeformEnabled,
                                         freeformPositions = freeformPositions,
                                         rowSpacing = 16.dp
@@ -1174,7 +1171,7 @@ fun ExpressiveCallScreen(
                             Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                 // Feature Buttons — order & visibility from Settings → Appearance → Caller UI
                                 FeatureButtonsLayout(
-                                    activeButtonIds = if (freeformEnabled) activeButtonIds + CallButtonPrefs.ID_HANGUP else activeButtonIds,
+                                    activeButtonIds = if (freeformEnabled) displayedButtonIds + CallButtonPrefs.ID_HANGUP else displayedButtonIds,
                                     freeformEnabled = freeformEnabled,
                                     freeformPositions = freeformPositions,
                                     rowSpacing = 20.dp
@@ -1237,7 +1234,7 @@ fun ExpressiveCallScreen(
                                 }
 
                                 if (!freeformEnabled) {
-                                Spacer(modifier = Modifier.height(48.dp))
+                                Spacer(modifier = Modifier.height(20.dp))
 
                                 // ── Hangup Button with configurable width ──────────────
                                 val endInteraction = remember { MutableInteractionSource() }
@@ -1929,6 +1926,7 @@ fun AnimatedCallButton(
     activeBtnColor: Color = Color.White,
     fgColor: Color = Color.White,
     activeFgColor: Color = Color.Black,
+    labelColor: Color? = null,
     onClick: () -> Unit
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -1944,7 +1942,7 @@ fun AnimatedCallButton(
             text = label,
             style = MaterialTheme.typography.labelMedium,
             fontFamily = MaterialTheme.typography.labelMedium.fontFamily,
-            color = fgColor.copy(0.7f),
+            color = (labelColor ?: fgColor).copy(alpha = if (labelColor != null) labelColor.alpha * 0.7f else 0.7f),
             modifier = Modifier.padding(top = 8.dp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis

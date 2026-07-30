@@ -1,8 +1,10 @@
 package com.coolappstore.everdialer.by.svhp.view.screen.settings
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
@@ -432,16 +434,17 @@ fun CallerUIScreen(navigator: DestinationsNavigator) {
  * Only *enabled* buttons are included in [gridIds] — a button unticked in the show/hide menu is
  * fully removed from the preview (and the real call screen) rather than shown dimmed out.
  *
- * The dragged tile is moved directly via its own live offset (the same technique
- * [FreeformButtonsArea] uses), and reordering is resolved by continuously comparing that live
- * position against every other tile's last-measured on-screen position (via
- * [onGloballyPositioned]). This mirrors Freeform's drag handling exactly instead of routing the
- * dragged tile through a separate window-coordinate-translated ghost overlay, which was fragile
- * and could cause drags to feel like they got cut short or dropped in the wrong place.
+ * With Freeform off, reordering is tap-to-select-then-tap-to-swap: tapping a tile highlights it
+ * (see [selectedId]), and tapping a second tile swaps the two tiles' positions outright and
+ * clears the selection. This replaces continuous free-dragging for the fixed grid, which doesn't
+ * suit a layout that always snaps back to fixed slots anyway — tap-to-swap is unambiguous about
+ * which two positions are being exchanged, with no room for a drag to land in the wrong spot.
+ * Freeform's own tiles (see [FreeformButtonsArea]) keep continuous dragging, since there the
+ * final position *is* the point.
  *
- * Hang Up is intentionally excluded from the draggable grid — [CallButtonPrefs.getOrder] always
- * forces it back to the last position and [CallButtonPrefs.getActiveActionIds] excludes it
- * entirely, since the real call screen always renders it separately as the dedicated end-call
+ * Hang Up is intentionally excluded from the tap-to-swap grid — [CallButtonPrefs.getOrder]
+ * always forces it back to the last position and [CallButtonPrefs.getActiveActionIds] excludes
+ * it entirely, since the real call screen always renders it separately as the dedicated end-call
  * action. With Freeform on, Hang Up instead becomes a draggable tile inside
  * [FreeformButtonsArea] (see there), so it can be positioned anywhere too.
  */
@@ -461,13 +464,14 @@ private fun FeatureButtonsPreview(
     // Disabled (unticked) buttons are dropped entirely — not shown dimmed/blanked out.
     val gridIds = buttonOrder.filter { it != CallButtonPrefs.ID_HANGUP && (enabledMap[it] ?: true) }
 
-    var draggingId by remember { mutableStateOf<String?>(null) }
-    // Live drag offset of the currently-dragged tile — the tile itself moves with the finger
-    // (no separate ghost), matching how Freeform's tiles are dragged.
-    var dragOffset by remember { mutableStateOf(Offset.Zero) }
-    // Each tile's last-measured on-screen bounds, used to hit-test the dragged tile's current
-    // position against every other tile to decide when to swap.
-    val tileBounds = remember { mutableStateMapOf<String, Rect>() }
+    // Tap-to-select-then-tap-to-swap reordering for the non-Freeform grid: tap a tile to
+    // highlight it, then tap a second tile to swap their positions outright.
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    // Selection doesn't survive a switch to Freeform (or the set of tiles changing), so it can't
+    // point at a tile that's no longer in the grid.
+    LaunchedEffect(freeformEnabled, gridIds) {
+        if (freeformEnabled || selectedId !in gridIds) selectedId = null
+    }
 
     // ── Freeform toggle — sits above the "Preview" heading. When on, buttons can be dropped
     // anywhere inside the preview area instead of snapping into the fixed 3-per-row grid.
@@ -537,62 +541,41 @@ private fun FeatureButtonsPreview(
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         rowIds.forEach { id ->
                             val spec = CallButtonPrefs.specFor(id) ?: return@forEach
-                            val isDragging = draggingId == id
-                            val tileOffset = if (isDragging) dragOffset else Offset.Zero
+                            val isSelected = selectedId == id
 
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
-                                    .zIndex(if (isDragging) 1f else 0f)
-                                    .onGloballyPositioned { coords ->
-                                        tileBounds[id] = Rect(
-                                            offset = coords.positionInWindow(),
-                                            size = coords.size.toSize()
-                                        )
-                                    }
-                                    // The tile itself follows the finger while dragging — same
-                                    // technique as FreeformButtonsArea — instead of fading out in
-                                    // favor of a separately window-coordinate-translated ghost.
-                                    .offset { IntOffset(tileOffset.x.roundToInt(), tileOffset.y.roundToInt()) }
-                                    .immediateDrag(
-                                        key = id,
-                                        onDragStart = {
-                                            draggingId = id
-                                            dragOffset = Offset.Zero
-                                            onDragActiveChanged(true)
-                                        },
-                                        onDrag = { delta ->
-                                            dragOffset += delta
-                                            val currentCenter = (tileBounds[id]?.center ?: Offset.Zero) + dragOffset
-
-                                            val targetId = tileBounds
-                                                .filterKeys { it != id && it in gridIds }
-                                                .minByOrNull { (_, rect) -> (rect.center - currentCenter).getDistance() }
-                                                ?.key
-                                            if (targetId != null) {
-                                                val targetRect = tileBounds.getValue(targetId)
-                                                if ((targetRect.center - currentCenter).getDistance() < targetRect.width / 2f) {
-                                                    val fromIndex = buttonOrder.indexOf(id)
-                                                    val toIndex = buttonOrder.indexOf(targetId)
-                                                    if (fromIndex != -1 && toIndex != -1 && fromIndex != toIndex) {
-                                                        val item = buttonOrder.removeAt(fromIndex)
-                                                        buttonOrder.add(toIndex, item)
-                                                    }
-                                                }
-                                            }
-                                        },
-                                        onDragEnd = {
-                                            draggingId = null
-                                            dragOffset = Offset.Zero
-                                            onDragActiveChanged(false)
-                                            onOrderChanged()
-                                        }
-                                    )
                                     .width(76.dp)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) {
+                                        val current = selectedId
+                                        when {
+                                            current == null -> selectedId = id
+                                            current == id -> selectedId = null
+                                            else -> {
+                                                // Swap the two selected tiles' positions outright,
+                                                // instead of shifting everything in between.
+                                                val fromIndex = buttonOrder.indexOf(current)
+                                                val toIndex = buttonOrder.indexOf(id)
+                                                if (fromIndex != -1 && toIndex != -1) {
+                                                    val tmp = buttonOrder[fromIndex]
+                                                    buttonOrder[fromIndex] = buttonOrder[toIndex]
+                                                    buttonOrder[toIndex] = tmp
+                                                    onOrderChanged()
+                                                }
+                                                selectedId = null
+                                            }
+                                        }
+                                    }
                             ) {
                                 Surface(
                                     shape = CircleShape,
-                                    color = Color.White.copy(alpha = 0.16f),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                                            else Color.White.copy(alpha = 0.16f),
+                                    border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
                                     modifier = Modifier.size(56.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
@@ -607,7 +590,8 @@ private fun FeatureButtonsPreview(
                                 Text(
                                     spec.label,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White.copy(alpha = 0.85f),
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.85f),
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                     maxLines = 1,
                                     modifier = Modifier.padding(top = 6.dp)
                                 )
@@ -651,7 +635,7 @@ private fun FeatureButtonsPreview(
         if (freeformEnabled)
             "Drag any button — including Hang Up — anywhere in the preview to place it."
         else
-            "Drag a button anywhere to reorder it. Hang Up always stays last, matching the real call screen.",
+            "Tap a button, then tap another to swap their positions. Hang Up always stays last, matching the real call screen.",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
