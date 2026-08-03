@@ -6,8 +6,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.*
@@ -73,17 +74,17 @@ fun SoundVibrationScreen(navigator: DestinationsNavigator, highlightKey: String?
             )
         }
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .alpha(screenAlpha),
-            contentPadding = PaddingValues(16.dp),
+                .alpha(screenAlpha)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             // ── Dialpad ─────────────────────────────────────────────
-            item {
-                RivoAnimatedSection(delayMs = 0L) {
+            RivoAnimatedSection(delayMs = 0L) {
                     RivoExpressiveCard {
                         RivoSwitchListItem(
                             headline = "DTMF Tone",
@@ -110,11 +111,9 @@ fun SoundVibrationScreen(navigator: DestinationsNavigator, highlightKey: String?
                             onClick = { showToneStyleDialog = true }
                         )
                     }
-                }
             }
 
-            item {
-                RivoAnimatedSection(delayMs = 80L) {
+            RivoAnimatedSection(delayMs = 80L) {
                     RivoExpressiveCard {
                         RivoListItem(
                             headline = "Ringtone Settings",
@@ -137,10 +136,9 @@ fun SoundVibrationScreen(navigator: DestinationsNavigator, highlightKey: String?
                             onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)) }
                         )
                     }
-                }
             }
 
-            item { Spacer(modifier = Modifier.height(100.dp)) }
+            Spacer(modifier = Modifier.height(100.dp))
         }
     }
 

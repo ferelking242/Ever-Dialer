@@ -8,10 +8,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -98,7 +98,6 @@ private fun triggerRestartPrompt(
 @Composable
 fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val prefs = koinInject<PreferenceManager>()
-    val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -758,15 +757,12 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
         containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
         Box(modifier = Modifier.padding(padding).fillMaxSize()) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(20.dp)
             ) {
 
                 // ── App Theme ────────────────────────────────────────
-                item {
                     RivoAnimatedSection(delayMs = 0L) {
                         Column {
                             Text("App Theme", style = MaterialTheme.typography.labelLarge,
@@ -806,10 +802,8 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                             }
                         }
                     }
-                }
 
                 // ── Theme Colors ──────────────────────────────────────
-                item {
                     RivoAnimatedSection(delayMs = 60L) {
                         Column {
                             Text("Theme Colors", style = MaterialTheme.typography.labelLarge,
@@ -898,10 +892,8 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                             }
                         }
                     }
-                }
 
                 // ── Custom Font ─────────────────────────────────────────
-                item {
                     RivoAnimatedSection(delayMs = 70L) {
                         Column {
                             Text("Custom Font", style = MaterialTheme.typography.labelLarge,
@@ -965,10 +957,8 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                             }
                         }
                     }
-                }
 
                 // ── Liquid Glass ─────────────────────────────────────
-                item {
                     RivoAnimatedSection(delayMs = 80L) {
                         Column {
                             Text("Visual Effects", style = MaterialTheme.typography.labelLarge,
@@ -1078,10 +1068,8 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                             }
                         }
                     }
-                }
 
                 // ── Call UI ───────────────────────────────────────────
-                item {
                     RivoAnimatedSection(delayMs = 100L) {
                         Column {
                             Text("Call UI", style = MaterialTheme.typography.labelLarge,
@@ -1158,10 +1146,8 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                             }
                         }
                     }
-                }
 
                 // ── Animations ───────────────────────────────────────
-                item {
                     RivoAnimatedSection(delayMs = 115L) {
                         Column {
                             Text("Animations", style = MaterialTheme.typography.labelLarge,
@@ -1183,10 +1169,8 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                             }
                         }
                     }
-                }
 
                 // ── UI Element Visibility ────────────────────────────
-                item {
                     RivoAnimatedSection(delayMs = 130L) {
                         Column {
                             Text("UI Elements", style = MaterialTheme.typography.labelLarge,
@@ -1327,10 +1311,8 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                             }
                         }
                     }
-                }
 
                 // ── Avatars ──────────────────────────────────────────
-                item {
                     RivoAnimatedSection(delayMs = 160L) {
                         Column {
                             Text("Avatars", style = MaterialTheme.typography.labelLarge,
@@ -1371,10 +1353,8 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                             }
                         }
                     }
-                }
 
                 // ── App ─────────────────────────────────────────
-                item {
                     Column {
                         Text(
                             "App",
@@ -1408,9 +1388,8 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                             )
                         }
                     }
-                }
 
-                item { Spacer(modifier = Modifier.height(100.dp)) }
+                Spacer(modifier = Modifier.height(100.dp))
             }
 
             if (showAppNameDialog) {

@@ -8,7 +8,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.*
@@ -81,17 +82,17 @@ fun RaiseToAnswerScreen(navigator: DestinationsNavigator, highlightKey: String? 
             )
         }
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .alpha(screenAlpha),
-            contentPadding = PaddingValues(16.dp),
+                .alpha(screenAlpha)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             if (!isSupported) {
-                item {
-                    RivoAnimatedSection(delayMs = 0L) {
+                RivoAnimatedSection(delayMs = 0L) {
                         RivoExpressiveCard {
                             Row(
                                 modifier = Modifier.padding(16.dp),
@@ -106,13 +107,11 @@ fun RaiseToAnswerScreen(navigator: DestinationsNavigator, highlightKey: String? 
                                 )
                             }
                         }
-                    }
                 }
             }
 
             // ── Main toggle ─────────────────────────────────────────────
-            item {
-                RivoAnimatedSection(delayMs = 0L) {
+            RivoAnimatedSection(delayMs = 0L) {
                     Column {
                         RaiseToAnswerSectionLabel("Raise to Answer")
                         RivoExpressiveCard {
@@ -132,12 +131,10 @@ fun RaiseToAnswerScreen(navigator: DestinationsNavigator, highlightKey: String? 
                             )
                         }
                     }
-                }
             }
 
             // ── Detection behaviour ─────────────────────────────────────
-            item {
-                AnimatedVisibility(
+            AnimatedVisibility(
                     visible = enabled && isSupported,
                     enter = fadeIn(tween(200)) + expandVertically(tween(200)),
                     exit = fadeOut(tween(150)) + shrinkVertically(tween(150))
@@ -182,12 +179,10 @@ fun RaiseToAnswerScreen(navigator: DestinationsNavigator, highlightKey: String? 
                             }
                         }
                     }
-                }
             }
 
             // ── Feedback ─────────────────────────────────────────────────
-            item {
-                AnimatedVisibility(
+            AnimatedVisibility(
                     visible = enabled && isSupported,
                     enter = fadeIn(tween(200)) + expandVertically(tween(200)),
                     exit = fadeOut(tween(150)) + shrinkVertically(tween(150))
@@ -227,10 +222,9 @@ fun RaiseToAnswerScreen(navigator: DestinationsNavigator, highlightKey: String? 
                             }
                         }
                     }
-                }
             }
 
-            item { Spacer(modifier = Modifier.height(80.dp)) }
+            Spacer(modifier = Modifier.height(80.dp))
         }
     }
 }

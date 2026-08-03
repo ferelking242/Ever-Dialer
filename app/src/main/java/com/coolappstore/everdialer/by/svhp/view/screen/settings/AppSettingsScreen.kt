@@ -3,8 +3,8 @@ package com.coolappstore.everdialer.by.svhp.view.screen.settings
 import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
@@ -40,9 +40,9 @@ private val ColorTeal = Color(0xFF00897B)
 fun AppSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val prefs = koinInject<PreferenceManager>()
     val context = LocalContext.current
-    val listState = rememberLazyListState()
+    val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
-    val showButton by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }
+    val showButton by remember { derivedStateOf { scrollState.value > 0 } }
 
     // Row to scroll to and flash on arrival, coming from Settings' search. Cleared once consumed.
     var highlightedKey by remember { mutableStateOf(highlightKey) }
@@ -64,19 +64,18 @@ fun AppSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = 
         floatingActionButton = {
             ScrollToTopButton(
                 visible = showButton,
-                onClick = { scope.launch { listState.animateScrollToItem(0) } }
+                onClick = { scope.launch { scrollState.animateScrollTo(0) } }
             )
         }
     ) { padding ->
-        LazyColumn(
-            state = listState,
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(16.dp),
+                .padding(padding)
+                .verticalScroll(scrollState)
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            item {
                 RivoExpressiveCard {
                     RivoListItem(
                         headline = "Call Settings",
@@ -137,11 +136,8 @@ fun AppSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = 
                         }
                     }
                 }
-            }
 
-            item {
-                Spacer(modifier = Modifier.height(100.dp))
-            }
+            Spacer(modifier = Modifier.height(100.dp))
         }
     }
 }

@@ -1,8 +1,9 @@
 package com.coolappstore.everdialer.by.svhp.view.screen.settings
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -50,15 +51,15 @@ fun IncomingCallUIScreen(navigator: DestinationsNavigator, highlightKey: String?
         },
         containerColor = MaterialTheme.colorScheme.surface
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .padding(padding)
-                .fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
-            item {
-                RivoAnimatedSection(delayMs = 0L) {
+            RivoAnimatedSection(delayMs = 0L) {
                     Column {
                         Text(
                             "Quick Actions",
@@ -79,11 +80,9 @@ fun IncomingCallUIScreen(navigator: DestinationsNavigator, highlightKey: String?
                             )
                         }
                     }
-                }
             }
 
-            item {
-                RivoAnimatedSection(delayMs = 60L) {
+            RivoAnimatedSection(delayMs = 60L) {
                     Surface(
                         shape = RoundedCornerShape(20.dp),
                         color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -107,7 +106,6 @@ fun IncomingCallUIScreen(navigator: DestinationsNavigator, highlightKey: String?
                             )
                         }
                     }
-                }
             }
         }
     }

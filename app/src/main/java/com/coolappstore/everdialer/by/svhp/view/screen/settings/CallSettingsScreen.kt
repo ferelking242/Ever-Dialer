@@ -18,7 +18,6 @@ import android.telephony.SubscriptionManager
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -322,16 +321,16 @@ fun CallSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? =
             )
         }
     ) { padding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .alpha(screenAlpha),
-            contentPadding = PaddingValues(16.dp),
+                .alpha(screenAlpha)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // ── Caller Accounts ───────────────────────────────────────────────
-            item {
                 RivoAnimatedSection(delayMs = 0L) {
                     Column {
                         CallSettingsSectionLabel("Accounts")
@@ -366,10 +365,8 @@ fun CallSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? =
                         }
                     }
                 }
-            }
 
             // ── Call Behavior ─────────────────────────────────────────────────
-            item {
                 RivoAnimatedSection(delayMs = 60L) {
                     Column {
                         CallSettingsSectionLabel("Call Behavior")
@@ -496,10 +493,8 @@ fun CallSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? =
                         }
                     }
                 }
-            }
 
             // ── Sound & Vibration ─────────────────────────────────────────────
-            item {
                 RivoAnimatedSection(delayMs = 120L) {
                     Column {
                         CallSettingsSectionLabel("Sound & Vibration")
@@ -516,9 +511,8 @@ fun CallSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? =
                         }
                     }
                 }
-            }
 
-            item { Spacer(modifier = Modifier.height(80.dp)) }
+            Spacer(modifier = Modifier.height(80.dp))
         }
     }
 }
