@@ -36,6 +36,7 @@ class RecordingNotificationHelper(private val context: Context) {
         const val CHANNEL_ID_SERVICE = "recording_channel_service"
         const val CHANNEL_ID_ERROR = "recording_channel_error"
         const val CHANNEL_ID_POST_CALL = "recording_channel_post_call"
+        const val CHANNEL_ID_SILENT_PLACEHOLDER = "recording_channel_silent_placeholder"
 
         const val SERVICE_NOTIFICATION_ID = 1
         const val ERROR_NOTIFICATION_ID = 2
@@ -99,6 +100,39 @@ class RecordingNotificationHelper(private val context: Context) {
             lockscreenVisibility = if (notificationsEnabled) NotificationCompat.VISIBILITY_PRIVATE else NotificationCompat.VISIBILITY_SECRET
         }
         manager.createNotificationChannel(postCallChannel)
+
+        // Always IMPORTANCE_MIN (never heads-up, no sound, no status bar icon), regardless of the
+        // "Enable recording notifications" preference — this channel exists purely so the service
+        // can call startForeground() (satisfying the OS's few-seconds requirement) at moments we
+        // don't actually want anything visible to the user yet, e.g. an incoming call that's
+        // still ringing/unanswered, so it never pops up on top of / races with the answer/decline UI.
+        manager.deleteNotificationChannel(CHANNEL_ID_SILENT_PLACEHOLDER)
+        val silentPlaceholderChannel = NotificationChannel(
+            CHANNEL_ID_SILENT_PLACEHOLDER, "Preparing Recording (hidden)", NotificationManager.IMPORTANCE_MIN
+        ).apply {
+            this.group = groupId
+            setSound(null, null)
+            enableLights(false)
+            enableVibration(false)
+            setShowBadge(false)
+            lockscreenVisibility = NotificationCompat.VISIBILITY_SECRET
+        }
+        manager.createNotificationChannel(silentPlaceholderChannel)
+    }
+
+    /**
+     * A minimal, silent, IMPORTANCE_MIN notification used only to satisfy [android.app.Service.startForeground]'s
+     * OS requirement without actually showing anything meaningful to the user. See [CHANNEL_ID_SILENT_PLACEHOLDER].
+     */
+    fun getSilentPlaceholderNotification(): Notification {
+        return NotificationCompat.Builder(context, CHANNEL_ID_SILENT_PLACEHOLDER)
+            .setSmallIcon(R.drawable.ic_mic)
+            .setContentTitle("")
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setSilent(true)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .build()
     }
 
     fun getNotification(state: RecordingServiceState): Notification {

@@ -76,6 +76,8 @@ fun AppSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = 
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+                com.coolappstore.everdialer.by.svhp.view.components.SettingsSearchEntryPoint(navigator = navigator)
+
                 RivoExpressiveCard {
                     RivoListItem(
                         headline = "Call Settings",

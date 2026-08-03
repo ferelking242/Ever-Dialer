@@ -557,7 +557,16 @@ fun ExpressiveCallScreen(
     }
 
     var callDuration by remember { mutableLongStateOf(0L) }
-    val isDark = isSystemInDarkTheme()
+    val systemDarkTheme = isSystemInDarkTheme()
+    // Respect the user's explicit Light/Dark theme choice (Settings → Interface), not just the
+    // system's current mode, so the swipe pill's icon/handle always matches how the app actually
+    // looks — otherwise on a device in light mode with the app forced to Dark (or vice versa) the
+    // handle icon renders with the wrong, mismatched tint.
+    val isDark = when (prefs?.getString(PreferenceManager.KEY_THEME_MODE, "auto")) {
+        "light", "white" -> false
+        "dark", "black" -> true
+        else -> systemDarkTheme
+    }
 
     // Hangup button width from prefs (0.1f .. 1.0f)
     val settingsVersion by (prefs?.settingsChanged ?: kotlinx.coroutines.flow.MutableStateFlow(0)).collectAsState()
@@ -587,6 +596,14 @@ fun ExpressiveCallScreen(
     }
     val freeformPositions = remember(settingsVersion) {
         prefs?.let { CallButtonPrefs.getFreeformPositions(it) } ?: emptyMap()
+    }
+    // Show Names / Element Size — configured in Settings → Appearance → Caller UI, applied to
+    // every Feature Button (and Hang Up, in Freeform mode) via CompositionLocalProvider below.
+    val showElementNames = remember(settingsVersion) {
+        prefs?.let { CallButtonPrefs.isShowNamesEnabled(it) } ?: true
+    }
+    val elementSizeScale = remember(settingsVersion) {
+        prefs?.let { CallButtonPrefs.getElementSize(it) } ?: CallButtonPrefs.ELEMENT_SIZE_DEFAULT
     }
     var showMoreMenu by remember { mutableStateOf(false) }
     var noteText by remember { mutableStateOf("") }
@@ -988,12 +1005,17 @@ fun ExpressiveCallScreen(
                                     horizontalAlignment = Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Bottom
                                 ) {
-                                    FeatureButtonsLayout(
-                                        activeButtonIds = if (freeformEnabled) displayedButtonIds + CallButtonPrefs.ID_HANGUP else displayedButtonIds,
-                                        freeformEnabled = freeformEnabled,
-                                        freeformPositions = freeformPositions,
-                                        rowSpacing = 16.dp
-                                    ) { id -> RenderFeatureButton(id) }
+                                    CompositionLocalProvider(
+                                        LocalCallButtonElementSize provides elementSizeScale,
+                                        LocalCallButtonShowNames provides showElementNames
+                                    ) {
+                                        FeatureButtonsLayout(
+                                            activeButtonIds = if (freeformEnabled) displayedButtonIds + CallButtonPrefs.ID_HANGUP else displayedButtonIds,
+                                            freeformEnabled = freeformEnabled,
+                                            freeformPositions = freeformPositions,
+                                            rowSpacing = 16.dp
+                                        ) { id -> RenderFeatureButton(id) }
+                                    }
                                     AnimatedVisibility(visible = showNoteWindow, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
                                         Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f), modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
                                             Column(modifier = Modifier.padding(16.dp)) {
@@ -1056,7 +1078,8 @@ fun ExpressiveCallScreen(
                                 onMessage = onMessageButtonClick,
                                 labelColor = subtleColor,
                                 bgColor = overlayColor,
-                                isPocketBlocked = isPocketBlocked
+                                isPocketBlocked = isPocketBlocked,
+                                isDark = isDark
                             )
                         }
                     }
@@ -1170,12 +1193,17 @@ fun ExpressiveCallScreen(
                         ) {
                             Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 44.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                 // Feature Buttons — order & visibility from Settings → Appearance → Caller UI
-                                FeatureButtonsLayout(
-                                    activeButtonIds = if (freeformEnabled) displayedButtonIds + CallButtonPrefs.ID_HANGUP else displayedButtonIds,
-                                    freeformEnabled = freeformEnabled,
-                                    freeformPositions = freeformPositions,
-                                    rowSpacing = 20.dp
-                                ) { id -> RenderFeatureButton(id) }
+                                CompositionLocalProvider(
+                                    LocalCallButtonElementSize provides elementSizeScale,
+                                    LocalCallButtonShowNames provides showElementNames
+                                ) {
+                                    FeatureButtonsLayout(
+                                        activeButtonIds = if (freeformEnabled) displayedButtonIds + CallButtonPrefs.ID_HANGUP else displayedButtonIds,
+                                        freeformEnabled = freeformEnabled,
+                                        freeformPositions = freeformPositions,
+                                        rowSpacing = 20.dp
+                                    ) { id -> RenderFeatureButton(id) }
+                                }
 
                                 AnimatedVisibility(visible = showNoteWindow, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
                                     Column(modifier = Modifier.fillMaxWidth().padding(top = 20.dp)) {
@@ -1300,7 +1328,8 @@ fun ExpressiveCallScreen(
                                 onMessage = onMessageButtonClick,
                                 labelColor = subtleColor,
                                 bgColor = overlayColor,
-                                isPocketBlocked = isPocketBlocked
+                                isPocketBlocked = isPocketBlocked,
+                                isDark = isDark
                             )
                         }
                     }
@@ -1917,6 +1946,13 @@ private fun CompactDialPad(
 
 // ─── Animated Call Button ───────────────────────────────────────────────────────
 
+// Ongoing call screen — Feature Button appearance, configured in Settings → Appearance →
+// Caller UI. Provided via CompositionLocalProvider around the Feature Buttons layout so
+// AnimatedCallButton (used for every Feature Button + Hang Up in Freeform mode) can read it
+// without threading extra parameters through every call site.
+val LocalCallButtonElementSize = compositionLocalOf { CallButtonPrefs.ELEMENT_SIZE_DEFAULT }
+val LocalCallButtonShowNames = compositionLocalOf { true }
+
 @Composable
 fun AnimatedCallButton(
     icon: ImageVector,
@@ -1931,33 +1967,38 @@ fun AnimatedCallButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val isPressed by interaction.collectIsPressedAsState()
-    val radius by animateDpAsState(if (isPressed) 16.dp else 32.dp, spring(stiffness = Spring.StiffnessMedium), label = "btnRadius")
+    val sizeScale = LocalCallButtonElementSize.current
+    val showLabel = LocalCallButtonShowNames.current
+    val btnSize = (68.dp * sizeScale)
+    val iconSize = (26.dp * sizeScale)
+    val radius by animateDpAsState(if (isPressed) 16.dp * sizeScale else 32.dp * sizeScale, spring(stiffness = Spring.StiffnessMedium), label = "btnRadius")
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Surface(onClick = onClick, modifier = Modifier.size(68.dp).scale(if (isPressed) 0.9f else 1f), shape = RoundedCornerShape(radius), color = if (isActive) activeBtnColor else btnColor, interactionSource = interaction) {
+        Surface(onClick = onClick, modifier = Modifier.size(btnSize).scale(if (isPressed) 0.9f else 1f), shape = RoundedCornerShape(radius), color = if (isActive) activeBtnColor else btnColor, interactionSource = interaction) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = if (isActive) activeFgColor else fgColor, modifier = Modifier.size(26.dp))
+                Icon(icon, null, tint = if (isActive) activeFgColor else fgColor, modifier = Modifier.size(iconSize))
             }
         }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            fontFamily = MaterialTheme.typography.labelMedium.fontFamily,
-            color = (labelColor ?: fgColor).copy(alpha = if (labelColor != null) labelColor.alpha * 0.7f else 0.7f),
-            modifier = Modifier.padding(top = 8.dp),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        if (showLabel) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontFamily = MaterialTheme.typography.labelMedium.fontFamily,
+                color = (labelColor ?: fgColor).copy(alpha = if (labelColor != null) labelColor.alpha * 0.7f else 0.7f),
+                modifier = Modifier.padding(top = 8.dp),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
     }
 }
 
 @Composable
-fun NewSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: () -> Unit = {}, labelColor: Color = Color.White.copy(0.6f), bgColor: Color = Color.White.copy(0.08f), isPocketBlocked: () -> Boolean = { false }) {
+fun NewSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: () -> Unit = {}, labelColor: Color = Color.White.copy(0.6f), bgColor: Color = Color.White.copy(0.08f), isPocketBlocked: () -> Boolean = { false }, isDark: Boolean = isSystemInDarkTheme()) {
     val coroutineScope = rememberCoroutineScope()
     val offsetX = remember { Animatable(0f) }
     val density = LocalDensity.current
-    val isDark = isSystemInDarkTheme()
-    val handleColor = if (isDark) Color.White else Color.Black.copy(0.85f)
-    val handleFg = if (isDark) Color.Black else Color.White
+    val handleColor = if (isDark) Color.Black.copy(0.85f) else Color.White
+    val handleFg = if (isDark) Color.White else Color.Black
 
     var pillWidthPx by remember { mutableFloatStateOf(0f) }
     val handleSizePx = with(density) { 72.dp.toPx() }

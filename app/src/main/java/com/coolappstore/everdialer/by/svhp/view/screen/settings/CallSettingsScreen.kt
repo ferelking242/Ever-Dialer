@@ -330,6 +330,8 @@ fun CallSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? =
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            com.coolappstore.everdialer.by.svhp.view.components.SettingsSearchEntryPoint(navigator = navigator)
+
             // ── Caller Accounts ───────────────────────────────────────────────
                 RivoAnimatedSection(delayMs = 0L) {
                     Column {

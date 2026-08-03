@@ -90,17 +90,10 @@ private data class TabSpec(
     val onClick: () -> Unit
 )
 
-/** Parses the user-configured tab order preference into an ordered list of tab keys. */
-private fun parseTabOrder(raw: String?): List<String> {
-    val fallback = PreferenceManager.DEFAULT_TAB_ORDER.split(",")
-    if (raw.isNullOrBlank()) return fallback
-    val parsed = raw.split(",").map { it.trim() }.filter { it.isNotBlank() }
-    // Ensure any tab keys missing from a stale/older saved order are still appended,
-    // so newly-added tabs (like Recordings) always show up even for existing users.
-    val merged = parsed.toMutableList()
-    fallback.forEach { key -> if (key !in merged) merged.add(key) }
-    return merged.filter { it in fallback }
-}
+/** Parses the user-configured tab order preference into an ordered list of tab keys.
+ *  Delegates to [PreferenceManager.parseTabOrder] so this stays in sync with the tab
+ *  order used everywhere else (e.g. the page-switching transition animation). */
+private fun parseTabOrder(raw: String?): List<String> = PreferenceManager.parseTabOrder(raw)
 
 @Composable
 fun BottomBar(navController: NavController) {

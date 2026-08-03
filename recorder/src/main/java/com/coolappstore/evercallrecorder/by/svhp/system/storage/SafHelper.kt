@@ -186,13 +186,36 @@ object SafHelper {
     /**
      * Deletes a recording at [uri], regardless of whether it lives in the user-chosen SAF folder or
      * in the app's private internal storage.
+     *
+     * Bug fix: for private-storage recordings this used to rely solely on
+     * `contentResolver.delete(uri, ...)` going through the [FileProvider]. When that call silently
+     * returned 0 rows affected (no exception thrown, just a false-y result) the underlying file was
+     * left untouched on disk, but callers were treating the operation as done regardless of the
+     * return value — so the recording would keep re-appearing every time the list was reloaded. We
+     * now always resolve and delete the real [File] directly for private storage (we own that
+     * directory, no permission dance needed), and verify the file is actually gone afterwards
+     * instead of trusting a provider's row count.
      */
     fun deleteRecording(context: Context, uri: Uri): Boolean {
         return try {
             if (isPrivateStorageUri(context, uri)) {
-                context.contentResolver.delete(uri, null, null) > 0
+                // Primary path: delete the real file directly. This can't silently no-op the way
+                // a ContentResolver round-trip through FileProvider could.
+                val direct = privateFileFromUri(context, uri)
+                var success = direct != null && (!direct.exists() || direct.delete())
+                // Fallback: also try the provider in case the URI didn't resolve to a private
+                // file the way we expected (defensive, keeps old behaviour as a backstop).
+                if (!success) {
+                    success = runCatching { context.contentResolver.delete(uri, null, null) > 0 }.getOrDefault(false)
+                }
+                // Verify: only report success if the file is actually gone (or never existed).
+                success && (direct == null || !direct.exists())
             } else {
-                DocumentFile.fromSingleUri(context, uri)?.delete() == true
+                val doc = DocumentFile.fromSingleUri(context, uri)
+                val deleted = doc?.delete() == true
+                // Verify: DocumentFile.delete() can return true on some providers even when the
+                // underlying document lingers; double-check it's actually gone before reporting success.
+                deleted && (doc?.exists() != true)
             }
         } catch (e: Exception) {
             false

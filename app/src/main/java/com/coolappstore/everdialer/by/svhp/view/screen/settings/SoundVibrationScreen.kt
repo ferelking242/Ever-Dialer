@@ -83,6 +83,8 @@ fun SoundVibrationScreen(navigator: DestinationsNavigator, highlightKey: String?
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            com.coolappstore.everdialer.by.svhp.view.components.SettingsSearchEntryPoint(navigator = navigator)
+
             // ── Dialpad ─────────────────────────────────────────────
             RivoAnimatedSection(delayMs = 0L) {
                     RivoExpressiveCard {

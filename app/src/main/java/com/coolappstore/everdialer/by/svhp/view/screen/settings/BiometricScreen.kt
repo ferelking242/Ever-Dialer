@@ -155,6 +155,8 @@ fun BiometricScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            com.coolappstore.everdialer.by.svhp.view.components.SettingsSearchEntryPoint(navigator = navigator)
+
             // ── Authentication Method card ─────────────────────────────────
             SectionLabel("Authentication Method")
             RivoExpressiveCard {

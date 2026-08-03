@@ -13,15 +13,10 @@
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
-        -->
+        <!-- Bug fix: don't let deleted private-storage recordings come back from a stale backup. -->
+        <exclude domain="file" path="call_recordings/" />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <exclude domain="file" path="call_recordings/" />
     </device-transfer>
-    -->
 </data-extraction-rules>

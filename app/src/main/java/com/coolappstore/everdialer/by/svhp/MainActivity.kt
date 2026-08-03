@@ -386,6 +386,13 @@ class MainActivity : FragmentActivity() {
                     val configuration = LocalConfiguration.current
                     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
                     com.coolappstore.everdialer.by.svhp.view.theme.isLandscapeMode = isLandscape
+                    // Keep the page-switching slide animation's tab order in sync with
+                    // whatever order the user has configured in Settings > Appearance >
+                    // Tab Sections — never hardcoded, so reordering tabs there never makes
+                    // the slide direction feel wrong on the main screen.
+                    remember(settingsVer) {
+                        com.coolappstore.everdialer.by.svhp.view.theme.syncTabTransitionOrder(prefs)
+                    }
                     val navBackStack by navController.currentBackStackEntryAsState()
                     val currentDest = navBackStack?.destination
                     val prefs2 = remember { GlobalContext.get().get<PreferenceManager>() }
@@ -497,7 +504,7 @@ class MainActivity : FragmentActivity() {
                                             label = "Settings",
                                             paddingStart = railPaddingStart,
                                             paddingEnd = railPaddingEnd,
-                                            onClick = { navTo(com.ramcosta.composedestinations.generated.destinations.SettingsScreenDestination.route) }
+                                            onClick = { navTo(com.ramcosta.composedestinations.generated.destinations.SettingsScreenDestination().route) }
                                         )
                                     }
                                 }
@@ -599,6 +606,26 @@ class MainActivity : FragmentActivity() {
         setIntent(intent)
     }
 
+    private fun resolvePhoneNumberFromContactUri(context: Context, uri: Uri): String? {
+        if (uri.scheme == "tel") return uri.schemeSpecificPart
+        return try {
+            val contactId = uri.lastPathSegment?.toLongOrNull() ?: return null
+            context.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                arrayOf(contactId.toString()),
+                "${ContactsContract.CommonDataKinds.Phone.IS_SUPER_PRIMARY} DESC"
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER))
+                } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun handleIntent(intent: Intent?, navController: androidx.navigation.NavController) {
         intent ?: return
         val data = intent.data
@@ -626,9 +653,18 @@ class MainActivity : FragmentActivity() {
                 } else if (data?.toString()?.contains("contacts") == true ||
                     data?.toString()?.contains("com.android.contacts") == true ||
                     intent.hasExtra("contact_id")) {
-                    val id = data?.lastPathSegment ?: intent.getStringExtra("contact_id")
-                    if (id != null) {
-                        navController.navigate(ContactDetailsScreenDestination(contactId = id).route)
+                    // Home-screen contact widgets and "call this contact" shortcuts (e.g. from
+                    // Google Search/Assistant) hand us a contact content:// URI instead of a
+                    // tel: URI. Resolve it to the contact's number so we can dial straight away
+                    // instead of just opening the contact's detail page with nothing filled in.
+                    val number = data?.let { resolvePhoneNumberFromContactUri(this, it) }
+                    if (number != null) {
+                        navController.navigate(DialPadScreenDestination(initialNumber = number).route)
+                    } else {
+                        val id = data?.lastPathSegment ?: intent.getStringExtra("contact_id")
+                        if (id != null) {
+                            navController.navigate(ContactDetailsScreenDestination(contactId = id).route)
+                        }
                     }
                 }
             }
@@ -636,6 +672,24 @@ class MainActivity : FragmentActivity() {
                 if (data?.scheme == "tel") {
                     val number = data.schemeSpecificPart
                     navController.navigate(DialPadScreenDestination(initialNumber = number).route)
+                } else if (data != null) {
+                    val number = resolvePhoneNumberFromContactUri(this, data)
+                    if (number != null) {
+                        navController.navigate(DialPadScreenDestination(initialNumber = number).route)
+                    }
+                }
+            }
+            Intent.ACTION_CALL -> {
+                // Contact widgets/Assistant "call [contact]" shortcuts send ACTION_CALL expecting
+                // the call to be placed immediately, not just shown on a dialpad.
+                val number = when {
+                    data?.scheme == "tel" -> data.schemeSpecificPart
+                    data != null -> resolvePhoneNumberFromContactUri(this, data)
+                    else -> null
+                }
+                if (number != null) {
+                    navController.navigate(DialPadScreenDestination(initialNumber = number).route)
+                    com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this, number)
                 }
             }
             Intent.ACTION_INSERT -> {

@@ -91,6 +91,8 @@ fun RaiseToAnswerScreen(navigator: DestinationsNavigator, highlightKey: String? 
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            com.coolappstore.everdialer.by.svhp.view.components.SettingsSearchEntryPoint(navigator = navigator)
+
             if (!isSupported) {
                 RivoAnimatedSection(delayMs = 0L) {
                         RivoExpressiveCard {

@@ -230,7 +230,7 @@ fun NotesScreen(navController: NavController, navigator: DestinationsNavigator, 
                 actions = {
                     if (!isLandscape) {
                         IconButton(onClick = {
-                            navigator.navigate(com.ramcosta.composedestinations.generated.destinations.SettingsScreenDestination)
+                            navigator.navigate(com.ramcosta.composedestinations.generated.destinations.SettingsScreenDestination())
                         }) {
                             Icon(Icons.Default.Tune, contentDescription = "Settings")
                         }

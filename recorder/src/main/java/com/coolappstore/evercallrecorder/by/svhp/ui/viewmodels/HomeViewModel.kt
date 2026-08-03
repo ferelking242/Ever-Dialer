@@ -131,16 +131,34 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val toDelete = selectedUris.value.toSet()
             val itemsByUri = _allRecordings.value.associateBy { it.uri }
+            // Bug fix: this used to fire-and-forget SafHelper.deleteRecording() and then remove
+            // every selected item from the list regardless of whether the delete actually
+            // succeeded. If the underlying delete silently failed, the file stayed on disk but
+            // the app acted like it was gone — so it would reappear the next time the list was
+            // reloaded (looking like recordings can't be permanently deleted). We now only purge
+            // notes/favourites and drop an item from the list when its file was actually removed.
+            val actuallyDeleted = mutableSetOf<Uri>()
             toDelete.forEach { uri ->
-                runCatching { SafHelper.deleteRecording(context, uri) }
-                notesPrefs.edit().remove(uri.toString()).apply()
-                favPrefs.edit().remove(uri.toString()).apply()
-                itemsByUri[uri]?.let { deleteIntegratedContactNoteIfNeeded(context, it.phoneNumber) }
+                val deleted = runCatching { SafHelper.deleteRecording(context, uri) }.getOrDefault(false)
+                if (deleted) {
+                    actuallyDeleted.add(uri)
+                    notesPrefs.edit().remove(uri.toString()).apply()
+                    favPrefs.edit().remove(uri.toString()).apply()
+                    itemsByUri[uri]?.let { deleteIntegratedContactNoteIfNeeded(context, it.phoneNumber) }
+                }
             }
             withContext(Dispatchers.Main) {
-                selectedUris.value = emptySet()
-                _allRecordings.value = _allRecordings.value.filter { it.uri !in toDelete }
+                selectedUris.value = selectedUris.value - actuallyDeleted
+                _allRecordings.value = _allRecordings.value.filter { it.uri !in actuallyDeleted }
                 applyFilters()
+                if (preferences.isShowToastsEnabled() && actuallyDeleted.size < toDelete.size) {
+                    val failed = toDelete.size - actuallyDeleted.size
+                    android.widget.Toast.makeText(
+                        context,
+                        "Failed to delete $failed recording${if (failed != 1) "s" else ""}",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
             }
         }
     }
@@ -157,15 +175,23 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteRecording(context: Context, item: RecordingItem) {
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                SafHelper.deleteRecording(context, item.uri)
+            // Bug fix: same root cause as deleteSelected() above — only treat the recording as
+            // gone (dropping it from the list, clearing its note/favourite) if the file was
+            // actually deleted. Previously this always removed it from the UI, so a failed
+            // delete left the file behind and it would silently reappear on the next load.
+            val deleted = runCatching { SafHelper.deleteRecording(context, item.uri) }.getOrDefault(false)
+            if (deleted) {
+                notesPrefs.edit().remove(item.uri.toString()).apply()
+                favPrefs.edit().remove(item.uri.toString()).apply()
+                deleteIntegratedContactNoteIfNeeded(context, item.phoneNumber)
             }
-            notesPrefs.edit().remove(item.uri.toString()).apply()
-            favPrefs.edit().remove(item.uri.toString()).apply()
-            deleteIntegratedContactNoteIfNeeded(context, item.phoneNumber)
             withContext(Dispatchers.Main) {
-                _allRecordings.value = _allRecordings.value.filter { it.uri != item.uri }
-                applyFilters()
+                if (deleted) {
+                    _allRecordings.value = _allRecordings.value.filter { it.uri != item.uri }
+                    applyFilters()
+                } else if (preferences.isShowToastsEnabled()) {
+                    android.widget.Toast.makeText(context, "Failed to delete recording", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -694,16 +720,25 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         if (urisToDelete.isEmpty()) return
 
         // Delete works uniformly across SAF-folder and private-storage recordings.
+        // Bug fix: only drop items whose file actually got deleted — see deleteRecording()/
+        // deleteSelected() above for why blindly trusting the call here let "deleted" recordings
+        // keep reappearing.
         val itemsByUri = working.associateBy { it.uri }
+        val actuallyDeleted = mutableSetOf<Uri>()
         urisToDelete.forEach { uri ->
-            runCatching { SafHelper.deleteRecording(context, uri) }
-            notesPrefs.edit().remove(uri.toString()).apply()
-            favPrefs.edit().remove(uri.toString()).apply()
-            itemsByUri[uri]?.let { deleteIntegratedContactNoteIfNeeded(context, it.phoneNumber) }
+            val deleted = runCatching { SafHelper.deleteRecording(context, uri) }.getOrDefault(false)
+            if (deleted) {
+                actuallyDeleted.add(uri)
+                notesPrefs.edit().remove(uri.toString()).apply()
+                favPrefs.edit().remove(uri.toString()).apply()
+                itemsByUri[uri]?.let { deleteIntegratedContactNoteIfNeeded(context, it.phoneNumber) }
+            }
         }
 
+        if (actuallyDeleted.isEmpty()) return
+
         withContext(Dispatchers.Main) {
-            _allRecordings.value = _allRecordings.value.filter { it.uri !in urisToDelete }
+            _allRecordings.value = _allRecordings.value.filter { it.uri !in actuallyDeleted }
             applyFilters()
         }
     }

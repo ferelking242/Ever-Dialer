@@ -154,4 +154,30 @@ object CallButtonPrefs {
         val y = (row + 0.5f) / rows
         return x to y
     }
+
+    // ── Show Names ───────────────────────────────────────────────────────────────────
+    // Whether the text label is shown below each Feature Button / Hang Up icon. On by default.
+
+    fun isShowNamesEnabled(prefs: PreferenceManager): Boolean =
+        prefs.getBoolean(PreferenceManager.KEY_CALL_BUTTONS_SHOW_NAMES, true)
+
+    fun setShowNamesEnabled(prefs: PreferenceManager, enabled: Boolean) {
+        prefs.setBoolean(PreferenceManager.KEY_CALL_BUTTONS_SHOW_NAMES, enabled)
+    }
+
+    // ── Element Size ─────────────────────────────────────────────────────────────────
+    // Scale factor applied to each Feature Button / Hang Up icon's size on the ongoing call
+    // screen. Range 0.75f (75%) .. 1.5f (150%), 1.0f (100%) by default.
+
+    const val ELEMENT_SIZE_MIN = 0.75f
+    const val ELEMENT_SIZE_MAX = 1.5f
+    const val ELEMENT_SIZE_DEFAULT = 1.0f
+
+    fun getElementSize(prefs: PreferenceManager): Float =
+        prefs.getFloat(PreferenceManager.KEY_CALL_BUTTONS_ELEMENT_SIZE, ELEMENT_SIZE_DEFAULT)
+            .coerceIn(ELEMENT_SIZE_MIN, ELEMENT_SIZE_MAX)
+
+    fun setElementSize(prefs: PreferenceManager, size: Float) {
+        prefs.setFloat(PreferenceManager.KEY_CALL_BUTTONS_ELEMENT_SIZE, size.coerceIn(ELEMENT_SIZE_MIN, ELEMENT_SIZE_MAX))
+    }
 }

@@ -172,9 +172,8 @@ fun SettingsContent(
             item {
                 Column(modifier = Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Spacer(Modifier.height(8.dp))
-                    // ORDER: Call Recording Switch → Rate And Review → Appearance → Recording → Audio → Security → Languages → About → Debug
+                    // ORDER: Call Recording Switch → Notifications → Recording → Audio → Security → Languages → About → Debug
                     CallRecordingMasterSwitchSection(preferences, updateTrigger, actions)
-                    RateAndReviewSection(onOpenWebView = onOpenWebView)
                     AppearanceSection(preferences, updateTrigger, actions)
                     RecordingSection(preferences, updateTrigger, actions, onStorageClick, onOpenContactsIncoming, onOpenContactsOutgoing)
                     AutoDeleteSection(preferences, updateTrigger, actions)
@@ -234,77 +233,19 @@ private fun CallRecordingMasterSwitchSection(preferences: AppPreferences, update
     }
 }
 
-// ── Rate and Review section ───────────────────────────────────────────────────
-
-@Composable
-private fun RateAndReviewSection(
-    onOpenWebView: (url: String, enableDownloads: Boolean, extraBottomDp: Int) -> Unit
-) {
-    val context = LocalContext.current
-
-    SettingsSection(title = "Rate and Review", icon = Icons.Outlined.Star) {
-        SectionListItem(
-            icon = Icons.Outlined.RateReview,
-            headline = "Rate And Review",
-            supporting = "Share your feedback via our Google Form",
-            onClick = { context.openUrlInBrowser(com.coolappstore.evercallrecorder.by.svhp.AppUrls.RATE_AND_REVIEW) }
-        )
-        SectionListItem(
-            icon = Icons.Outlined.Reviews,
-            headline = "Check Ratings And Reviews",
-            supporting = "See what others are saying about the app",
-            onClick = { onOpenWebView(com.coolappstore.evercallrecorder.by.svhp.AppUrls.CHECK_RATINGS, false, 24) }
-        )
-        SectionListItem(
-            icon = Icons.Outlined.Apps,
-            headline = "More Apps",
-            supporting = "Explore other apps by the developer",
-            onClick = { onOpenWebView(com.coolappstore.evercallrecorder.by.svhp.AppUrls.MORE_APPS, true, 48) }
-        )
-        Spacer(Modifier.height(4.dp))
-    }
-}
-
 // ── Appearance section (was Visual) ──────────────────────────────────────────
 
 @Composable
 private fun AppearanceSection(preferences: AppPreferences, updateTrigger: Int, actions: SettingsActions) {
-    val currentThemeMode     = remember(updateTrigger) { preferences.getThemeMode() }
-    val isDynamicColorEnabled= remember(updateTrigger) { preferences.isDynamicColorEnabled() }
     val isRecordingNotificationsEnabled = remember(updateTrigger) { preferences.isRecordingNotificationsEnabled() }
     val isPostRecordingNotificationEnabled = remember(updateTrigger) { preferences.isPostRecordingFileActionsNotificationEnabled() }
     val isShowToastsEnabled  = remember(updateTrigger) { preferences.isShowToastsEnabled() }
     val isVibrationEnabled   = remember(updateTrigger) { preferences.isVibrationEnabled() }
-    val accentArgb           = remember(updateTrigger) { preferences.getAccentColor() }
 
-    SettingsSection(title = stringResource(R.string.settings_section_appearance), icon = Icons.Outlined.Palette) {
-        // Pill-style theme mode selector
-        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = stringResource(R.string.settings_theme_mode),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(2.dp))
-            ThemeModePillSelector(current = currentThemeMode, onSelect = { actions.setThemeMode(it) })
-        }
-        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-        ToggleListItem(
-            label = stringResource(R.string.settings_dynamic_color),
-            checked = isDynamicColorEnabled,
-            onCheckedChange = { actions.setDynamicColorEnabled(it) }
-        )
-        // Color picker when dynamic color is OFF
-        AnimatedVisibility(visible = !isDynamicColorEnabled, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-                HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
-                Spacer(Modifier.height(12.dp))
-                Text(text = stringResource(R.string.settings_accent_color), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(12.dp))
-                InlineColorPicker(currentArgb = accentArgb, onColorChanged = { actions.setAccentColor(it) })
-                Spacer(Modifier.height(8.dp))
-            }
-        }
+    // Theme mode, dynamic color, and accent color are no longer configurable here — this
+    // module always follows whatever Ever Dialer's own Settings → Interface has set (see
+    // AppPreferences.getThemeMode()/isDynamicColorEnabled()), so there's nothing to duplicate.
+    SettingsSection(title = stringResource(R.string.settings_section_appearance), icon = Icons.Outlined.Notifications) {
         ToggleListItem(
             label = stringResource(R.string.settings_recording_notifications),
             checked = isRecordingNotificationsEnabled,
@@ -319,189 +260,6 @@ private fun AppearanceSection(preferences: AppPreferences, updateTrigger: Int, a
         ToggleListItem(label = stringResource(R.string.settings_show_toasts), checked = isShowToastsEnabled, onCheckedChange = { actions.setShowToastsEnabled(it) })
         ToggleListItem(label = stringResource(R.string.settings_vibration_enabled), checked = isVibrationEnabled, onCheckedChange = { actions.setVibrationEnabled(it) })
     }
-}
-
-@Composable
-private fun ThemeModePillSelector(current: AppPreferences.ThemeMode, onSelect: (AppPreferences.ThemeMode) -> Unit) {
-    data class PillOption(val mode: AppPreferences.ThemeMode, val label: String)
-    val options = listOf(
-        PillOption(AppPreferences.ThemeMode.LIGHT,   "Light"),
-        PillOption(AppPreferences.ThemeMode.DARK,    "Dark"),
-        PillOption(AppPreferences.ThemeMode.SYSTEM,  "Auto"),
-        PillOption(AppPreferences.ThemeMode.WHITE,   "White"),
-        PillOption(AppPreferences.ThemeMode.BLACK,   "Black"),
-        PillOption(AppPreferences.ThemeMode.AUTO_WB, "Auto W/B"),
-    )
-    // Two rows of 3 pills
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        listOf(options.take(3), options.drop(3)).forEach { row ->
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                row.forEach { option ->
-                    val selected = current == option.mode
-                    Surface(
-                        onClick = { onSelect(option.mode) },
-                        modifier = Modifier.weight(1f),
-                        shape = CircleShape,
-                        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-                        border = if (selected) androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
-                    ) {
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(vertical = 14.dp)) {
-                            Text(
-                                text = option.label,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-
-
-// ── Inline HSV Color Picker ───────────────────────────────────────────────────
-
-@Composable
-private fun InlineColorPicker(currentArgb: Int, onColorChanged: (Int) -> Unit) {
-    // Extract HSV from stored color
-    val initialHsv = remember(currentArgb) {
-        FloatArray(3).also { android.graphics.Color.colorToHSV(currentArgb, it) }
-    }
-
-    var hue by remember(currentArgb) { mutableFloatStateOf(initialHsv[0]) }
-    var sat by remember(currentArgb) { mutableFloatStateOf(initialHsv[1]) }
-    var value by remember(currentArgb) { mutableFloatStateOf(initialHsv[2]) }
-    var hexText by remember(currentArgb) { mutableStateOf(argbToHex(currentArgb)) }
-    var hexValid by remember { mutableStateOf(true) }
-
-    val currentColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, value)))
-
-    fun commit() {
-        val argb = android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, value))
-        hexText = argbToHex(argb)
-        onColorChanged(argb)
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        // SV Box
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(180.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .pointerInput(hue) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        val s = (down.position.x / size.width).coerceIn(0f, 1f)
-                        val v = (1f - down.position.y / size.height).coerceIn(0f, 1f)
-                        sat = s; value = v; commit()
-                        down.consume()
-                        do {
-                            val event = awaitPointerEvent()
-                            event.changes.forEach { ch ->
-                                sat = (ch.position.x / size.width).coerceIn(0f, 1f)
-                                value = (1f - ch.position.y / size.height).coerceIn(0f, 1f)
-                                commit()
-                                ch.consume()
-                            }
-                        } while (event.changes.any { it.pressed })
-                    }
-                }
-        ) {
-            val hueColor = Color(android.graphics.Color.HSVToColor(floatArrayOf(hue, 1f, 1f)))
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                drawRect(Brush.horizontalGradient(listOf(Color.White, hueColor)))
-                drawRect(Brush.verticalGradient(listOf(Color.Transparent, Color.Black)))
-                // Thumb
-                val thumbX = sat * size.width
-                val thumbY = (1f - value) * size.height
-                drawCircle(color = currentColor, radius = 10.dp.toPx(), center = Offset(thumbX, thumbY))
-                drawCircle(color = Color.White, radius = 10.dp.toPx(), center = Offset(thumbX, thumbY), style = Stroke(width = 2.dp.toPx()))
-            }
-        }
-
-        // Hue strip
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(28.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        hue = (down.position.x / size.width * 360f).coerceIn(0f, 360f)
-                        commit(); down.consume()
-                        do {
-                            val event = awaitPointerEvent()
-                            event.changes.forEach { ch ->
-                                hue = (ch.position.x / size.width * 360f).coerceIn(0f, 360f)
-                                commit(); ch.consume()
-                            }
-                        } while (event.changes.any { it.pressed })
-                    }
-                }
-        ) {
-            val hueColors = listOf(
-                Color.Red, Color(0xFFFF7F00), Color.Yellow, Color.Green,
-                Color.Cyan, Color.Blue, Color(0xFF8B00FF), Color.Red
-            )
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                drawRect(Brush.horizontalGradient(hueColors))
-                // Thumb line
-                val thumbX = (hue / 360f) * size.width
-                drawCircle(color = Color.White, radius = (size.height / 2f) - 2.dp.toPx(), center = Offset(thumbX, size.height / 2f), style = Stroke(width = 2.dp.toPx()))
-                drawCircle(color = Color.Black.copy(alpha = 0.3f), radius = (size.height / 2f) - 1.dp.toPx(), center = Offset(thumbX, size.height / 2f), style = Stroke(width = 1.dp.toPx()))
-            }
-        }
-
-        // Preview + Hex input
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            // Color preview swatch
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(currentColor)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
-            )
-            // Hex input
-            OutlinedTextField(
-                value = hexText,
-                onValueChange = { raw ->
-                    hexText = raw
-                    val cleaned = raw.trimStart('#')
-                    if (cleaned.length == 6) {
-                        try {
-                            val parsed = android.graphics.Color.parseColor("#$cleaned")
-                            val hsv = FloatArray(3)
-                            android.graphics.Color.colorToHSV(parsed, hsv)
-                            hue = hsv[0]; sat = hsv[1]; value = hsv[2]
-                            onColorChanged(parsed)
-                            hexValid = true
-                        } catch (_: Exception) { hexValid = false }
-                    } else { hexValid = false }
-                },
-                modifier = Modifier.weight(1f),
-                label = { Text(stringResource(R.string.settings_accent_color_hex)) },
-                singleLine = true,
-                isError = !hexValid,
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                    focusedBorderColor = MaterialTheme.colorScheme.primary
-                ),
-                prefix = { Text("#", color = MaterialTheme.colorScheme.onSurfaceVariant) },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done)
-            )
-        }
-    }
-}
-
-private fun argbToHex(argb: Int): String {
-    return "%06X".format(argb and 0x00FFFFFF)
 }
 
 // ── Languages section ─────────────────────────────────────────────────────────

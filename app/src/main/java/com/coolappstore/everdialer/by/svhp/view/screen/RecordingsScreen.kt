@@ -192,7 +192,7 @@ fun RecordingsScreen(
                                 navigator.navigate(com.ramcosta.composedestinations.generated.destinations.SearchScreenDestination)
                             },
                             onEverDialerSettingsClick = {
-                                navigator.navigate(com.ramcosta.composedestinations.generated.destinations.SettingsScreenDestination)
+                                navigator.navigate(com.ramcosta.composedestinations.generated.destinations.SettingsScreenDestination())
                             }
                         )
                     }

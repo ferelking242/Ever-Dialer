@@ -48,6 +48,16 @@ import kotlin.coroutines.cancellation.CancellationException
 class RecordingForegroundService : Service() {
     companion object {
         private const val TAG = "SCR:RecordingForegroundService"
+        /**
+         * How far apart (in either direction) a CallLog entry's own start time may be from this
+         * recording session's start time and still be considered "the same call" for the
+         * anonymous-number fallback lookup. Generous enough to absorb the normal small gap
+         * between the call actually starting and the recording pipeline spinning up, but tight
+         * enough to reject an unrelated call landing in the log around the same time.
+         */
+        private const val MATCH_TOLERANCE_MS = 90_000L
+        /** Safety cap on how many newest-first CallLog rows we'll scan looking for a time match. */
+        private const val MAX_CANDIDATE_ROWS = 10
 
         // -- Intent action for controlling and initializing the service lifecycle. --
 
@@ -56,6 +66,16 @@ class RecordingForegroundService : Service() {
 
         /** Intent action sent to this service to initialize and prepare the recording session in standby mode. */
         const val ACTION_STANDBY = "com.coolappstore.evercallrecorder.by.svhp.STANDBY"
+
+        /**
+         * Boolean intent extra: when true for this specific start command, the foreground
+         * notification is not actually shown to the user (though [startForeground] is still
+         * called to satisfy the OS requirement). Used while an incoming call is still
+         * ringing/unanswered so the recording notification doesn't pop up on top of / race
+         * with the answer/decline UI. A later command sent without this extra (e.g. once the
+         * call is answered) shows the notification normally again.
+         */
+        const val EXTRA_SUPPRESS_NOTIFICATION = "com.coolappstore.evercallrecorder.by.svhp.EXTRA_SUPPRESS_NOTIFICATION"
 
         /** Intent action sent to this service to stop the current recording session and kill the service. */
         const val ACTION_STOP_RECORDING = "com.coolappstore.evercallrecorder.by.svhp.STOP_RECORDING"
@@ -182,7 +202,8 @@ class RecordingForegroundService : Service() {
 
         // Quickly show a notification to satisfy Android's foreground service requirements,
         // as starting/waiting for Shizuku can take long enough for the OS to kill the service.
-        updateNotification()
+        val suppressNotification = intent?.getBooleanExtra(EXTRA_SUPPRESS_NOTIFICATION, false) == true
+        updateNotification(suppressNotification)
 
         when (action) {
             ACTION_START_RECORDING, ACTION_MANUAL_START -> {
@@ -349,6 +370,9 @@ class RecordingForegroundService : Service() {
         // Capture metadata before releasing resources, in case we need to query call logs for the final file name if phone number is empty.
         val originalMetadata = activeSession.initializationMetadata
         val uriToRename = activeSession.currentRecordingUri
+        // Bug fix: this must be read before release()/reassignment so the later fallback rename
+        // (below) can stamp the file with the moment the recording actually started, not "now".
+        val recordingStartTimeMillis = activeSession.recordingStartTimeMillis
 
         // Release all resources held by the recording session, and stop the remote shell service, finalizing the recording file.
         activeSession.release(shellService)
@@ -365,7 +389,7 @@ class RecordingForegroundService : Service() {
             // Android gives the process some time to live, so this is safe for a few seconds.
             CoroutineScope(Dispatchers.IO).launch {
                 val rawNumber =
-                    tryGetFinalNumberFromLog(applicationContext, originalMetadata.direction)
+                    tryGetFinalNumberFromLog(applicationContext, originalMetadata.direction, recordingStartTimeMillis)
                 val sanitizedRaw = PhoneNumberManager.sanitizeOemNumber(rawNumber) ?: ""
 
                 val finalNumber = if (sanitizedRaw.isNotBlank()) {
@@ -381,7 +405,12 @@ class RecordingForegroundService : Service() {
 
                 if (finalNumber.isNotBlank()) {
                     val updatedMeta = originalMetadata.copy(rawPhoneNumber = finalNumber)
-                    val newName = RecordingFileNameFormatter.formatFileName(applicationContext, updatedMeta, activeSession.currentCodecEnum)
+                    // Bug fix: re-use the original recording start time here (not "now") so the
+                    // rename can't shift the recording's displayed date to the call's end time.
+                    val newName = RecordingFileNameFormatter.formatFileName(
+                        applicationContext, updatedMeta, activeSession.currentCodecEnum,
+                        startTimeMillis = recordingStartTimeMillis
+                    )
                     try {
                         SafHelper.renameRecording(applicationContext, uriToRename, newName)
                         AppLogger.d(TAG, "Successfully renamed wrongly detected anonymous recording to: $newName")
@@ -400,12 +429,25 @@ class RecordingForegroundService : Service() {
     }
 
     /**
-     * Tries to query the call log for the most recent call matching the given direction, and returns the associated phone number.
-     * @return The phone number from the most recent call log entry matching the direction, or null if no valid entry is found after multiple attempts.
+     * Tries to query the call log for the entry matching the given direction whose own start time
+     * lines up with this recording session, and returns the associated phone number.
+     *
+     * Bug fix: this used to blindly return the *most recent* call-log entry of the right
+     * direction, with no check that it was actually the call being recorded. In a dual-SIM/call-
+     * waiting scenario, or any time another call landed in the log shortly before/after this one,
+     * that could — and did — attach a completely different call's (and therefore a different
+     * contact's) phone number to this recording. We now only accept an entry whose own CallLog
+     * date is within [MATCH_TOLERANCE_MS] of [sessionStartTimeMillis] (generous enough to absorb
+     * the normal small delay between the call actually starting and our recording pipeline
+     * spinning up, but tight enough to rule out an unrelated call), and pick whichever candidate
+     * is closest in time if more than one falls in that window.
+     *
+     * @return The phone number from the matching call log entry, or null if no matching entry is found after multiple attempts.
      */
     private suspend fun tryGetFinalNumberFromLog(
         context: Context,
-        direction: RecordingDirection?
+        direction: RecordingDirection?,
+        sessionStartTimeMillis: Long
     ): String? {
         val typeSelection = when (direction) {
             // We do not want to include missed or rejected calls here since they are useless to us, and in a Dual-call scenario could lead to picking the wrong number.
@@ -418,14 +460,29 @@ class RecordingForegroundService : Service() {
             try {
                 val cursor = context.contentResolver.query(
                     CallLog.Calls.CONTENT_URI,
-                    arrayOf(CallLog.Calls.NUMBER),
+                    arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.DATE),
                     typeSelection, null,
                     "${CallLog.Calls.DATE} DESC"
                 )
                 cursor?.use {
-                    if (it.moveToFirst()) {
-                        return it.getString(0)
+                    val dateIdx = it.getColumnIndex(CallLog.Calls.DATE)
+                    val numberIdx = it.getColumnIndex(CallLog.Calls.NUMBER)
+                    var bestNumber: String? = null
+                    var bestDiff = Long.MAX_VALUE
+                    var rowsChecked = 0
+                    while (it.moveToNext() && rowsChecked < MAX_CANDIDATE_ROWS) {
+                        rowsChecked++
+                        val entryDate = if (dateIdx != -1) it.getLong(dateIdx) else continue
+                        val diff = kotlin.math.abs(entryDate - sessionStartTimeMillis)
+                        // Rows are sorted newest-first, so once we're past the tolerance window
+                        // on the "older than session start" side, nothing further can match.
+                        if (diff > MATCH_TOLERANCE_MS && entryDate < sessionStartTimeMillis) break
+                        if (diff <= MATCH_TOLERANCE_MS && diff < bestDiff) {
+                            bestDiff = diff
+                            bestNumber = if (numberIdx != -1) it.getString(numberIdx) else null
+                        }
                     }
+                    if (bestNumber != null) return bestNumber
                 }
             } catch (e: Exception) {
                 AppLogger.w(TAG, "Failed to query call log for fallback number", e)
@@ -438,7 +495,16 @@ class RecordingForegroundService : Service() {
     /**
      * Updates the foreground service notification based on the current state (Recording or Standby).
      */
-    private fun updateNotification() {
+    private fun updateNotification(suppressNotification: Boolean = false) {
+        if (suppressNotification) {
+            // Post a silent, content-free, IMPORTANCE_MIN placeholder instead of the real
+            // "Call in progress / Press to start recording" notification. This still satisfies
+            // startForeground()'s OS requirement, but never pops up / heads-up / shows a status
+            // bar icon, so it can never race with the answer/decline UI while a call is still
+            // ringing and unanswered.
+            startForegroundWithType(notificationHelper.getSilentPlaceholderNotification())
+            return
+        }
         val notification = notificationHelper.getNotification(currentState)
         startForegroundWithType(notification)
         if (!AppPreferences(this).isRecordingNotificationsEnabled()) {

@@ -67,6 +67,17 @@ class AudioRecordingEngine {
         }
 
     /**
+     * The exact moment this session's recording actually started (right before the audio file
+     * was created and the {date} placeholder was stamped into its name). Kept around so any
+     * later rename of the file — e.g. the anonymous-number CallLog fallback in
+     * [RecordingForegroundService] — can re-use this same timestamp instead of accidentally
+     * re-stamping the file with "now" (the call's end time) and making the recordings list show
+     * the wrong time.
+     */
+    var recordingStartTimeMillis: Long = 0L
+        private set
+
+    /**
      * Read end of the kernel pipe owned by the shell process.
      * The shell process writes scrcpy-server audio bytes into the write end; this service
      * reads from the read end. Android's [ParcelFileDescriptor] wraps a native file descriptor
@@ -148,7 +159,7 @@ class AudioRecordingEngine {
 
         AppLogger.i(TAG, "Starting recording pipeline: source=${audioSourceEnum.cliKey} codec=${codecEnum.cliKey} bitrate=$bitRate")
 
-        val fileName = RecordingFileNameFormatter.formatFileName(context, metadata, codecEnum)
+        val fileName = RecordingFileNameFormatter.formatFileName(context, metadata, codecEnum, startTimeMillis = System.currentTimeMillis().also { recordingStartTimeMillis = it })
 
         val safResult = SafHelper.createAudioFile(context, preferences, fileName, codecEnum.mimeType)
             ?: throw PipelineInitializationException(

@@ -97,6 +97,9 @@ fun AboutAppScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            com.coolappstore.everdialer.by.svhp.view.components.SettingsSearchEntryPoint(navigator = navigator)
+            Spacer(modifier = Modifier.height(20.dp))
+
             // ── App Icon (plain, no surrounding elements) ────────────
             AsyncImage(
                 model = ImageRequest.Builder(context)

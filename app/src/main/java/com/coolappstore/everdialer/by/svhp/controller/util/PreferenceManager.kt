@@ -82,7 +82,26 @@ class PreferenceManager(context: Context) {
         return if (mode == "specified") match else !match
     }
 
+    /** Returns the user-configured tab order (Settings > Appearance > Tab Sections) as an
+     *  ordered list of tab keys (e.g. "favorites", "calls", "contacts", "recordings", "notes").
+     *  This is the single source of truth for tab ordering — both the bottom nav bar and the
+     *  page-switching transition logic derive their order from this, so reordering tabs in
+     *  settings never gets out of sync with the slide-animation direction on the main screen. */
+    fun getTabOrder(): List<String> = parseTabOrder(getString(KEY_TAB_ORDER, null))
+
     companion object {
+        /** Parses a raw comma-separated tab-order preference string into an ordered list of
+         *  valid tab keys, falling back to [DEFAULT_TAB_ORDER] and appending any tab keys
+         *  missing from a stale/older saved order (so newly-added tabs always show up). */
+        fun parseTabOrder(raw: String?): List<String> {
+            val fallback = DEFAULT_TAB_ORDER.split(",")
+            if (raw.isNullOrBlank()) return fallback
+            val parsed = raw.split(",").map { it.trim() }.filter { it.isNotBlank() }
+            val merged = parsed.toMutableList()
+            fallback.forEach { key -> if (key !in merged) merged.add(key) }
+            return merged.filter { it in fallback }
+        }
+
         const val KEY_DEFAULT_SIM           = "default_sim"
         const val KEY_DYNAMIC_COLORS        = "dynamic_colors"
         const val KEY_AMOLED_MODE           = "amoled_mode"
@@ -160,6 +179,12 @@ class PreferenceManager(context: Context) {
         // Freeform positions — JSON-encoded map of button id -> {x, y} as fractions (0f..1f)
         // of the available preview/call area, only used while KEY_CALL_BUTTONS_FREEFORM is on.
         const val KEY_CALL_BUTTONS_FREEFORM_POSITIONS = "call_buttons_freeform_positions"
+        // Whether the text label is shown below each Feature Button / Hang Up icon on the
+        // ongoing call screen. On (ticked) by default.
+        const val KEY_CALL_BUTTONS_SHOW_NAMES = "call_buttons_show_names"
+        // Element Size — scale factor (0.75f .. 1.5f) applied to each Feature Button / Hang Up
+        // icon's size on the ongoing call screen. 1.0f (100%) by default.
+        const val KEY_CALL_BUTTONS_ELEMENT_SIZE = "call_buttons_element_size"
         // Dialer role popup shown after welcome
         const val KEY_DIALER_POPUP_SHOWN    = "dialer_popup_shown"
         const val KEY_TELEGRAM_SHOWN        = "telegram_shown"

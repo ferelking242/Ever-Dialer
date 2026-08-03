@@ -18,4 +18,6 @@
    <include domain="sharedpref" path="."/>
    <exclude domain="sharedpref" path="device.xml"/>
 -->
+    <!-- Bug fix: don't let deleted private-storage recordings come back from a stale backup. -->
+    <exclude domain="file" path="call_recordings/" />
 </full-backup-content>

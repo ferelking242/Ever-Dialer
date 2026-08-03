@@ -267,7 +267,7 @@ class CallSessionManager private constructor(context: Context) {
             val ringMetadata = session.currentMetadata
             if (ringMetadata != null) {
                 AppLogger.d(TAG, "Evaluating service start at RINGING state.")
-                withContext(Dispatchers.Main) { evaluateAndStartService() }
+                withContext(Dispatchers.Main) { evaluateAndStartService(stillRingingUnanswered = true) }
             }
         }
 
@@ -297,7 +297,7 @@ class CallSessionManager private constructor(context: Context) {
      * held in standby until [notifyCallAnsweredInDialer] is called (outgoing: the dialer's call timer started;
      * incoming: the call was accepted through this app's dialer).
      */
-    private fun evaluateAndStartService() {
+    private fun evaluateAndStartService(stillRingingUnanswered: Boolean = false) {
         if (session.isRecordingStarted) {
             AppLogger.d(TAG, "Current call session is already recording. Skipping duplicate intent.")
             return
@@ -320,10 +320,18 @@ class CallSessionManager private constructor(context: Context) {
         val wantsAutoRecord = shouldAutoRecord(sessionMetadata)
         val waitingForDialerAnswer = wantsAutoRecord && preferences.isRecordOnAnswerEnabled() && !session.answeredViaDialer
 
+        // The standby notification is purely informational (nothing is being recorded yet), so for
+        // an incoming call that's still ringing/unanswered we start the service (to keep any
+        // Shizuku pre-warming working) but suppress its visible notification. Otherwise the
+        // "call recording" notification pops up on top of / racing with the incoming-call
+        // answer/decline UI while the screen is on. Once the call is actually answered, a fresh
+        // command (standby or start) is sent without this suppression and the notification shows normally.
+        val suppressStandbyNotification = stillRingingUnanswered && sessionMetadata.direction == RecordingDirection.INCOMING
+
         if (waitingForDialerAnswer) {
             if (!session.wasRecordingServiceStartIntentSend) {
                 AppLogger.i(TAG, "\"Record Only When Call Answered\" is enabled. Holding ${sessionMetadata.direction} call in standby until answered via the dialer.")
-                sendServiceCommand(RecordingForegroundService.ACTION_STANDBY, sessionMetadata)
+                sendServiceCommand(RecordingForegroundService.ACTION_STANDBY, sessionMetadata, suppressNotification = suppressStandbyNotification)
                 session.wasRecordingServiceStartIntentSend = true
             }
             return
@@ -336,11 +344,11 @@ class CallSessionManager private constructor(context: Context) {
 
         if (wantsAutoRecord) {
             AppLogger.i(TAG, "Sending start INTENT for ${sessionMetadata.direction} call to RecordingForegroundService.")
-            sendServiceCommand(RecordingForegroundService.ACTION_START_RECORDING, sessionMetadata)
+            sendServiceCommand(RecordingForegroundService.ACTION_START_RECORDING, sessionMetadata, suppressNotification = suppressStandbyNotification)
             session.isRecordingStarted = true
         } else {
             AppLogger.i(TAG, "Sending standby INTENT for ${sessionMetadata.direction} call to RecordingForegroundService.")
-            sendServiceCommand(RecordingForegroundService.ACTION_STANDBY, sessionMetadata)
+            sendServiceCommand(RecordingForegroundService.ACTION_STANDBY, sessionMetadata, suppressNotification = suppressStandbyNotification)
         }
         session.wasRecordingServiceStartIntentSend = true
     }
@@ -421,7 +429,9 @@ class CallSessionManager private constructor(context: Context) {
             }
         }
         AppLogger.d(TAG, "Evaluating service start at $telecomState state (InCallService).")
-        withContext(Dispatchers.Main) { evaluateAndStartService() }
+        withContext(Dispatchers.Main) {
+            evaluateAndStartService(stillRingingUnanswered = telecomState == android.telecom.Call.STATE_RINGING)
+        }
     }
 
     @Synchronized
@@ -450,11 +460,14 @@ class CallSessionManager private constructor(context: Context) {
     /**
      * Builds and fires an Intent to the [RecordingForegroundService].
      */
-    private fun sendServiceCommand(action: String, metadata: RecordingMetadata? = null) {
+    private fun sendServiceCommand(action: String, metadata: RecordingMetadata? = null, suppressNotification: Boolean = false) {
         val intent = Intent(appContext, RecordingForegroundService::class.java).apply {
             this.action = action
             if (metadata != null) {
                 putExtra(RecordingMetadata.EXTRA_METADATA, metadata)
+            }
+            if (suppressNotification) {
+                putExtra(RecordingForegroundService.EXTRA_SUPPRESS_NOTIFICATION, true)
             }
         }
         if (action == RecordingForegroundService.ACTION_STOP_RECORDING) {

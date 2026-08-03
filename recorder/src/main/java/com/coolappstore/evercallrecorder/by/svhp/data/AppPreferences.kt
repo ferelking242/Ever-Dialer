@@ -33,6 +33,12 @@ class AppPreferences(private val context: Context) {
         // back to the system default font.
         private const val RIVO_PREFS_NAME = "rivo_prefs"
         private const val KEY_CUSTOM_FONT_PATH = "custom_font_path"
+        // Theme mode & dynamic color used to be separate, duplicate settings here — now the
+        // recorder module has no theme/appearance controls of its own and simply follows
+        // whatever Ever Dialer's own Settings → Interface screen has set, read directly from
+        // that same "rivo_prefs" file/keys.
+        private const val KEY_RIVO_THEME_MODE = "theme_mode"
+        private const val KEY_RIVO_DYNAMIC_COLORS = "dynamic_colors"
     }
 
     object DefaultsValue {
@@ -175,6 +181,19 @@ class AppPreferences(private val context: Context) {
         companion object {
             fun fromKey(key: String?): ThemeMode =
                 entries.firstOrNull { it.key == key } ?: throw IllegalArgumentException("Unknown ThemeMode key: $key")
+
+            /** Maps Ever Dialer's own Settings → Interface theme keys ("auto", "light", "dark",
+             *  "white", "black", "auto_bw") onto this enum, so the recorder module's theme always
+             *  matches whatever the user picked in Ever Dialer without needing its own copy of
+             *  the setting. */
+            fun fromRivoKey(key: String?): ThemeMode = when (key) {
+                "light"   -> LIGHT
+                "dark"    -> DARK
+                "white"   -> WHITE
+                "black"   -> BLACK
+                "auto_bw" -> AUTO_WB
+                else      -> SYSTEM // "auto" and anything unrecognized
+            }
         }
     }
 
@@ -293,9 +312,19 @@ class AppPreferences(private val context: Context) {
     fun setAudioBitRate(bitRate: Int) = setInt(Key.AUDIO_BITRATE, bitRate)
     fun getFileNameTemplate() = getString(Key.FILE_NAME_TEMPLATE, DefaultsValue.FILE_NAME_TEMPLATE) ?: DefaultsValue.FILE_NAME_TEMPLATE
     fun setFileNameTemplate(template: String) = setString(Key.FILE_NAME_TEMPLATE, template)
-    fun getThemeMode() = ThemeMode.fromKey(getString(Key.THEME_MODE, DefaultsValue.THEME_MODE.key))
+    // ── Theme mode & dynamic color (synced from Ever Dialer's own Settings → Interface) ────
+    // No longer configurable from this module's own Settings screen — always mirrors whatever
+    // Ever Dialer itself has set, read straight from its "rivo_prefs" file so the two apps can
+    // never drift out of sync.
+    fun getThemeMode(): ThemeMode {
+        val rivoKey = context.getSharedPreferences(RIVO_PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_RIVO_THEME_MODE, null)
+        return ThemeMode.fromRivoKey(rivoKey)
+    }
     fun setThemeMode(mode: ThemeMode) = setString(Key.THEME_MODE, mode.key)
-    fun isDynamicColorEnabled() = getBoolean(Key.DYNAMIC_COLOR, DefaultsValue.DYNAMIC_COLOR)
+    fun isDynamicColorEnabled(): Boolean =
+        context.getSharedPreferences(RIVO_PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_RIVO_DYNAMIC_COLORS, DefaultsValue.DYNAMIC_COLOR)
     fun setDynamicColorEnabled(enabled: Boolean) = setBoolean(Key.DYNAMIC_COLOR, enabled)
     fun isShowToastsEnabled() = getBoolean(Key.SHOW_TOASTS, DefaultsValue.SHOW_TOASTS)
     fun setShowToastsEnabled(enabled: Boolean) = setBoolean(Key.SHOW_TOASTS, enabled)

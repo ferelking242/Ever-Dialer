@@ -59,6 +59,8 @@ fun IncomingCallUIScreen(navigator: DestinationsNavigator, highlightKey: String?
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
+            com.coolappstore.everdialer.by.svhp.view.components.SettingsSearchEntryPoint(navigator = navigator)
+
             RivoAnimatedSection(delayMs = 0L) {
                     Column {
                         Text(

@@ -559,17 +559,22 @@ fun CallLogFullContent(
 
                 // ── Animated content: slides left/right on filter change ──────
                 // On the very first data load (startup) we use a slow fade-in so the
-                // list appears gracefully instead of jumping. Once the user starts
-                // changing filters the normal slide transition takes over.
+                // list appears gracefully instead of jumping. A data-only refresh (e.g. a
+                // call log entry appearing right after a call ends) applies instantly with
+                // no animation — it should never feel like something is "loading". Only an
+                // actual filter change (All/Missed/etc.) gets the slide transition.
                 var hasLoadedOnce by remember { mutableStateOf(false) }
                 AnimatedContent(
                     targetState = Pair(selectedFilter, groupedLogs),
                     transitionSpec = {
                         val filterChanged = initialState.first != targetState.first
-                        if (!hasLoadedOnce || !filterChanged) {
-                            // Startup / data-only refresh: slow gentle fade, no slide
+                        if (!hasLoadedOnce) {
+                            // Startup: slow gentle fade, no slide
                             fadeIn(animationSpec = tween(600, easing = LinearOutSlowInEasing)) togetherWith
                                 fadeOut(animationSpec = tween(0))
+                        } else if (!filterChanged) {
+                            // Data-only refresh: instant, no animation whatsoever
+                            EnterTransition.None togetherWith ExitTransition.None
                         } else {
                             val currentIdx = filterEntries.indexOf(targetState.first)
                             val prevIdx = filterEntries.indexOf(initialState.first)

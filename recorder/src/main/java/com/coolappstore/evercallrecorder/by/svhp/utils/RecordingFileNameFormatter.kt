@@ -53,17 +53,28 @@ object RecordingFileNameFormatter {
      * @param metadata Defines the main properties (direction, phone number, cross country).
      * @param codec The selected ScrcpyAudioCodec used to determine the file extension.
      * @param customFormat An optional custom format string to use instead of the one from preferences. Useful for testing or one-off formatting without changing user settings.
+     * @param startTimeMillis The moment the recording actually started, used for the {date} placeholder.
+     *   Bug fix: this used to always stamp the filename with `Date()` — "right now" at the moment
+     *   [formatFileName] runs. That's correct the first time (right when the recording starts),
+     *   but this function is also called a second time, *after the call has ended*, to rename a
+     *   recording whose phone number wasn't known yet (anonymous-number fallback). Recomputing
+     *   `Date()` there stamped the file with the call's *end* time instead of when the recording
+     *   actually began, which is what made the recordings list show the wrong (ending) time.
+     *   Callers doing that later rename must now pass the original start time back in explicitly
+     *   so the visible date never changes after the fact. Defaults to "now" for the normal,
+     *   record-starts-right-now call site.
      * @return A filesystem-safe filename string.
      */
     fun formatFileName(
         context: Context,
         metadata: RecordingMetadata,
         codec: ScrcpyAudioCodec,
-        customFormat: String? = null
+        customFormat: String? = null,
+        startTimeMillis: Long = System.currentTimeMillis()
     ): String {
         val template = customFormat ?: AppPreferences(context).getFileNameTemplate()
 
-        val dateStr = SimpleDateFormat("yyyyMMdd_HHmmss.SSSZ", Locale.CANADA).format(Date())
+        val dateStr = SimpleDateFormat("yyyyMMdd_HHmmss.SSSZ", Locale.CANADA).format(Date(startTimeMillis))
 
         val directionStr = when (metadata.direction) {
             RecordingDirection.INCOMING -> "in"

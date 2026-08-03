@@ -119,6 +119,14 @@ fun CallerUIScreen(navigator: DestinationsNavigator) {
     // short / auto-dropped before reaching where the user intended).
     var isDraggingAnyButton by remember { mutableStateOf(false) }
 
+    // Show Names — whether the text label is shown below each Feature Button / Hang Up icon
+    // on the real ongoing-call screen. On (ticked) by default.
+    var showNamesEnabled by remember { mutableStateOf(CallButtonPrefs.isShowNamesEnabled(prefs)) }
+
+    // Element Size — scale factor applied to each Feature Button / Hang Up icon's size on the
+    // real ongoing-call screen.
+    var elementSize by remember { mutableFloatStateOf(CallButtonPrefs.getElementSize(prefs)) }
+
     fun resetButtonLayout() {
         buttonOrder.clear()
         buttonOrder.addAll(CallButtonPrefs.DEFAULT_ORDER.split(",").map { it.trim() })
@@ -254,6 +262,12 @@ fun CallerUIScreen(navigator: DestinationsNavigator) {
                                         freeformEnabled = it
                                         CallButtonPrefs.setFreeformEnabled(prefs, it)
                                     },
+                                    showNamesEnabled = showNamesEnabled,
+                                    onShowNamesEnabledChanged = {
+                                        showNamesEnabled = it
+                                        CallButtonPrefs.setShowNamesEnabled(prefs, it)
+                                    },
+                                    elementSize = elementSize,
                                     freeformPositions = freeformPositions,
                                     onFreeformPositionsChanged = {
                                         CallButtonPrefs.setFreeformPositions(
@@ -269,6 +283,110 @@ fun CallerUIScreen(navigator: DestinationsNavigator) {
                                     },
                                     onDragActiveChanged = { isDraggingAnyButton = it }
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Element Size ─────────────────────────────────────────
+            item {
+                RivoAnimatedSection(delayMs = 50L) {
+                    Column {
+                        Text(
+                            "Element Size",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(start = 12.dp, bottom = 8.dp)
+                        )
+                        RivoExpressiveCard {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                Icons.Default.PhotoSizeSelectLarge,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            "Icon Size",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            "Adjust the size of the ongoing call icons",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                Spacer(Modifier.height(20.dp))
+
+                                // Slider
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Remove,
+                                        null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Slider(
+                                        value = elementSize,
+                                        onValueChange = { elementSize = it },
+                                        onValueChangeFinished = {
+                                            CallButtonPrefs.setElementSize(prefs, elementSize)
+                                        },
+                                        valueRange = CallButtonPrefs.ELEMENT_SIZE_MIN..CallButtonPrefs.ELEMENT_SIZE_MAX,
+                                        steps = 14,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(
+                                        Icons.Default.Add,
+                                        null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        "Small",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        "${(elementSize * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "Large",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     }
@@ -455,6 +573,9 @@ private fun FeatureButtonsPreview(
     hangupWidth: Float,
     freeformEnabled: Boolean,
     onFreeformEnabledChanged: (Boolean) -> Unit,
+    showNamesEnabled: Boolean,
+    onShowNamesEnabledChanged: (Boolean) -> Unit,
+    elementSize: Float,
     freeformPositions: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Offset>,
     onFreeformPositionsChanged: () -> Unit,
     onOrderChanged: () -> Unit,
@@ -497,6 +618,32 @@ private fun FeatureButtonsPreview(
         }
         Checkbox(checked = freeformEnabled, onCheckedChange = onFreeformEnabledChanged)
     }
+    Spacer(Modifier.height(4.dp))
+
+    // ── Show Names toggle — whether the text label is shown below each button icon on the
+    // real ongoing-call screen. On (ticked) by default.
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onShowNamesEnabledChanged(!showNamesEnabled) }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                "Show Names",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "Show or hide the text label below each button icon",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Checkbox(checked = showNamesEnabled, onCheckedChange = onShowNamesEnabledChanged)
+    }
     Spacer(Modifier.height(8.dp))
 
     Row(
@@ -533,7 +680,9 @@ private fun FeatureButtonsPreview(
                     enabledMap = enabledMap,
                     freeformPositions = freeformPositions,
                     onDragActiveChanged = onDragActiveChanged,
-                    onPositionsChanged = onFreeformPositionsChanged
+                    onPositionsChanged = onFreeformPositionsChanged,
+                    elementSize = elementSize,
+                    showNamesEnabled = showNamesEnabled
                 )
             } else {
                 gridIds.chunked(3).forEachIndexed { rowIndex, rowIds ->
@@ -576,25 +725,27 @@ private fun FeatureButtonsPreview(
                                     color = if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
                                             else Color.White.copy(alpha = 0.16f),
                                     border = if (isSelected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
-                                    modifier = Modifier.size(56.dp)
+                                    modifier = Modifier.size(56.dp * elementSize)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
                                             spec.icon,
                                             contentDescription = null,
                                             tint = Color.White,
-                                            modifier = Modifier.size(24.dp)
+                                            modifier = Modifier.size(24.dp * elementSize)
                                         )
                                     }
                                 }
-                                Text(
-                                    spec.label,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.85f),
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    maxLines = 1,
-                                    modifier = Modifier.padding(top = 6.dp)
-                                )
+                                if (showNamesEnabled) {
+                                    Text(
+                                        spec.label,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.85f),
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(top = 6.dp)
+                                    )
+                                }
                             }
                         }
                         // Pad out the row with invisible spacers so a partial last row still aligns
@@ -654,7 +805,9 @@ private fun FreeformButtonsArea(
     enabledMap: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Boolean>,
     freeformPositions: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Offset>,
     onDragActiveChanged: (Boolean) -> Unit,
-    onPositionsChanged: () -> Unit
+    onPositionsChanged: () -> Unit,
+    elementSize: Float,
+    showNamesEnabled: Boolean
 ) {
     val density = LocalDensity.current
     val rows = if (gridIds.isEmpty()) 1 else ((gridIds.size + 2) / 3)
@@ -723,24 +876,26 @@ private fun FreeformButtonsArea(
                 Surface(
                     shape = CircleShape,
                     color = if (isHangup) Color(0xFFD32F2F) else Color.White.copy(alpha = 0.16f),
-                    modifier = Modifier.size(56.dp)
+                    modifier = Modifier.size(56.dp * elementSize)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             spec.icon,
                             contentDescription = null,
                             tint = Color.White,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(24.dp * elementSize)
                         )
                     }
                 }
-                Text(
-                    spec.label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White.copy(alpha = 0.85f),
-                    maxLines = 1,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
+                if (showNamesEnabled) {
+                    Text(
+                        spec.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
             }
         }
     }

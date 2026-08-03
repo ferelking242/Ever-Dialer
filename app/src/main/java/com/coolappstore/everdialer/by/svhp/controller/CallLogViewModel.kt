@@ -37,7 +37,9 @@ class CallLogViewModel(
     // In-memory cache
     @Volatile private var cachedLogs: List<CallLogEntry> = emptyList()
     @Volatile private var isFetching = false
+    @Volatile private var wasInCall = false
     private var debounceJob: Job? = null
+    private var callEndRefreshJob: Job? = null
 
     // Disk cache file
     private val cacheFile: File by lazy {
@@ -92,6 +94,30 @@ class CallLogViewModel(
             }
             // Step 2: refresh from provider in background
             fetchLogsInternal()
+        }
+
+        // The call log provider writes the finished call's row right around when the call
+        // actually ends, but its own ContentObserver notification can lag by a bit. Watching
+        // CallService's own call-session state instead means we refetch the instant the call
+        // ends — while the user is still on the in-call screen / navigating back — so Recents
+        // is already showing the finished call by the time they look, with no pull-to-refresh
+        // and no visible loading animation needed.
+        viewModelScope.launch {
+            CallService.currentCallSession.collect { session ->
+                if (session != null) {
+                    wasInCall = true
+                } else if (wasInCall) {
+                    wasInCall = false
+                    callEndRefreshJob?.cancel()
+                    callEndRefreshJob = viewModelScope.launch(Dispatchers.IO) {
+                        // Fire right away, then once more shortly after as a safety net in case
+                        // the provider hadn't finished writing the row on the first pass yet.
+                        fetchLogsInternal()
+                        delay(600)
+                        fetchLogsInternal()
+                    }
+                }
+            }
         }
     }
 

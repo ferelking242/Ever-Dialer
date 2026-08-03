@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.os.IBinder
 import android.provider.Settings
+import android.telecom.Call
 import android.telecom.CallAudioState
 import android.view.Gravity
 import android.view.View
@@ -315,6 +316,14 @@ class FloatingCallService : Service() {
                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
                     }
                 )
+                is MenuAction.AnswerCall -> {
+                    CallService.answerCall()
+                    action.ctx.startActivity(
+                        Intent(action.ctx, CallActivity::class.java).apply {
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                        }
+                    )
+                }
                 MenuAction.Close -> { delay(150); removeBubble(); stopSelf() }
                 MenuAction.Hangup -> CallService.declineCall()
             }
@@ -332,6 +341,7 @@ class FloatingCallService : Service() {
         data class Mute(val mute: Boolean)                              : MenuAction()
         data class Notes(val ctx: Context, val name: String, val number: String) : MenuAction()
         data class BackToCall(val ctx: Context)                         : MenuAction()
+        data class AnswerCall(val ctx: Context)                         : MenuAction()
         object Close   : MenuAction()
         object Hangup  : MenuAction()
     }
@@ -348,6 +358,8 @@ class FloatingCallService : Service() {
         val audioState by CallService.audioState.collectAsState()
         val isMuted    = audioState?.isMuted ?: false
         val isSpeaker  = audioState?.route == CallAudioState.ROUTE_SPEAKER
+        val callSession by CallService.currentCallSession.collectAsState()
+        val isRinging  = callSession?.state == Call.STATE_RINGING
 
         // Full-screen Box – card is at BottomCenter so its background fills behind nav bar.
         // Tapping anywhere in the empty area above the sheet (i.e. not on the sheet itself,
@@ -486,11 +498,19 @@ class FloatingCallService : Service() {
                             horizontalArrangement = Arrangement.SpaceEvenly,
                             verticalAlignment     = Alignment.Top
                         ) {
-                            SheetAction(3,
-                                Icons.Default.Phone, "Back to call",
-                                MaterialTheme.colorScheme.onPrimaryContainer,
-                                MaterialTheme.colorScheme.primaryContainer
-                            ) { onAction(MenuAction.BackToCall(context)) }
+                            if (isRinging) {
+                                SheetAction(3,
+                                    Icons.Default.Call, "Answer Call",
+                                    Color.White,
+                                    Color(0xFF2E7D32)
+                                ) { onAction(MenuAction.AnswerCall(context)) }
+                            } else {
+                                SheetAction(3,
+                                    Icons.Default.Phone, "Back to call",
+                                    MaterialTheme.colorScheme.onPrimaryContainer,
+                                    MaterialTheme.colorScheme.primaryContainer
+                                ) { onAction(MenuAction.BackToCall(context)) }
+                            }
 
                             SheetAction(4,
                                 Icons.Default.Close, "Close Floating Circle",

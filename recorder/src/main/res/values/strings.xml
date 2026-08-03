@@ -103,7 +103,7 @@
     <string name="settings_section_about">About</string>
     <string name="settings_section_recording">Recording</string>
     <string name="settings_section_visual">Visual settings</string>
-    <string name="settings_section_appearance">Appearance</string>
+    <string name="settings_section_appearance">Notifications</string>
     <string name="settings_section_language">Languages</string>
     <string name="settings_section_audio">Audio configuration</string>
     <string name="settings_section_debug">Debug Options</string>

@@ -289,12 +289,18 @@ fun DialPadContent(
     val recordingsVM: HomeViewModel = viewModel()
     val recordingsForSearch by recordingsVM.allRecordings.collectAsState()
 
-    // Extra (non-contact) results shown below matched contacts while typing a text query —
-    // numbers from the call log that aren't saved contacts, plus contact/recording notes whose
-    // content matches. Only active in text-search mode (not while T9-matching a typed number).
-    val extraSearchResults = remember(searchQuery, callLogsForSearch, recordingsForSearch, searchFilterState) {
+    // Extra (non-contact) results shown below matched contacts while searching — numbers from
+    // the call log that aren't saved contacts, plus contact/recording notes whose content
+    // matches. The "Non contacts" section reacts to *either* a typed text query (searchQuery)
+    // *or* digits typed on the dialpad itself (number) so unsaved numbers from call history show
+    // up while dialing a number too, not just while using the text search field. The name/note
+    // based sections (contact notes, recordings, recording notes) stay text-query-only since
+    // there's nothing meaningful to match against a bare typed number for those.
+    val extraSearchResults = remember(searchQuery, number, callLogsForSearch, recordingsForSearch, searchFilterState) {
         val q = searchQuery.trim()
-        if (q.isEmpty()) emptyList()
+        val numberQuery = number.trim()
+        val effectiveQuery = q.ifEmpty { numberQuery }
+        if (effectiveQuery.isEmpty()) emptyList()
         else {
             val results = mutableListOf<DialpadExtraResult>()
             if (searchFilterState.nonContacts) {
@@ -307,32 +313,35 @@ fun DialPadContent(
                         seen.putIfAbsent(key, entry)
                     }
                 seen.values.filter { entry ->
-                    entry.number.replace(" ", "").contains(q.replace(" ", "")) ||
-                            (entry.isCallerIdName && (entry.name?.contains(q, ignoreCase = true) == true))
+                    entry.number.replace(" ", "").contains(effectiveQuery.replace(" ", "")) ||
+                            (q.isNotEmpty() && entry.isCallerIdName && (entry.name?.contains(q, ignoreCase = true) == true))
                 }.take(3).forEach { results.add(DialpadExtraResult.NonContact(it)) }
             }
-            if (searchFilterState.contactNotes) {
-                NoteManager.getAllNotes(context).filter { note ->
-                    note.contactName.contains(q, ignoreCase = true) ||
-                            note.phoneNumber.contains(q, ignoreCase = true) ||
-                            note.content.contains(q, ignoreCase = true)
-                }.take(3).forEach { results.add(DialpadExtraResult.ContactNote(it)) }
-            }
-            var recordingNoteMatches: List<RecordingItem> = emptyList()
-            if (searchFilterState.recordingNotes) {
-                recordingNoteMatches = recordingsForSearch.filter { it.noteText.isNotBlank() && it.noteText.contains(q, ignoreCase = true) }
-                recordingNoteMatches.take(3).forEach { results.add(DialpadExtraResult.RecordingNote(it)) }
-            }
-            if (searchFilterState.recordings) {
-                recordingsForSearch.filter { rec ->
-                    rec !in recordingNoteMatches &&
-                            ((rec.contactName?.contains(q, ignoreCase = true) == true) ||
-                                    rec.phoneNumber.replace(" ", "").contains(q.replace(" ", "")))
-                }.take(3).forEach { results.add(DialpadExtraResult.Recording(it)) }
+            if (q.isNotEmpty()) {
+                if (searchFilterState.contactNotes) {
+                    NoteManager.getAllNotes(context).filter { note ->
+                        note.contactName.contains(q, ignoreCase = true) ||
+                                note.phoneNumber.contains(q, ignoreCase = true) ||
+                                note.content.contains(q, ignoreCase = true)
+                    }.take(3).forEach { results.add(DialpadExtraResult.ContactNote(it)) }
+                }
+                var recordingNoteMatches: List<RecordingItem> = emptyList()
+                if (searchFilterState.recordingNotes) {
+                    recordingNoteMatches = recordingsForSearch.filter { it.noteText.isNotBlank() && it.noteText.contains(q, ignoreCase = true) }
+                    recordingNoteMatches.take(3).forEach { results.add(DialpadExtraResult.RecordingNote(it)) }
+                }
+                if (searchFilterState.recordings) {
+                    recordingsForSearch.filter { rec ->
+                        rec !in recordingNoteMatches &&
+                                ((rec.contactName?.contains(q, ignoreCase = true) == true) ||
+                                        rec.phoneNumber.replace(" ", "").contains(q.replace(" ", "")))
+                    }.take(3).forEach { results.add(DialpadExtraResult.Recording(it)) }
+                }
             }
             results
         }
     }
+
 
     val t9Enabled = prefs.getBoolean(PreferenceManager.KEY_T9_DIALING, true)
     var showSimPicker by remember { mutableStateOf(false) }

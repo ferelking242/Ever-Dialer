@@ -39,6 +39,7 @@ import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
 import com.coolappstore.everdialer.by.svhp.controller.util.normalizeNumberDigits
 import com.coolappstore.everdialer.by.svhp.controller.util.numbersLikelyMatch
 import com.coolappstore.everdialer.by.svhp.modal.data.CallLogEntry
+import com.coolappstore.everdialer.by.svhp.modal.data.Contact
 import com.coolappstore.everdialer.by.svhp.view.components.*
 import com.coolappstore.everdialer.by.svhp.view.components.tiles.SingleTile
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.HomeViewModel
@@ -51,7 +52,11 @@ import com.ramcosta.composedestinations.generated.destinations.NotesScreenDestin
 import com.coolappstore.everdialer.by.svhp.view.components.NavBarVisibilityState
 import com.ramcosta.composedestinations.generated.destinations.RecordingsScreenDestination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinActivityViewModel
 
@@ -135,61 +140,125 @@ fun ContactSearchContent(
         keyboardController?.show()
     }
 
-    val filteredContacts = remember(query, contacts, filterState.contacts) {
-        if (!filterState.contacts || query.isBlank()) emptyList()
-        else contacts.filter {
-            it.name.contains(query, ignoreCase = true) ||
-                    it.phoneNumbers.any { number -> number.replace(" ", "").contains(query.replace(" ", "")) }
+    // ── Precomputed search index over `contacts` ────────────────────────────────────────────
+    // Built only when the contacts list itself changes (cold start / cache refresh) instead of
+    // on every keystroke. This is what keeps typing instant even with 2,500+ contacts — a
+    // keystroke now does a cheap `contains` over already-lowercased/normalized strings instead
+    // of re-lowercasing every contact's name and re-stripping spaces from every phone number on
+    // every single character typed.
+    data class IndexedContact(val contact: Contact, val nameLower: String, val numbersNormalized: List<String>)
+    val contactIndex = remember(contacts) {
+        contacts.map { c ->
+            IndexedContact(
+                contact = c,
+                nameLower = c.name.lowercase(),
+                numbersNormalized = c.phoneNumbers.map { it.replace(" ", "") }
+            )
         }
     }
 
-    // Numbers that show up in the call log but aren't saved as a contact — i.e. what "Non
-    // contacts" in the Filter menu refers to. Deduplicated by normalized number, keeping the
-    // most recent entry (callLogs is already date-descending).
-    val nonContactResults = remember(query, callLogs, filterState.nonContacts) {
-        if (!filterState.nonContacts || query.isBlank()) emptyList()
-        else {
-            val seen = LinkedHashMap<String, CallLogEntry>()
-            callLogs.asSequence()
-                .filter { it.contactId.isNullOrBlank() }
-                .forEach { entry ->
-                    val key = normalizeNumberDigits(entry.number).filter { it.isDigit() }.takeLast(9)
-                        .ifBlank { entry.number }
-                    seen.putIfAbsent(key, entry)
+    // Notes live on disk as individual files — reading them is real I/O, so this now loads once
+    // per Search session instead of on every keystroke (previously this ran on every character
+    // typed, which was the main reason search felt slow/janky, on top of the unindexed contacts
+    // scan above).
+    var allNotes by remember { mutableStateOf<List<NoteEntry>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        allNotes = withContext(Dispatchers.IO) {
+            runCatching { NoteManager.getAllNotes(context) }.getOrDefault(emptyList())
+        }
+    }
+
+    // Debounce the query so a burst of fast keystrokes triggers one filter pass instead of one
+    // per character, and run the actual filtering off the main thread on a background dispatcher
+    // — search stays smooth no matter how large the contacts list, call log, or notes are.
+    var debouncedQuery by remember { mutableStateOf(query) }
+    LaunchedEffect(Unit) {
+        snapshotFlow { query }
+            .debounce(120)
+            .distinctUntilChanged()
+            .collect { debouncedQuery = it }
+    }
+
+    var filteredContacts by remember { mutableStateOf<List<Contact>>(emptyList()) }
+    var nonContactResults by remember { mutableStateOf<List<CallLogEntry>>(emptyList()) }
+    var contactNoteResults by remember { mutableStateOf<List<NoteEntry>>(emptyList()) }
+    var recordingNoteResults by remember { mutableStateOf<List<RecordingItem>>(emptyList()) }
+    var recordingResults by remember { mutableStateOf<List<RecordingItem>>(emptyList()) }
+
+    LaunchedEffect(debouncedQuery, contactIndex, callLogs, allNotes, recordings, filterState) {
+        val q = debouncedQuery
+        if (q.isBlank()) {
+            filteredContacts = emptyList()
+            nonContactResults = emptyList()
+            contactNoteResults = emptyList()
+            recordingNoteResults = emptyList()
+            recordingResults = emptyList()
+            return@LaunchedEffect
+        }
+        data class SearchResults(
+            val contacts: List<Contact>,
+            val nonContacts: List<CallLogEntry>,
+            val notes: List<NoteEntry>,
+            val recordingNotes: List<RecordingItem>,
+            val recordings: List<RecordingItem>
+        )
+        val results = withContext(Dispatchers.Default) {
+            val qLower = q.lowercase()
+            val qDigits = q.replace(" ", "")
+
+            val fc = if (!filterState.contacts) emptyList()
+            else contactIndex.filter { entry ->
+                entry.nameLower.contains(qLower) || entry.numbersNormalized.any { it.contains(qDigits) }
+            }.map { it.contact }
+
+            // Numbers that show up in the call log but aren't saved as a contact — i.e. what
+            // "Non contacts" in the Filter menu refers to. Deduplicated by normalized number,
+            // keeping the most recent entry (callLogs is already date-descending).
+            val ncr = if (!filterState.nonContacts) emptyList()
+            else {
+                val seen = LinkedHashMap<String, CallLogEntry>()
+                callLogs.asSequence()
+                    .filter { it.contactId.isNullOrBlank() }
+                    .forEach { entry ->
+                        val key = normalizeNumberDigits(entry.number).filter { it.isDigit() }.takeLast(9)
+                            .ifBlank { entry.number }
+                        seen.putIfAbsent(key, entry)
+                    }
+                seen.values.filter { entry ->
+                    entry.number.replace(" ", "").contains(qDigits) ||
+                            (entry.isCallerIdName && (entry.name?.contains(q, ignoreCase = true) == true))
                 }
-            seen.values.filter { entry ->
-                entry.number.replace(" ", "").contains(query.replace(" ", "")) ||
-                        (entry.isCallerIdName && (entry.name?.contains(query, ignoreCase = true) == true))
             }
-        }
-    }
 
-    // Notes attached to a contact/number (from the call screen or contact info screen).
-    val contactNoteResults = remember(query, filterState.contactNotes) {
-        if (!filterState.contactNotes || query.isBlank()) emptyList()
-        else NoteManager.getAllNotes(context).filter { note ->
-            note.contactName.contains(query, ignoreCase = true) ||
-                    note.phoneNumber.contains(query.filter { c -> c.isDigit() || c == '+' }.ifEmpty { query }, ignoreCase = true) ||
-                    note.content.contains(query, ignoreCase = true)
-        }
-    }
+            // Notes attached to a contact/number (from the call screen or contact info screen).
+            val cnr = if (!filterState.contactNotes) emptyList()
+            else allNotes.filter { note ->
+                note.contactName.contains(q, ignoreCase = true) ||
+                        note.phoneNumber.contains(q.filter { c -> c.isDigit() || c == '+' }.ifEmpty { q }, ignoreCase = true) ||
+                        note.content.contains(q, ignoreCase = true)
+            }
 
-    // Notes attached to individual call recordings (call recorder's playback screen).
-    val recordingNoteResults = remember(query, recordings, filterState.recordingNotes) {
-        if (!filterState.recordingNotes || query.isBlank()) emptyList()
-        else recordings.filter { it.noteText.isNotBlank() && it.noteText.contains(query, ignoreCase = true) }
-    }
+            // Notes attached to individual call recordings (call recorder's playback screen).
+            val rnr = if (!filterState.recordingNotes) emptyList()
+            else recordings.filter { it.noteText.isNotBlank() && it.noteText.contains(q, ignoreCase = true) }
 
-    // The call recordings themselves — matched by the caller's name/number rather than by note
-    // content (that's [recordingNoteResults] above). Excludes anything already counted there so
-    // the same recording doesn't show up twice under two different headings.
-    val recordingResults = remember(query, recordings, filterState.recordings, recordingNoteResults) {
-        if (!filterState.recordings || query.isBlank()) emptyList()
-        else recordings.filter { rec ->
-            rec !in recordingNoteResults &&
-                    ((rec.contactName?.contains(query, ignoreCase = true) == true) ||
-                            rec.phoneNumber.replace(" ", "").contains(query.replace(" ", "")))
+            // The call recordings themselves — matched by the caller's name/number rather than
+            // by note content (that's `rnr` above). Excludes anything already counted there so
+            // the same recording doesn't show up twice under two different headings.
+            val rr = if (!filterState.recordings) emptyList()
+            else recordings.filter { rec ->
+                rec !in rnr &&
+                        ((rec.contactName?.contains(q, ignoreCase = true) == true) ||
+                                rec.phoneNumber.replace(" ", "").contains(qDigits))
+            }
+
+            SearchResults(fc, ncr, cnr, rnr, rr)
         }
+        filteredContacts = results.contacts
+        nonContactResults = results.nonContacts
+        contactNoteResults = results.notes
+        recordingNoteResults = results.recordingNotes
+        recordingResults = results.recordings
     }
 
     val totalResults = filteredContacts.size + nonContactResults.size + recordingResults.size +

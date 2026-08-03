@@ -140,7 +140,7 @@ fun TopBar(navController: NavController, navigator: DestinationsNavigator) {
                     if (prefs.getBoolean(PreferenceManager.KEY_APP_HAPTICS, true)) {
                         performAppHaptic(context, prefs.getString(PreferenceManager.KEY_APP_HAPTICS_STRENGTH, "light") ?: "light", prefs.getFloat(PreferenceManager.KEY_HAPTICS_CUSTOM_INTENSITY, 0.5f))
                     }
-                    navigator.navigate(SettingsScreenDestination)
+                    navigator.navigate(SettingsScreenDestination())
                 },
                 modifier = Modifier.size(52.dp).scale(settingsScale),
                 shape = RoundedCornerShape(16.dp),

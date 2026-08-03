@@ -102,7 +102,7 @@ private val ColorCyan    = Color(0xFF00BCD4)
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
-fun SettingsScreen(navigator: DestinationsNavigator) {
+fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val prefs: PreferenceManager = koinInject()
@@ -972,7 +972,9 @@ fun SettingsScreen(navigator: DestinationsNavigator) {
         }
     // The key of the setting row that should scroll into view and flash, most recently
     // requested from a search result tap. Rows read this via settingsSearchHighlight().
-    var highlightedSettingKey by remember { mutableStateOf<String?>(null) }
+    // Seeded from the `highlightKey` nav arg when arriving here from a search result tapped
+    // on a different settings page (see SettingsSearchEntryPoint).
+    var highlightedSettingKey by remember { mutableStateOf(highlightKey) }
     LaunchedEffect(settingsSearchQuery.isNotBlank()) {
         if (settingsSearchQuery.isNotBlank()) {
             listState.animateScrollToItem(0)

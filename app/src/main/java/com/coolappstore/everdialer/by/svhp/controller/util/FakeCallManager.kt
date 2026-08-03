@@ -145,6 +145,15 @@ object FakeCallManager {
         val intent = Intent(context, FakeCallReceiver::class.java).apply {
             action = ACTION_TRIGGER
             putExtra(EXTRA_ID, id)
+            // Bug fix: without this flag the alarm's broadcast is dispatched as a normal
+            // background broadcast, which the system is free to queue/delay behind other work
+            // (background broadcast limits, Doze maintenance windows, OEM battery managers) even
+            // though the alarm itself (setAlarmClock) fires at the exact requested millisecond.
+            // That's what made a "1 second" timer actually ring several seconds late. Marking it
+            // FLAG_RECEIVER_FOREGROUND makes the system deliver it immediately, with foreground
+            // priority, the instant the alarm fires — for both timer- and clock-based entries,
+            // since they both go through this same PendingIntent.
+            addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
         }
         return PendingIntent.getBroadcast(
             context, id.hashCode(), intent,

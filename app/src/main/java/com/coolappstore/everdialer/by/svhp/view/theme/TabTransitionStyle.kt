@@ -10,15 +10,35 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.navigation.NavBackStackEntry
+import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
 import com.ramcosta.composedestinations.animations.NavHostAnimatedDestinationStyle
+import com.ramcosta.composedestinations.generated.destinations.ContactScreenDestination
+import com.ramcosta.composedestinations.generated.destinations.FavoritesScreenDestination
+import com.ramcosta.composedestinations.generated.destinations.NotesScreenDestination
+import com.ramcosta.composedestinations.generated.destinations.RecentScreenDestination
+import com.ramcosta.composedestinations.generated.destinations.RecordingsScreenDestination
 
-private val TAB_ROUTES = listOf(
-    "favorites_screen",
-    "recent_screen",
-    "contact_screen",
-    "recordings_screen",
-    "notes_screen"
-)
+/** Maps a tab-order key (as stored in [PreferenceManager.KEY_TAB_ORDER]) to its nav route. */
+private fun routeForTabKey(key: String): String? = when (key) {
+    "favorites"  -> FavoritesScreenDestination.route
+    "calls"      -> RecentScreenDestination.route
+    "contacts"   -> ContactScreenDestination.route
+    "recordings" -> RecordingsScreenDestination.route
+    "notes"      -> NotesScreenDestination.route
+    else         -> null
+}
+
+/** Tab route order, kept in sync with the user's Settings > Appearance > Tab Sections order —
+ *  never hardcoded. Falls back to [PreferenceManager.DEFAULT_TAB_ORDER] until the first sync. */
+private var tabRouteOrder: List<String> =
+    PreferenceManager.parseTabOrder(null).mapNotNull { routeForTabKey(it) }
+
+/** Call whenever settings may have changed (e.g. once per recomposition from the screen that
+ *  hosts the main NavHost) so the page-switching slide direction always matches the tab order
+ *  the user actually configured, however they've arranged it. */
+internal fun syncTabTransitionOrder(prefs: PreferenceManager) {
+    tabRouteOrder = prefs.getTabOrder().mapNotNull { routeForTabKey(it) }
+}
 
 private val EaseOutQuart = CubicBezierEasing(0.25f, 1f, 0.5f, 1f)
 private val EaseOutExpo  = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
@@ -30,7 +50,7 @@ object TabTransitionStyle : NavHostAnimatedDestinationStyle() {
     private fun routeOrder(route: String?): Int {
         if (route == null) return -1
         val base = route.substringBefore("?").substringBefore("/")
-        return TAB_ROUTES.indexOfFirst { base.contains(it, ignoreCase = true) }
+        return tabRouteOrder.indexOfFirst { base.contains(it, ignoreCase = true) }
     }
 
     private fun isTabRoute(route: String?): Boolean = routeOrder(route) >= 0
@@ -50,7 +70,6 @@ object TabTransitionStyle : NavHostAnimatedDestinationStyle() {
                 ) + fadeIn(tween(400, easing = EaseOutQuart))
             }
             !toTab && !isLandscapeMode -> {
-                // Pushing into a detail/settings screen: slide in from right
                 slideInHorizontally(
                     animationSpec = tween(600, easing = EaseOutExpo),
                     initialOffsetX = { (it * 0.35f).toInt() }
@@ -75,7 +94,6 @@ object TabTransitionStyle : NavHostAnimatedDestinationStyle() {
                 ) + fadeOut(tween(350, easing = EaseOutQuart))
             }
             !toTab && !isLandscapeMode -> {
-                // Pushing to detail: current screen slides slightly left and fades
                 slideOutHorizontally(
                     animationSpec = tween(600, easing = EaseOutExpo),
                     targetOffsetX = { -(it * 0.12f).toInt() }
@@ -94,7 +112,6 @@ object TabTransitionStyle : NavHostAnimatedDestinationStyle() {
                     initialOffsetX = { -(it * 0.25f).toInt() }
                 ) + fadeIn(tween(400, easing = EaseOutQuart))
             } else {
-                // Popping back to a detail screen: slide back in from left
                 slideInHorizontally(
                     animationSpec = tween(600, easing = EaseOutExpo),
                     initialOffsetX = { -(it * 0.12f).toInt() }

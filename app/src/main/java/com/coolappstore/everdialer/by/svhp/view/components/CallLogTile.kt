@@ -64,9 +64,8 @@ private val SimCardNotchShape = GenericShape { size, _ ->
 fun SimSlotBadge(slot: Int, modifier: Modifier = Modifier, shape: Shape = SimCardNotchShape) {
     val color = if (slot == 0) Color(0xFF2E7D32) else Color(0xFFC62828)
     BoxWithConstraints(
-        modifier = Modifier
-            .size(width = 18.dp, height = 21.dp) // default size — callers can override via `modifier`
-            .then(modifier)
+        modifier = modifier
+            .size(width = 18.dp, height = 21.dp) // fallback size, only applies if `modifier` didn't already set one
             .clip(shape)
             .background(color),
         contentAlignment = Alignment.Center
@@ -195,7 +194,7 @@ fun CallLogTile(
         // hidden-name masking already put the number on the headline itself. Put the badge to
         // the right of whichever line is actually showing the number.
         val numberOnSupportingLine = !isHiddenContact
-        val simBadge: (@Composable () -> Unit)? = if (showSimBadge) ({ SimSlotBadge(slot = log.simSlot) }) else null
+        val simBadge: (@Composable () -> Unit)? = if (showSimBadge) ({ SimSlotBadge(slot = log.simSlot, modifier = Modifier.size(width = 14.dp, height = 16.dp)) }) else null
         RivoListItem(
             headline = buildString {
                 append(displayName)
@@ -206,8 +205,8 @@ fun CallLogTile(
             },
             avatarName  = avatarSourceName,
             photoUri    = log.photoUri,
-            headlineEndContent = if (!numberOnSupportingLine) simBadge else null,
-            supportingEndContent = if (numberOnSupportingLine) simBadge else null,
+            headlineStartContent = if (!numberOnSupportingLine) simBadge else null,
+            supportingStartContent = if (numberOnSupportingLine) simBadge else null,
             trailingText = formatTimeOnly(log.date, use24HourTime),
             trailingIcon = when (log.type) {
                 CallLog.Calls.MISSED_TYPE   -> Icons.AutoMirrored.Filled.CallMissed
