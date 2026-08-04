@@ -266,7 +266,8 @@ fun CallSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? =
         )
     }
     // Live preview so the user can test the slant slider by hand without needing an active
-    // call — mirrors the exact isNear + inclination + isSlanted gate used in CallActivity.
+    // call — mirrors the accelerometer-only inclination + isSlanted gate (orientation only,
+    // no proximity, so it's testable without covering the sensor).
     var previewWouldTurnOff by remember { mutableStateOf(false) }
     DisposableEffect(proximityOrientationBg, slantThreshold) {
         if (!proximityOrientationBg) {
@@ -274,35 +275,23 @@ fun CallSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? =
             return@DisposableEffect onDispose { }
         }
         val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        val proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
         val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        var lastNear = false
-        var lastInclination: Int? = null
-        var lastSlanted = false
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
-                when (event.sensor.type) {
-                    Sensor.TYPE_PROXIMITY -> {
-                        lastNear = event.values[0] < event.sensor.maximumRange * 0.5f
-                    }
-                    Sensor.TYPE_ACCELEROMETER -> {
-                        val ax = event.values[0]; val ay = event.values[1]; val az = event.values[2]
-                        val normOfG = kotlin.math.sqrt(ax * ax + ay * ay + az * az)
-                        if (normOfG > 0f) {
-                            val nx = ax / normOfG; val ny = ay / normOfG; val nz = az / normOfG
-                            lastInclination = Math.toDegrees(kotlin.math.atan2(nx, ny).toDouble()).let { it.toInt() }
-                            val angleFromFlatDeg = Math.toDegrees(kotlin.math.acos(nz.coerceIn(-1f, 1f).toDouble()))
-                            val angleFromFlatOrBelow = kotlin.math.min(angleFromFlatDeg, 180.0 - angleFromFlatDeg)
-                            lastSlanted = angleFromFlatOrBelow > slantThreshold.toDouble()
-                        }
-                    }
+                if (event.sensor.type != Sensor.TYPE_ACCELEROMETER) return
+                val ax = event.values[0]; val ay = event.values[1]; val az = event.values[2]
+                val normOfG = kotlin.math.sqrt(ax * ax + ay * ay + az * az)
+                if (normOfG > 0f) {
+                    val nx = ax / normOfG; val ny = ay / normOfG; val nz = az / normOfG
+                    val inclination = Math.toDegrees(kotlin.math.atan2(nx, ny).toDouble()).toInt()
+                    val angleFromFlatDeg = Math.toDegrees(kotlin.math.acos(nz.coerceIn(-1f, 1f).toDouble()))
+                    val angleFromFlatOrBelow = kotlin.math.min(angleFromFlatDeg, 180.0 - angleFromFlatDeg)
+                    val isSlanted = angleFromFlatOrBelow > slantThreshold.toDouble()
+                    previewWouldTurnOff = isSlanted && inclination in -90..90
                 }
-                val inclination = lastInclination
-                previewWouldTurnOff = lastNear && lastSlanted && inclination != null && inclination in -90..90
             }
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
-        proximitySensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI) }
         accelerometer?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI) }
         onDispose { sensorManager.unregisterListener(listener) }
     }
@@ -469,18 +458,13 @@ fun CallSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? =
                                         }
                                     }
                                     Slider(
-                                        value = slantThreshold,
-                                        onValueChange = { slantThreshold = it },
+                                        value = 115f - slantThreshold,
+                                        onValueChange = { slantThreshold = 115f - it },
                                         onValueChangeFinished = {
                                             prefs.setFloat(PreferenceManager.KEY_PROXIMITY_ORIENTATION_SLANT_THRESHOLD, slantThreshold)
                                         },
                                         valueRange = 30f..85f,
                                         steps = 10
-                                    )
-                                    Text(
-                                        text = "More sensitive   \u2194   Less sensitive (more tilt needed to turn off screen)",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     Row(
                                         modifier = Modifier

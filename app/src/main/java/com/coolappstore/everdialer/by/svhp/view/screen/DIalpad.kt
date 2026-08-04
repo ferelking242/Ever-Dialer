@@ -11,6 +11,7 @@ import android.os.Build
 import android.provider.ContactsContract
 import android.telecom.TelecomManager
 import androidx.activity.compose.rememberLauncherForActivityResult
+import kotlinx.coroutines.launch
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -67,7 +68,6 @@ import com.coolappstore.everdialer.by.svhp.controller.ContactsViewModel
 import com.coolappstore.everdialer.by.svhp.controller.util.FakeCallManager
 import com.coolappstore.everdialer.by.svhp.controller.util.DialpadToneStyle
 import com.coolappstore.everdialer.by.svhp.controller.util.DialpadTonePlayer
-import com.coolappstore.everdialer.by.svhp.controller.util.NoteManager
 import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
 import com.coolappstore.everdialer.by.svhp.controller.util.makeCall
 import com.coolappstore.everdialer.by.svhp.controller.util.normalizeNumberDigits
@@ -122,13 +122,23 @@ private sealed class DialpadExtraResult {
 }
 
 @Composable
-private fun DialpadExtraResultTile(result: DialpadExtraResult, onCallNumber: (String) -> Unit) {
+private fun DialpadExtraResultTile(
+    result: DialpadExtraResult,
+    onCallNumber: (String) -> Unit,
+    onOpenContactInfo: (String) -> Unit
+) {
+    // Tapping the row body still dials, same as before. Tapping the avatar/pfp now opens the
+    // contact info page for that number (pre-filled as "Unknown"/add-new since it isn't a saved
+    // contact yet) instead of also placing a call — matching how saved-contact rows in this same
+    // search results list already treat pfp taps (onAvatarClick -> ContactDetailsScreen) rather
+    // than the pfp being just another way to trigger the call.
     when (result) {
         is DialpadExtraResult.NonContact -> SingleTile(
             title = result.entry.name?.ifEmpty { result.entry.number } ?: result.entry.number,
             subtitle = if (result.entry.name.isNullOrEmpty() || result.entry.name == result.entry.number) null else result.entry.number,
             icon = Icons.Default.Person,
             phoneNumber = result.entry.number,
+            onAvatarClick = { onOpenContactInfo(result.entry.number) },
             onClick = { onCallNumber(result.entry.number) }
         )
         is DialpadExtraResult.Recording -> SingleTile(
@@ -136,6 +146,7 @@ private fun DialpadExtraResultTile(result: DialpadExtraResult, onCallNumber: (St
             subtitle = result.item.phoneNumber,
             icon = Icons.Default.Mic,
             phoneNumber = result.item.phoneNumber,
+            onAvatarClick = { if (result.item.phoneNumber.isNotBlank()) onOpenContactInfo(result.item.phoneNumber) },
             onClick = { if (result.item.phoneNumber.isNotBlank()) onCallNumber(result.item.phoneNumber) }
         )
         is DialpadExtraResult.ContactNote -> SingleTile(
@@ -143,6 +154,7 @@ private fun DialpadExtraResultTile(result: DialpadExtraResult, onCallNumber: (St
             subtitle = result.note.content,
             icon = Icons.Default.StickyNote2,
             phoneNumber = result.note.phoneNumber,
+            onAvatarClick = { if (result.note.phoneNumber.isNotBlank()) onOpenContactInfo(result.note.phoneNumber) },
             onClick = { if (result.note.phoneNumber.isNotBlank()) onCallNumber(result.note.phoneNumber) }
         )
         is DialpadExtraResult.RecordingNote -> SingleTile(
@@ -150,6 +162,7 @@ private fun DialpadExtraResultTile(result: DialpadExtraResult, onCallNumber: (St
             subtitle = result.item.noteText,
             icon = Icons.Default.Mic,
             phoneNumber = result.item.phoneNumber,
+            onAvatarClick = { if (result.item.phoneNumber.isNotBlank()) onOpenContactInfo(result.item.phoneNumber) },
             onClick = { if (result.item.phoneNumber.isNotBlank()) onCallNumber(result.item.phoneNumber) }
         )
     }
@@ -167,6 +180,7 @@ fun DialPadScreen(
         skipPartiallyExpanded = true,
         confirmValueChange = { true }
     )
+    val sheetScope = rememberCoroutineScope()
 
     // Lock the window so the keyboard never pushes the bottom sheet up.
     // WindowCompat.setDecorFitsSystemWindows(false) in MainActivity normally causes
@@ -203,7 +217,20 @@ fun DialPadScreen(
         DialPadContent(
             initialNumber = initialNumber,
             navigator = navigator,
-            onDismiss = { navigator.navigateUp() }
+            onDismiss = { navigator.navigateUp() },
+            // Because this screen's content is a ModalBottomSheet (its own Dialog window), the
+            // NavHost's normal slide/fade destination transition can't visually animate it — a
+            // Dialog window ignores the parent's transition offsets. So instead of navigating
+            // immediately (which just swapped destinations with no visible motion), we play the
+            // sheet's own slide-down hide animation first, then navigate once it's actually
+            // gone — giving Contact Info a proper reveal instead of popping in instantly.
+            onNavigateToContact = { contactId, phoneNumber ->
+                sheetScope.launch {
+                    sheetState.hide()
+                }.invokeOnCompletion {
+                    navigator.navigate(ContactDetailsScreenDestination(contactId = contactId, phoneNumber = phoneNumber))
+                }
+            }
         )
     }
 }
@@ -214,7 +241,11 @@ fun DialPadContent(
     initialNumber: String? = null,
     navigator: DestinationsNavigator? = null,
     onDismiss: (() -> Unit)? = null,
-    showHeader: Boolean = false
+    showHeader: Boolean = false,
+    /** Optional override for opening Contact Info (e.g. to play a bottom-sheet hide animation
+     *  first when this content is hosted inside [DialPadScreen]'s ModalBottomSheet). Falls back
+     *  to a plain [navigator] navigation when this content isn't sheet-hosted. */
+    onNavigateToContact: ((contactId: String?, phoneNumber: String?) -> Unit)? = null
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -225,6 +256,10 @@ fun DialPadContent(
     val settingsState by prefs.settingsChanged.collectAsState()
 
     val allContacts by contactsVM.allContacts.collectAsState()
+    fun navigateToContact(contactId: String? = null, phoneNumber: String? = null) {
+        if (onNavigateToContact != null) onNavigateToContact(contactId, phoneNumber)
+        else navigator?.navigate(ContactDetailsScreenDestination(contactId = contactId, phoneNumber = phoneNumber))
+    }
     var number by remember { mutableStateOf(initialNumber ?: DialpadDraftHolder.pendingNumber) }
     // Where new digits get inserted / backspace deletes from. Defaults to the end of the number
     // (normal typing behaviour), but the user can tap anywhere in the number to move it, so they
@@ -317,27 +352,9 @@ fun DialPadContent(
                             (q.isNotEmpty() && entry.isCallerIdName && (entry.name?.contains(q, ignoreCase = true) == true))
                 }.take(3).forEach { results.add(DialpadExtraResult.NonContact(it)) }
             }
-            if (q.isNotEmpty()) {
-                if (searchFilterState.contactNotes) {
-                    NoteManager.getAllNotes(context).filter { note ->
-                        note.contactName.contains(q, ignoreCase = true) ||
-                                note.phoneNumber.contains(q, ignoreCase = true) ||
-                                note.content.contains(q, ignoreCase = true)
-                    }.take(3).forEach { results.add(DialpadExtraResult.ContactNote(it)) }
-                }
-                var recordingNoteMatches: List<RecordingItem> = emptyList()
-                if (searchFilterState.recordingNotes) {
-                    recordingNoteMatches = recordingsForSearch.filter { it.noteText.isNotBlank() && it.noteText.contains(q, ignoreCase = true) }
-                    recordingNoteMatches.take(3).forEach { results.add(DialpadExtraResult.RecordingNote(it)) }
-                }
-                if (searchFilterState.recordings) {
-                    recordingsForSearch.filter { rec ->
-                        rec !in recordingNoteMatches &&
-                                ((rec.contactName?.contains(q, ignoreCase = true) == true) ||
-                                        rec.phoneNumber.replace(" ", "").contains(q.replace(" ", "")))
-                    }.take(3).forEach { results.add(DialpadExtraResult.Recording(it)) }
-                }
-            }
+            // Notes and call recordings are intentionally excluded from the dialpad's search
+            // list — it only ever shows contacts, phone numbers, or unknown (non-contact)
+            // numbers. Notes/recordings still show up in the dedicated Search screen.
             results
         }
     }
@@ -697,7 +714,7 @@ fun DialPadContent(
                                     subtitle = contact.phoneNumbers.firstOrNull(),
                                     photoUri = contact.photoUri,
                                     onAvatarClick = {
-                                        navigator?.navigate(ContactDetailsScreenDestination(contactId = contact.id))
+                                        navigateToContact(contactId = contact.id)
                                     },
                                     onClick  = {
                                         val num = contact.phoneNumbers.firstOrNull() ?: return@SingleTile
@@ -706,7 +723,13 @@ fun DialPadContent(
                                 )
                             }
                             extraSearchResults.forEach { extra ->
-                                DialpadExtraResultTile(result = extra, onCallNumber = { initiateCall(it) })
+                                DialpadExtraResultTile(
+                                    result = extra,
+                                    onCallNumber = { initiateCall(it) },
+                                    onOpenContactInfo = { num ->
+                                        navigateToContact(phoneNumber = num)
+                                    }
+                                )
                             }
                         }
                     }
@@ -883,7 +906,7 @@ fun DialPadContent(
                                 subtitle = contact.phoneNumbers.firstOrNull(),
                                 photoUri = contact.photoUri,
                                 onAvatarClick = {
-                                    navigator?.navigate(ContactDetailsScreenDestination(contactId = contact.id))
+                                    navigateToContact(contactId = contact.id)
                                 },
                                 onClick  = {
                                     val num = contact.phoneNumbers.firstOrNull() ?: return@SingleTile
@@ -892,7 +915,13 @@ fun DialPadContent(
                             )
                         }
                         extraSearchResults.forEach { extra ->
-                            DialpadExtraResultTile(result = extra, onCallNumber = { initiateCall(it) })
+                            DialpadExtraResultTile(
+                                    result = extra,
+                                    onCallNumber = { initiateCall(it) },
+                                    onOpenContactInfo = { num ->
+                                        navigateToContact(phoneNumber = num)
+                                    }
+                                )
                         }
                     }
                 }

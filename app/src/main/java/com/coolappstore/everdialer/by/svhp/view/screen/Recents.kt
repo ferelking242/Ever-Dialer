@@ -118,9 +118,10 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
     }
 
     if (showDialpad) {
+        val dialpadSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
             onDismissRequest = { showDialpad = false },
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            sheetState = dialpadSheetState,
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             containerColor = MaterialTheme.colorScheme.surface,
             dragHandle = {
@@ -129,7 +130,21 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
                 }
             }
         ) {
-            DialPadContent(navigator = navigator, onDismiss = { showDialpad = false })
+            DialPadContent(
+                navigator = navigator,
+                onDismiss = { showDialpad = false },
+                // Play the sheet's own hide animation before navigating, same as the main
+                // Dialpad screen does, so tapping a pfp in search results animates into
+                // Contact Info instead of popping in instantly.
+                onNavigateToContact = { contactId, phoneNumber ->
+                    scope.launch {
+                        dialpadSheetState.hide()
+                    }.invokeOnCompletion {
+                        showDialpad = false
+                        navigator.navigate(ContactDetailsScreenDestination(contactId = contactId, phoneNumber = phoneNumber))
+                    }
+                }
+            )
         }
     }
 

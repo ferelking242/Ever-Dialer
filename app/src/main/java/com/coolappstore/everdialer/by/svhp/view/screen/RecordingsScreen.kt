@@ -37,6 +37,7 @@ import com.coolappstore.evercallrecorder.by.svhp.ui.screens.PermissionsScreen
 import com.coolappstore.evercallrecorder.by.svhp.ui.screens.PlaybackScreen
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.AppLockViewModel
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.AppNavigationViewModel
+import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.HomeViewModel
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.RecordingItem
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -55,11 +56,17 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
  * Settings → Call Recording rather than selected as the bottom-nav tab. Used purely to keep the
  * bottom pill/nav bar hidden in that case, since the user is drilling into a detail screen
  * rather than switching tabs.
+ * @param openedRecordingUri When set (e.g. tapping a recording result from global Search), the
+ * matching recording's player opens immediately instead of the recordings list, and the back
+ * button pops this screen entirely (returning to wherever it was opened from, e.g. Search)
+ * rather than falling back to the recordings list the way it does when playback is opened by
+ * tapping a row inside this screen normally.
  */
 @Destination<RootGraph>(style = TabTransitionStyle::class)
 @Composable
 fun RecordingsScreen(
     openedFromSettings: Boolean = false,
+    openedRecordingUri: String? = null,
     navController: NavController,
     navigator: DestinationsNavigator
 ) {
@@ -71,17 +78,36 @@ fun RecordingsScreen(
     val appLockViewModel: AppLockViewModel = viewModel()
     val isAppLockUnlocked by appLockViewModel.isUnlocked.collectAsState()
     val preferences = remember { AppPreferences(context) }
+    val recordingsVM: HomeViewModel = viewModel()
+    val recordingsForLookup by recordingsVM.allRecordings.collectAsState()
 
     var selectedRecording by remember { mutableStateOf<RecordingItem?>(null) }
     var highlightQuery by remember { mutableStateOf("") }
     var isRecordingSelectionMode by remember { mutableStateOf(false) }
+    // True only when this screen was navigated to directly for a single recording (from Search).
+    // Drives the back button popping the whole screen instead of just clearing the player.
+    val isDirectRecordingEntry = !openedRecordingUri.isNullOrEmpty()
+
+    // Jump straight into the player for the requested recording as soon as it's found in the
+    // (already-loading) recordings list, instead of showing the list first.
+    LaunchedEffect(openedRecordingUri, recordingsForLookup) {
+        if (!openedRecordingUri.isNullOrEmpty() && selectedRecording == null) {
+            recordingsForLookup.firstOrNull { it.uri.toString() == openedRecordingUri }?.let {
+                selectedRecording = it
+            }
+        }
+    }
 
     val isAppLocked = onboardingStatus.disclaimerAccepted && onboardingStatus.isComplete() &&
         preferences.isAppLockEnabled() && !isAppLockUnlocked
 
     BackHandler(enabled = selectedRecording != null && !isAppLocked) {
-        selectedRecording = null
-        highlightQuery = ""
+        if (isDirectRecordingEntry) {
+            navigator.navigateUp()
+        } else {
+            selectedRecording = null
+            highlightQuery = ""
+        }
     }
 
     // Re-check disclaimer/permission state whenever this tab (re)appears or the app resumes.
@@ -169,7 +195,14 @@ fun RecordingsScreen(
                     if (recording != null) {
                         PlaybackScreen(
                             recording = recording,
-                            onBack = { selectedRecording = null; highlightQuery = "" },
+                            onBack = {
+                                if (isDirectRecordingEntry) {
+                                    navigator.navigateUp()
+                                } else {
+                                    selectedRecording = null
+                                    highlightQuery = ""
+                                }
+                            },
                             highlightQuery = highlightQuery
                         )
                     } else {

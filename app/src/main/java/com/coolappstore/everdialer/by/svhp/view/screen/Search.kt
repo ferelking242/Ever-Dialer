@@ -5,8 +5,10 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -55,8 +57,6 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.distinctUntilChanged
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinActivityViewModel
 
@@ -86,6 +86,17 @@ fun SearchScreen(navController: NavController, navigator: DestinationsNavigator)
             )
         }
     }
+}
+
+/**
+ * Corner shape for a row inside a visually-grouped "card" of lazily rendered results — rounded
+ * only on the outer edge of the first/last row in the group so consecutive rows still read as one
+ * continuous card, just like [RivoExpressiveCard], while each row is its own LazyColumn item.
+ */
+private fun groupedRowShape(index: Int, count: Int, corner: androidx.compose.ui.unit.Dp = 20.dp): Shape {
+    val top = if (index == 0) corner else 0.dp
+    val bottom = if (index == count - 1) corner else 0.dp
+    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -157,10 +168,8 @@ fun ContactSearchContent(
         }
     }
 
-    // Notes live on disk as individual files — reading them is real I/O, so this now loads once
-    // per Search session instead of on every keystroke (previously this ran on every character
-    // typed, which was the main reason search felt slow/janky, on top of the unindexed contacts
-    // scan above).
+    // Notes live on disk as individual files — reading them is real I/O, so this loads once per
+    // Search session instead of on every keystroke.
     var allNotes by remember { mutableStateOf<List<NoteEntry>>(emptyList()) }
     LaunchedEffect(Unit) {
         allNotes = withContext(Dispatchers.IO) {
@@ -168,98 +177,83 @@ fun ContactSearchContent(
         }
     }
 
-    // Debounce the query so a burst of fast keystrokes triggers one filter pass instead of one
-    // per character, and run the actual filtering off the main thread on a background dispatcher
-    // — search stays smooth no matter how large the contacts list, call log, or notes are.
-    var debouncedQuery by remember { mutableStateOf(query) }
-    LaunchedEffect(Unit) {
-        snapshotFlow { query }
-            .debounce(120)
-            .distinctUntilChanged()
-            .collect { debouncedQuery = it }
-    }
+    // ── Synchronous, same-frame search ──────────────────────────────────────────────────────
+    // Deliberately NOT a LaunchedEffect/coroutine + mutableStateOf combo: that pattern always
+    // renders one extra frame with the *previous* (often empty) results before the new ones
+    // land, which is exactly the "flashes no results for a moment" bug. Filtering here runs
+    // directly inside composition via `remember`, keyed on the query and data it depends on, so
+    // the results list used below is always correct on the very first frame that reflects the
+    // new keystroke — nothing to await, nothing to flicker. It's cheap enough to be instant even
+    // for large contact lists because it reuses the precomputed, already-lowercased/normalized
+    // `contactIndex` above instead of re-processing every contact on every character.
+    data class SearchResults(
+        val contacts: List<Contact>,
+        val nonContacts: List<CallLogEntry>,
+        val notes: List<NoteEntry>,
+        val recordingNotes: List<RecordingItem>,
+        val recordings: List<RecordingItem>
+    )
+    val emptySearchResults = remember { SearchResults(emptyList(), emptyList(), emptyList(), emptyList(), emptyList()) }
+    val searchResults = remember(query, contactIndex, callLogs, allNotes, recordings, filterState) {
+        val q = query
+        if (q.isBlank()) return@remember emptySearchResults
 
-    var filteredContacts by remember { mutableStateOf<List<Contact>>(emptyList()) }
-    var nonContactResults by remember { mutableStateOf<List<CallLogEntry>>(emptyList()) }
-    var contactNoteResults by remember { mutableStateOf<List<NoteEntry>>(emptyList()) }
-    var recordingNoteResults by remember { mutableStateOf<List<RecordingItem>>(emptyList()) }
-    var recordingResults by remember { mutableStateOf<List<RecordingItem>>(emptyList()) }
+        val qLower = q.lowercase()
+        val qDigits = q.replace(" ", "")
 
-    LaunchedEffect(debouncedQuery, contactIndex, callLogs, allNotes, recordings, filterState) {
-        val q = debouncedQuery
-        if (q.isBlank()) {
-            filteredContacts = emptyList()
-            nonContactResults = emptyList()
-            contactNoteResults = emptyList()
-            recordingNoteResults = emptyList()
-            recordingResults = emptyList()
-            return@LaunchedEffect
-        }
-        data class SearchResults(
-            val contacts: List<Contact>,
-            val nonContacts: List<CallLogEntry>,
-            val notes: List<NoteEntry>,
-            val recordingNotes: List<RecordingItem>,
-            val recordings: List<RecordingItem>
-        )
-        val results = withContext(Dispatchers.Default) {
-            val qLower = q.lowercase()
-            val qDigits = q.replace(" ", "")
+        val fc = if (!filterState.contacts) emptyList()
+        else contactIndex.filter { entry ->
+            entry.nameLower.contains(qLower) || entry.numbersNormalized.any { it.contains(qDigits) }
+        }.map { it.contact }
 
-            val fc = if (!filterState.contacts) emptyList()
-            else contactIndex.filter { entry ->
-                entry.nameLower.contains(qLower) || entry.numbersNormalized.any { it.contains(qDigits) }
-            }.map { it.contact }
-
-            // Numbers that show up in the call log but aren't saved as a contact — i.e. what
-            // "Non contacts" in the Filter menu refers to. Deduplicated by normalized number,
-            // keeping the most recent entry (callLogs is already date-descending).
-            val ncr = if (!filterState.nonContacts) emptyList()
-            else {
-                val seen = LinkedHashMap<String, CallLogEntry>()
-                callLogs.asSequence()
-                    .filter { it.contactId.isNullOrBlank() }
-                    .forEach { entry ->
-                        val key = normalizeNumberDigits(entry.number).filter { it.isDigit() }.takeLast(9)
-                            .ifBlank { entry.number }
-                        seen.putIfAbsent(key, entry)
-                    }
-                seen.values.filter { entry ->
-                    entry.number.replace(" ", "").contains(qDigits) ||
-                            (entry.isCallerIdName && (entry.name?.contains(q, ignoreCase = true) == true))
+        // Numbers that show up in the call log but aren't saved as a contact — i.e. what
+        // "Non contacts" in the Filter menu refers to. Deduplicated by normalized number,
+        // keeping the most recent entry (callLogs is already date-descending).
+        val ncr = if (!filterState.nonContacts) emptyList()
+        else {
+            val seen = LinkedHashMap<String, CallLogEntry>()
+            callLogs.asSequence()
+                .filter { it.contactId.isNullOrBlank() }
+                .forEach { entry ->
+                    val key = normalizeNumberDigits(entry.number).filter { it.isDigit() }.takeLast(9)
+                        .ifBlank { entry.number }
+                    seen.putIfAbsent(key, entry)
                 }
+            seen.values.filter { entry ->
+                entry.number.replace(" ", "").contains(qDigits) ||
+                        (entry.isCallerIdName && (entry.name?.contains(q, ignoreCase = true) == true))
             }
-
-            // Notes attached to a contact/number (from the call screen or contact info screen).
-            val cnr = if (!filterState.contactNotes) emptyList()
-            else allNotes.filter { note ->
-                note.contactName.contains(q, ignoreCase = true) ||
-                        note.phoneNumber.contains(q.filter { c -> c.isDigit() || c == '+' }.ifEmpty { q }, ignoreCase = true) ||
-                        note.content.contains(q, ignoreCase = true)
-            }
-
-            // Notes attached to individual call recordings (call recorder's playback screen).
-            val rnr = if (!filterState.recordingNotes) emptyList()
-            else recordings.filter { it.noteText.isNotBlank() && it.noteText.contains(q, ignoreCase = true) }
-
-            // The call recordings themselves — matched by the caller's name/number rather than
-            // by note content (that's `rnr` above). Excludes anything already counted there so
-            // the same recording doesn't show up twice under two different headings.
-            val rr = if (!filterState.recordings) emptyList()
-            else recordings.filter { rec ->
-                rec !in rnr &&
-                        ((rec.contactName?.contains(q, ignoreCase = true) == true) ||
-                                rec.phoneNumber.replace(" ", "").contains(qDigits))
-            }
-
-            SearchResults(fc, ncr, cnr, rnr, rr)
         }
-        filteredContacts = results.contacts
-        nonContactResults = results.nonContacts
-        contactNoteResults = results.notes
-        recordingNoteResults = results.recordingNotes
-        recordingResults = results.recordings
+
+        // Notes attached to a contact/number (from the call screen or contact info screen).
+        val cnr = if (!filterState.contactNotes) emptyList()
+        else allNotes.filter { note ->
+            note.contactName.contains(q, ignoreCase = true) ||
+                    note.phoneNumber.contains(q.filter { c -> c.isDigit() || c == '+' }.ifEmpty { q }, ignoreCase = true) ||
+                    note.content.contains(q, ignoreCase = true)
+        }
+
+        // Notes attached to individual call recordings (call recorder's playback screen).
+        val rnr = if (!filterState.recordingNotes) emptyList()
+        else recordings.filter { it.noteText.isNotBlank() && it.noteText.contains(q, ignoreCase = true) }
+
+        // The call recordings themselves — matched by the caller's name/number rather than
+        // by note content (that's `rnr` above). Excludes anything already counted there so
+        // the same recording doesn't show up twice under two different headings.
+        val rr = if (!filterState.recordings) emptyList()
+        else recordings.filter { rec ->
+            rec !in rnr &&
+                    ((rec.contactName?.contains(q, ignoreCase = true) == true) ||
+                            rec.phoneNumber.replace(" ", "").contains(qDigits))
+        }
+
+        SearchResults(fc, ncr, cnr, rnr, rr)
     }
+    val filteredContacts = searchResults.contacts
+    val nonContactResults = searchResults.nonContacts
+    val contactNoteResults = searchResults.notes
+    val recordingNoteResults = searchResults.recordingNotes
+    val recordingResults = searchResults.recordings
 
     val totalResults = filteredContacts.size + nonContactResults.size + recordingResults.size +
             contactNoteResults.size + recordingNoteResults.size
@@ -289,7 +283,7 @@ fun ContactSearchContent(
                         }
                     },
                     trailingIcon = {
-                        AnimatedVisibility(visible = query.isNotEmpty(), enter = fadeIn() + scaleIn(), exit = fadeOut() + scaleOut()) {
+                        if (query.isNotEmpty()) {
                             IconButton(onClick = { queryFieldValue = TextFieldValue("") }) {
                                 Icon(Icons.Default.Close, contentDescription = "Clear")
                             }
@@ -308,11 +302,7 @@ fun ContactSearchContent(
         }
 
         // Call this number chip
-        AnimatedVisibility(
-            visible = query.isNotEmpty() && query.all { it.isDigit() || it == '+' || it == '-' || it == ' ' },
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically()
-        ) {
+        if (query.isNotEmpty() && query.all { it.isDigit() || it == '+' || it == '-' || it == ' ' }) {
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -341,72 +331,122 @@ fun ContactSearchContent(
             }
         }
 
-        when {
-            contacts.isEmpty() -> RivoLoadingIndicatorView()
-            query.isBlank() -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Search,
-                            null,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                        )
-                        Text(
-                            "Search contacts or numbers",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+        // Which top-level state the body below is in — used as the AnimatedContent key so
+        // switching between them (e.g. blank prompt → results appearing as you type) gets the
+        // same kind of sliding/fading reveal as the Dialpad's search results panel, instead of
+        // just instantly swapping.
+        val searchUiState = when {
+            contacts.isEmpty() -> "loading"
+            query.isBlank() -> "blank"
+            !hasAnyResults -> "empty"
+            else -> "results"
+        }
+        AnimatedContent(
+            targetState = searchUiState,
+            transitionSpec = {
+                (fadeIn(tween(380, easing = FastOutSlowInEasing)) +
+                        slideInVertically(tween(380, easing = FastOutSlowInEasing)) { it / 6 } +
+                        expandVertically(tween(380, easing = FastOutSlowInEasing), expandFrom = Alignment.Top))
+                    .togetherWith(
+                        fadeOut(tween(220, easing = FastOutLinearInEasing)) +
+                                shrinkVertically(tween(220, easing = FastOutLinearInEasing), shrinkTowards = Alignment.Top)
+                    )
+            },
+            label = "SearchResultsState"
+        ) { state ->
+            when (state) {
+                "loading" -> RivoLoadingIndicatorView()
+                "blank" -> {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Search,
+                                null,
+                                modifier = Modifier.size(48.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                            Text(
+                                "Search contacts or numbers",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
-            }
-            !hasAnyResults -> {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.SearchOff,
-                            null,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                        )
-                        Text(
-                            "No results for \"$query\"",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                "empty" -> {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.SearchOff,
+                                null,
+                                modifier = Modifier.size(48.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                            Text(
+                                "No results for \"$query\"",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
-            }
-            else -> {
+                else -> {
                 ScrollHapticsEffect(listState = listState)
+                // ── Virtualized results list ────────────────────────────────────────────────
+                // Every row below is its own LazyColumn item (itemsIndexed) instead of being
+                // eagerly `forEach`-composed inside a single non-lazy `item {}`. That non-lazy
+                // pattern is exactly what made typing feel laggy/hardcoded on large contact
+                // lists: every keystroke recomposed and measured *every* matched row at once
+                // (hundreds of ContactListItems, each with its own avatar image load, gesture
+                // detector, and animation) before the frame could even show the new character.
+                // Rows are now composed/measured only when they actually scroll into view —
+                // the same "only pay for what's on screen" approach that keeps the Dialpad's
+                // inline search snappy — while still keeping the same look via
+                // [groupedRowShape] (rounded top/bottom only) and the exact same tile
+                // composables/animations already used elsewhere.
                 LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    contentPadding = PaddingValues(16.dp)
                 ) {
                     item {
                         RivoSectionHeader(title = "$totalResults Result${if (totalResults != 1) "s" else ""}")
+                        Spacer(modifier = Modifier.height(8.dp))
                     }
 
                     if (filteredContacts.isNotEmpty()) {
                         item {
                             RivoSectionHeader(title = "Contacts")
                             Spacer(modifier = Modifier.height(8.dp))
-                            RivoExpressiveCard {
-                                // Same long-press context menu as the main Contacts list (Select, View,
-                                // Edit, Copy number, Share, Move, Favourite, Fake Call, Delete) — this
-                                // was previously missing here, so searched contacts couldn't be
-                                // moved/deleted/etc. without opening the full contact list. Visibility
-                                // and ordering stay in sync with Settings → Appearance → Context Menu
-                                // Elements (Contacts), since ContactListItem reads the same preferences.
-                                filteredContacts.forEachIndexed { index, contact ->
+                        }
+                        // Same long-press context menu as the main Contacts list (Select, View,
+                        // Edit, Copy number, Share, Move, Favourite, Fake Call, Delete) — this
+                        // was previously missing here, so searched contacts couldn't be
+                        // moved/deleted/etc. without opening the full contact list. Visibility
+                        // and ordering stay in sync with Settings → Appearance → Context Menu
+                        // Elements (Contacts), since ContactListItem reads the same preferences.
+                        itemsIndexed(
+                            items = filteredContacts,
+                            key = { _, contact -> "contact_${contact.id}" }
+                        ) { index, contact ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .animateItem(
+                                        fadeInSpec = tween(320, easing = FastOutSlowInEasing),
+                                        placementSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioLowBouncy),
+                                        fadeOutSpec = tween(180, easing = FastOutLinearInEasing)
+                                    ),
+                                shape = groupedRowShape(index, filteredContacts.size),
+                                color = MaterialTheme.colorScheme.surfaceContainerLow
+                            ) {
+                                Column {
                                     ContactListItem(
                                         contact = contact,
                                         navigator = navigator
@@ -420,19 +460,38 @@ fun ContactSearchContent(
                                 }
                             }
                         }
+                        item { Spacer(modifier = Modifier.height(16.dp)) }
                     }
 
                     if (nonContactResults.isNotEmpty()) {
                         item {
                             RivoSectionHeader(title = "Non Contacts")
                             Spacer(modifier = Modifier.height(8.dp))
-                            RivoExpressiveCard {
-                                nonContactResults.forEachIndexed { index, entry ->
+                        }
+                        itemsIndexed(
+                            items = nonContactResults,
+                            key = { _, entry -> "noncontact_${entry.number}_${entry.date}" }
+                        ) { index, entry ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .animateItem(
+                                        fadeInSpec = tween(320, easing = FastOutSlowInEasing),
+                                        placementSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioLowBouncy),
+                                        fadeOutSpec = tween(180, easing = FastOutLinearInEasing)
+                                    ),
+                                shape = groupedRowShape(index, nonContactResults.size),
+                                color = MaterialTheme.colorScheme.surfaceContainerLow
+                            ) {
+                                Column {
                                     SingleTile(
                                         title = entry.name?.ifEmpty { entry.number } ?: entry.number,
                                         subtitle = if (entry.name.isNullOrEmpty() || entry.name == entry.number) null else entry.number,
                                         icon = Icons.Default.Person,
                                         phoneNumber = entry.number,
+                                        onAvatarClick = {
+                                            navigator.navigate(ContactDetailsScreenDestination(phoneNumber = entry.number))
+                                        },
                                         trailingContent = {
                                             IconButton(onClick = {
                                                 navigator.navigate(DialPadScreenDestination(initialNumber = entry.number))
@@ -453,19 +512,38 @@ fun ContactSearchContent(
                                 }
                             }
                         }
+                        item { Spacer(modifier = Modifier.height(16.dp)) }
                     }
 
                     if (contactNoteResults.isNotEmpty()) {
                         item {
                             RivoSectionHeader(title = "Notes")
                             Spacer(modifier = Modifier.height(8.dp))
-                            RivoExpressiveCard {
-                                contactNoteResults.forEachIndexed { index, note ->
+                        }
+                        itemsIndexed(
+                            items = contactNoteResults,
+                            key = { _, note -> "note_${note.file.absolutePath}" }
+                        ) { index, note ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .animateItem(
+                                        fadeInSpec = tween(320, easing = FastOutSlowInEasing),
+                                        placementSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioLowBouncy),
+                                        fadeOutSpec = tween(180, easing = FastOutLinearInEasing)
+                                    ),
+                                shape = groupedRowShape(index, contactNoteResults.size),
+                                color = MaterialTheme.colorScheme.surfaceContainerLow
+                            ) {
+                                Column {
                                     SingleTile(
                                         title = note.contactName.ifBlank { note.phoneNumber.ifBlank { "Unknown" } },
                                         subtitle = note.content,
                                         icon = Icons.Default.StickyNote2,
                                         phoneNumber = note.phoneNumber,
+                                        onAvatarClick = {
+                                            navigator.navigate(ContactDetailsScreenDestination(phoneNumber = note.phoneNumber))
+                                        },
                                         supportingContent = {
                                             Text(
                                                 note.content,
@@ -489,22 +567,46 @@ fun ContactSearchContent(
                                 }
                             }
                         }
+                        item { Spacer(modifier = Modifier.height(16.dp)) }
                     }
 
                     if (recordingResults.isNotEmpty()) {
                         item {
                             RivoSectionHeader(title = "Recordings")
                             Spacer(modifier = Modifier.height(8.dp))
-                            RivoExpressiveCard {
-                                recordingResults.forEachIndexed { index, rec ->
+                        }
+                        itemsIndexed(
+                            items = recordingResults,
+                            key = { _, rec -> "recording_${rec.uri}" }
+                        ) { index, rec ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .animateItem(
+                                        fadeInSpec = tween(320, easing = FastOutSlowInEasing),
+                                        placementSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioLowBouncy),
+                                        fadeOutSpec = tween(180, easing = FastOutLinearInEasing)
+                                    ),
+                                shape = groupedRowShape(index, recordingResults.size),
+                                color = MaterialTheme.colorScheme.surfaceContainerLow
+                            ) {
+                                Column {
                                     SingleTile(
                                         title = rec.contactName?.ifBlank { rec.phoneNumber } ?: rec.phoneNumber,
                                         subtitle = rec.phoneNumber,
                                         icon = Icons.Default.Mic,
                                         phoneNumber = rec.phoneNumber,
+                                        onAvatarClick = {
+                                            navigator.navigate(ContactDetailsScreenDestination(phoneNumber = rec.phoneNumber))
+                                        },
                                         onClick = {
                                             NavBarVisibilityState.hideForSettingsEntry = true
-                                            navigator.navigate(RecordingsScreenDestination(openedFromSettings = true))
+                                            navigator.navigate(
+                                                RecordingsScreenDestination(
+                                                    openedFromSettings = true,
+                                                    openedRecordingUri = rec.uri.toString()
+                                                )
+                                            )
                                         }
                                     )
                                     if (index < recordingResults.size - 1) {
@@ -516,19 +618,38 @@ fun ContactSearchContent(
                                 }
                             }
                         }
+                        item { Spacer(modifier = Modifier.height(16.dp)) }
                     }
 
                     if (recordingNoteResults.isNotEmpty()) {
                         item {
                             RivoSectionHeader(title = "Recording Notes")
                             Spacer(modifier = Modifier.height(8.dp))
-                            RivoExpressiveCard {
-                                recordingNoteResults.forEachIndexed { index, rec ->
+                        }
+                        itemsIndexed(
+                            items = recordingNoteResults,
+                            key = { _, rec -> "recordingnote_${rec.uri}" }
+                        ) { index, rec ->
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .animateItem(
+                                        fadeInSpec = tween(320, easing = FastOutSlowInEasing),
+                                        placementSpec = spring(stiffness = Spring.StiffnessMediumLow, dampingRatio = Spring.DampingRatioLowBouncy),
+                                        fadeOutSpec = tween(180, easing = FastOutLinearInEasing)
+                                    ),
+                                shape = groupedRowShape(index, recordingNoteResults.size),
+                                color = MaterialTheme.colorScheme.surfaceContainerLow
+                            ) {
+                                Column {
                                     SingleTile(
                                         title = rec.contactName?.ifBlank { rec.phoneNumber } ?: rec.phoneNumber,
                                         subtitle = rec.noteText,
                                         icon = Icons.Default.Mic,
                                         phoneNumber = rec.phoneNumber,
+                                        onAvatarClick = {
+                                            navigator.navigate(ContactDetailsScreenDestination(phoneNumber = rec.phoneNumber))
+                                        },
                                         supportingContent = {
                                             Text(
                                                 rec.noteText,
@@ -540,7 +661,12 @@ fun ContactSearchContent(
                                         },
                                         onClick = {
                                             NavBarVisibilityState.hideForSettingsEntry = true
-                                            navigator.navigate(RecordingsScreenDestination(openedFromSettings = true))
+                                            navigator.navigate(
+                                                RecordingsScreenDestination(
+                                                    openedFromSettings = true,
+                                                    openedRecordingUri = rec.uri.toString()
+                                                )
+                                            )
                                         }
                                     )
                                     if (index < recordingNoteResults.size - 1) {
@@ -555,6 +681,7 @@ fun ContactSearchContent(
                     }
 
                     item { Spacer(modifier = Modifier.height(100.dp)) }
+                }
                 }
             }
         }
