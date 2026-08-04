@@ -45,6 +45,7 @@ import androidx.compose.material.icons.outlined.PhoneCallback
 import androidx.compose.material.icons.outlined.PhoneDisabled
 import androidx.compose.material.icons.outlined.Sensors
 import androidx.compose.material.icons.outlined.SimCard
+import androidx.compose.material.icons.outlined.ScreenLockPortrait
 import androidx.compose.material.icons.outlined.SwipeVertical
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Vibration
@@ -167,6 +168,7 @@ private val GsColorAmber   = Color(0xFFFFC107)
 private val GsColorBrown   = Color(0xFF795548)
 private val GsColorCyan    = Color(0xFF00BCD4)
 private val GsColorRed     = Color(0xFFE53935)
+private val GsColorPink    = Color(0xFFE91E63)
 
 /** The full, flat list of every setting reachable from Settings, used by [SettingsSearchEntryPoint]
  *  so the same search box can be dropped onto any settings page. */
@@ -200,6 +202,7 @@ fun buildGlobalSettingsSearchEntries(): List<GlobalSettingsSearchEntry> = listOf
     // ── Call Settings screen ─────────────────────────────────────────────────
     GlobalSettingsSearchEntry("Default SIM", "Which SIM is used to place calls", "default_sim", Icons.Outlined.SimCard, GsColorGreen) { it.navigate(CallSettingsScreenDestination(highlightKey = "default_sim")) },
     GlobalSettingsSearchEntry("Contacts to display", "Choose which accounts' contacts are shown", "contacts_to_display", Icons.Outlined.Contacts, GsColorBlue) { it.navigate(CallSettingsScreenDestination(highlightKey = "contacts_to_display")) },
+    GlobalSettingsSearchEntry("Device Orientation with Proximity Sensor", "Combine orientation and proximity to prevent false screen-offs during a call", "proximity_orientation_bg", Icons.Outlined.ScreenLockPortrait, GsColorPink) { it.navigate(CallSettingsScreenDestination(highlightKey = "proximity_orientation_bg")) },
     GlobalSettingsSearchEntry("Proximity Sensor on in background", "Turn off screen when phone is near ear during a call", "proximity_sensor_bg", Icons.Outlined.Sensors, GsColorTeal) { it.navigate(CallSettingsScreenDestination(highlightKey = "proximity_sensor_bg")) },
     GlobalSettingsSearchEntry("Pocket Mode Prevention", "Block accidental answer/decline when phone is in pocket", "pocket_mode_prevention", Icons.Outlined.Sensors, GsColorAmber) { it.navigate(CallSettingsScreenDestination(highlightKey = "pocket_mode_prevention")) },
     GlobalSettingsSearchEntry("Floating Ongoing Call", "Draggable floating bubble during calls", "floating_ongoing_call", Icons.Outlined.Sensors, GsColorBlue) { it.navigate(CallSettingsScreenDestination(highlightKey = "floating_ongoing_call")) },

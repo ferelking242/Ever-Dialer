@@ -6,6 +6,10 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.net.Uri
 import android.os.Build
 import java.io.File
@@ -15,10 +19,13 @@ import android.os.Vibrator
 
 import android.provider.Settings
 import android.telephony.SubscriptionManager
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -32,6 +39,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -248,6 +256,56 @@ fun CallSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? =
     var highlightedKey by remember { mutableStateOf(highlightKey) }
 
     var proximityBg by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_PROXIMITY_BG, true)) }
+    var proximityOrientationBg by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_PROXIMITY_ORIENTATION_BG, false)) }
+    var slantThreshold by remember {
+        mutableFloatStateOf(
+            prefs.getFloat(
+                PreferenceManager.KEY_PROXIMITY_ORIENTATION_SLANT_THRESHOLD,
+                PreferenceManager.DEFAULT_PROXIMITY_ORIENTATION_SLANT_THRESHOLD
+            )
+        )
+    }
+    // Live preview so the user can test the slant slider by hand without needing an active
+    // call — mirrors the exact isNear + inclination + isSlanted gate used in CallActivity.
+    var previewWouldTurnOff by remember { mutableStateOf(false) }
+    DisposableEffect(proximityOrientationBg, slantThreshold) {
+        if (!proximityOrientationBg) {
+            previewWouldTurnOff = false
+            return@DisposableEffect onDispose { }
+        }
+        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+        val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        var lastNear = false
+        var lastInclination: Int? = null
+        var lastSlanted = false
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                when (event.sensor.type) {
+                    Sensor.TYPE_PROXIMITY -> {
+                        lastNear = event.values[0] < event.sensor.maximumRange * 0.5f
+                    }
+                    Sensor.TYPE_ACCELEROMETER -> {
+                        val ax = event.values[0]; val ay = event.values[1]; val az = event.values[2]
+                        val normOfG = kotlin.math.sqrt(ax * ax + ay * ay + az * az)
+                        if (normOfG > 0f) {
+                            val nx = ax / normOfG; val ny = ay / normOfG; val nz = az / normOfG
+                            lastInclination = Math.toDegrees(kotlin.math.atan2(nx, ny).toDouble()).let { it.toInt() }
+                            val angleFromFlatDeg = Math.toDegrees(kotlin.math.acos(nz.coerceIn(-1f, 1f).toDouble()))
+                            val angleFromFlatOrBelow = kotlin.math.min(angleFromFlatDeg, 180.0 - angleFromFlatDeg)
+                            lastSlanted = angleFromFlatOrBelow > slantThreshold.toDouble()
+                        }
+                    }
+                }
+                val inclination = lastInclination
+                previewWouldTurnOff = lastNear && lastSlanted && inclination != null && inclination in -90..90
+            }
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+        proximitySensor?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI) }
+        accelerometer?.let { sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI) }
+        onDispose { sensorManager.unregisterListener(listener) }
+    }
     var pocketModePrevention by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_POCKET_MODE_PREVENTION, false)) }
     var floatingCall by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_FLOATING_CALL, false)) }
     var directCallOnTap by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_DIRECT_CALL_ON_TAP, true)) }
@@ -373,6 +431,85 @@ fun CallSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? =
                     Column {
                         CallSettingsSectionLabel("Call Behavior")
                         RivoExpressiveCard {
+                            RivoSwitchListItem(
+                                headline   = "Device Orientation with Proximity Sensor",
+                                supporting = "Uses raise-to-ear orientation together with the proximity sensor to turn off the screen, preventing false screen-offs (e.g. on earpiece speaker or when opening the status bar) on phones with sensitive proximity sensors",
+                                leadingIcon = Icons.Outlined.ScreenLockPortrait,
+                                iconContainerColor = ColorPink,
+                                checked = proximityOrientationBg,
+                                modifier = Modifier.settingsSearchHighlight("proximity_orientation_bg", highlightedKey) { highlightedKey = null },
+                                onCheckedChange = {
+                                    proximityOrientationBg = it
+                                    prefs.setBoolean(PreferenceManager.KEY_PROXIMITY_ORIENTATION_BG, it)
+                                }
+                            )
+                            AnimatedVisibility(visible = proximityOrientationBg) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Slant sensitivity",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        TextButton(
+                                            onClick = {
+                                                slantThreshold = PreferenceManager.DEFAULT_PROXIMITY_ORIENTATION_SLANT_THRESHOLD
+                                                prefs.setFloat(PreferenceManager.KEY_PROXIMITY_ORIENTATION_SLANT_THRESHOLD, slantThreshold)
+                                            }
+                                        ) {
+                                            Text("Reset")
+                                        }
+                                    }
+                                    Slider(
+                                        value = slantThreshold,
+                                        onValueChange = { slantThreshold = it },
+                                        onValueChangeFinished = {
+                                            prefs.setFloat(PreferenceManager.KEY_PROXIMITY_ORIENTATION_SLANT_THRESHOLD, slantThreshold)
+                                        },
+                                        valueRange = 30f..85f,
+                                        steps = 10
+                                    )
+                                    Text(
+                                        text = "More sensitive   \u2194   Less sensitive (more tilt needed to turn off screen)",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(10.dp)
+                                                .clip(CircleShape)
+                                                .background(if (previewWouldTurnOff) Color(0xFF2ECC71) else Color(0xFFE74C3C))
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = if (previewWouldTurnOff)
+                                                "Live test: screen would turn OFF right now"
+                                            else
+                                                "Live test: screen stays ON right now",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                            HorizontalDivider(
+                                Modifier.padding(horizontal = 16.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                            )
                             RivoSwitchListItem(
                                 headline   = "Proximity Sensor on in background",
                                 supporting = "Turn off screen when phone is near ear during a call",

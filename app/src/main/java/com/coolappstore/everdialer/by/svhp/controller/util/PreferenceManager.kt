@@ -135,6 +135,17 @@ class PreferenceManager(context: Context) {
         const val KEY_SHOW_CALLER_UI        = "show_caller_ui"
         const val KEY_SILENCE_UNKNOWN       = "silence_unknown_callers"
         const val KEY_PROXIMITY_BG          = "proximity_sensor_bg"
+        /** When enabled, screen-off during calls requires BOTH the proximity sensor reading
+         *  "near" AND the device orientation matching an ear-held pose (same inclination
+         *  check used by Raise to Answer), instead of relying on proximity alone. This avoids
+         *  false screen-offs on phones whose proximity sensor misfires — e.g. while using the
+         *  earpiece speaker and swiping down the status bar. */
+        const val KEY_PROXIMITY_ORIENTATION_BG = "proximity_orientation_bg"
+        /** Degrees of tilt away from lying flat required before the device counts as
+         *  "slanted" (held up) for KEY_PROXIMITY_ORIENTATION_BG. Higher = less sensitive,
+         *  requires a more vertical, closer-to-the-ear angle before the screen turns off. */
+        const val KEY_PROXIMITY_ORIENTATION_SLANT_THRESHOLD = "proximity_orientation_slant_threshold"
+        const val DEFAULT_PROXIMITY_ORIENTATION_SLANT_THRESHOLD = 70f
         const val KEY_SCROLL_HAPTICS        = "scroll_haptics_enabled"
         const val KEY_SCROLL_CM_PER_HAPTIC  = "scroll_cm_per_haptic"   // cm scrolled before each haptic tick
         const val KEY_SCROLL_HAPTICS_PER_CM = "scroll_haptics_per_cm"  // haptic ticks per cm
