@@ -1138,11 +1138,11 @@ fun DialPadContent(
             ) + fadeOut(animationSpec = tween(durationMillis = 200, easing = FastOutLinearInEasing))
         ) {
 
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(2.dp))
 
         // ── Dialpad card — always at bottom, never moves ───────────────
         BoxWithConstraints(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)
         ) {
             // Scale based on the SMALLER of width-derived and height-derived factors
             // so the dialpad always fits on screen regardless of device size.
@@ -1151,20 +1151,21 @@ fun DialPadContent(
             val widthScale = (availableWidth / refWidth).coerceIn(0.6f, 1.4f)
 
             // Height budget: total screen height minus search bar (~64dp) minus spacing (~24dp)
-            // The dialpad card needs: header(~56dp) + 4 key rows + action row(~72dp) + padding(~40dp)
-            // Reference key height = 68dp, so 4 rows = 272dp + overhead ~168dp = ~440dp total card
+            // The dialpad card needs: header(~44dp) + 4 key rows + action row(~60dp) + padding(~28dp)
+            // Reference key height = 54dp, so 4 rows = 216dp + overhead ~140dp = ~356dp total card
+            // (kept intentionally compact so the scrollable search-results area above gets more room)
             val cardHeightBudget = (screenHeight.value - 64f - 24f).coerceAtLeast(200f)
-            val refCardHeight = 440f
+            val refCardHeight = 400f
             val heightScale = (cardHeightBudget / refCardHeight).coerceIn(0.55f, 1.4f)
 
             val scaleFactor = minOf(widthScale, heightScale)
 
-            val keyWidth: Dp  = (100 * scaleFactor).dp
-            val keyHeight: Dp = (68 * scaleFactor).dp
-            val actionSize: Dp = (64 * scaleFactor).dp
-            val callW: Dp  = (108 * scaleFactor).dp
-            val callH: Dp  = (72 * scaleFactor).dp
-            val keySpacing: Dp = (8 * scaleFactor).dp
+            val keyWidth: Dp  = (98 * scaleFactor).dp
+            val keyHeight: Dp = (62 * scaleFactor).dp
+            val actionSize: Dp = (58 * scaleFactor).dp
+            val callW: Dp  = (102 * scaleFactor).dp
+            val callH: Dp  = (66 * scaleFactor).dp
+            val keySpacing: Dp = (7 * scaleFactor).dp
 
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -1172,7 +1173,7 @@ fun DialPadContent(
             color = MaterialTheme.colorScheme.surfaceContainerLow
         ) {
             Column(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = (16 * scaleFactor).coerceIn(6f, 16f).dp),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = (13 * scaleFactor).coerceIn(5f, 13f).dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(keySpacing)
             ) {
@@ -1185,7 +1186,7 @@ fun DialPadContent(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .defaultMinSize(minHeight = if (number.isEmpty()) 64.dp else 0.dp)
+                                .defaultMinSize(minHeight = if (number.isEmpty()) 58.dp else 0.dp)
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(
                                     if (number.isNotEmpty())
@@ -1200,12 +1201,12 @@ fun DialPadContent(
                                         showOverflowMenu = true
                                     }
                                 )
-                                .padding(vertical = 10.dp, horizontal = 12.dp),
+                                .padding(vertical = 9.dp, horizontal = 12.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             DialpadNumberDisplay(
                                 number = number,
-                                fontSize = ((if (number.length > 11) 28 else 36) * scaleFactor).coerceIn(18f, 40f).toInt(),
+                                fontSize = ((if (number.length > 11) 27 else 34) * scaleFactor).coerceIn(17f, 38f).toInt(),
                                 cursorPosition = cursorPosition,
                                 onCursorPositionChange = { cursorPosition = it },
                                 onLongPress = {
@@ -1279,9 +1280,7 @@ fun DialPadContent(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(4.dp))
-
-                // Action row
+                Spacer(modifier = Modifier.height(2.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1343,7 +1342,7 @@ fun DialPadContent(
 
         } // end AnimatedVisibility (dialpad card)
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         } // end outer Column
         } // end BoxWithConstraints (screen)
     }
