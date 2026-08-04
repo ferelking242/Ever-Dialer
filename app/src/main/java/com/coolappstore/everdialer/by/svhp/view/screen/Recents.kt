@@ -128,6 +128,11 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
         // system's own (quicker) swipe-to-dismiss animation untouched.
         val closeProgress = remember { Animatable(0f) }
         val slowSlideSpec = tween<Float>(durationMillis = 650, easing = FastOutSlowInEasing)
+        // Fixed dp offsets don't clear the screen on taller devices, so the sheet gets torn down
+        // mid-slide and appears to vanish abruptly. Basing it on the actual screen height (plus a
+        // buffer for the status/nav bars) guarantees it's fully off-screen before removal.
+        val dialpadConfiguration = LocalConfiguration.current
+        val slideDistance = dialpadConfiguration.screenHeightDp.dp + 150.dp
         var didNavigateAway by remember { mutableStateOf(false) }
 
         fun finishDismissDialpad() {
@@ -175,12 +180,15 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(y = 700.dp * closeProgress.value),
+                    .offset(y = slideDistance * closeProgress.value),
                 shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 4.dp
             ) {
-                Column(modifier = Modifier.navigationBarsPadding()) {
+                // System back should feel identical to tapping the X — the same slow, smooth
+                // slide-down — instead of the sheet's own quicker default dismiss.
+                BackHandler(enabled = true) { closeWithSlowAnimation() }
+                Column(modifier = Modifier.statusBarsPadding().navigationBarsPadding()) {
                     Box(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) {
                         Surface(shape = RoundedCornerShape(3.dp), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f), modifier = Modifier.size(width = 36.dp, height = 4.dp)) {}
                     }

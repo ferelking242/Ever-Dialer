@@ -25,6 +25,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -41,6 +44,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -203,6 +208,11 @@ fun DialPadScreen(
     // the Dialog is torn down at the end, leaving the same (quicker) swipe-to-dismiss untouched.
     val closeProgress = remember { Animatable(0f) }
     val slowSlideSpec = tween<Float>(durationMillis = 650, easing = FastOutSlowInEasing)
+    // Fixed dp offsets don't clear the screen on taller devices, so the sheet gets torn down
+    // mid-slide and appears to vanish abruptly. Basing it on the actual screen height (plus a
+    // buffer for the status/nav bars) guarantees it's fully off-screen before removal.
+    val dialpadConfiguration = LocalConfiguration.current
+    val slideDistance = dialpadConfiguration.screenHeightDp.dp + 150.dp
 
     // ModalBottomSheet fires onDismissRequest itself once sheetState reaches Hidden (e.g. after
     // a swipe-down completes). Without this guard, that auto-fire would also call navigateUp()
@@ -259,12 +269,15 @@ fun DialPadScreen(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .offset(y = 700.dp * closeProgress.value),
+                .offset(y = slideDistance * closeProgress.value),
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 4.dp
         ) {
-            Column(modifier = Modifier.navigationBarsPadding()) {
+            // System back should feel identical to tapping the X — the same slow, smooth
+            // slide-down — instead of the sheet's own quicker default dismiss.
+            BackHandler(enabled = true) { closeWithSlowAnimation() }
+            Column(modifier = Modifier.statusBarsPadding().navigationBarsPadding()) {
                 Box(
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
                     contentAlignment = Alignment.Center
@@ -941,11 +954,42 @@ fun DialPadContent(
         }
 
         // ── Middle section: results / pills / clipboard (scrollable, fills space) ──
+        // Swallow leftover scroll delta while the list is mid-scroll so a fast fling back up to
+        // the top result doesn't bleed residual velocity into the parent ModalBottomSheet and
+        // get misread as swipe-to-dismiss on that same gesture. Only once the finger is lifted
+        // and a fresh gesture starts while already resting at the top do we allow that next
+        // gesture's overscroll to reach the sheet again — so a second, deliberate pull is needed
+        // to close it, exactly like before.
+        val dialpadResultsScrollState = rememberScrollState()
+        var canDismissAtTop by remember { mutableStateOf(true) }
+        val swallowOverscroll = remember {
+            object : NestedScrollConnection {
+                override fun onPostScroll(
+                    consumed: Offset,
+                    available: Offset,
+                    source: androidx.compose.ui.input.nestedscroll.NestedScrollSource
+                ): Offset {
+                    if (dialpadResultsScrollState.value > 0) return available
+                    return if (canDismissAtTop) Offset.Zero else available
+                }
+            }
+        }
         Column(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.changes.any { it.changedToDown() }) {
+                                canDismissAtTop = dialpadResultsScrollState.value == 0
+                            }
+                        }
+                    }
+                }
+                .nestedScroll(swallowOverscroll)
+                .verticalScroll(dialpadResultsScrollState),
             verticalArrangement = Arrangement.Top
         ) {
 
