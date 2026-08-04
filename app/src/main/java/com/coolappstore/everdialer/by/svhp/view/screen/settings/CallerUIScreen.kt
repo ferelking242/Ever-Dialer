@@ -695,7 +695,12 @@ private fun FeatureButtonsPreview(
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
-                                    .width(76.dp)
+                                    // Width must grow with elementSize too, otherwise once the
+                                    // 56.dp*elementSize icon circle exceeds this fixed 76.dp
+                                    // column it gets width-clamped by the parent while height
+                                    // keeps growing unconstrained — making the icon stretch
+                                    // vertically only instead of scaling uniformly.
+                                    .width((56.dp * elementSize + 20.dp).coerceAtLeast(76.dp))
                                     .clickable(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null
@@ -751,7 +756,7 @@ private fun FeatureButtonsPreview(
                         // Pad out the row with invisible spacers so a partial last row still aligns
                         // left-to-right the same way the real call screen's SpaceEvenly row does.
                         repeat(3 - rowIds.size) {
-                            Spacer(modifier = Modifier.width(76.dp))
+                            Spacer(modifier = Modifier.width((56.dp * elementSize + 20.dp).coerceAtLeast(76.dp)))
                         }
                     }
                 }
@@ -812,7 +817,11 @@ private fun FreeformButtonsArea(
     val density = LocalDensity.current
     val rows = if (gridIds.isEmpty()) 1 else ((gridIds.size + 2) / 3)
     val areaHeight = (rows * 96).dp.coerceAtLeast(120.dp)
-    val tileWidthPx = with(density) { 76.dp.toPx() }
+    // Width must track elementSize the same way the grid layout's tile column does, otherwise
+    // the 56.dp*elementSize icon circle gets width-clamped once it exceeds a fixed 76.dp tile
+    // while its height keeps growing unconstrained — stretching the icon vertically only.
+    val tileWidth = (56.dp * elementSize + 20.dp).coerceAtLeast(76.dp)
+    val tileWidthPx = with(density) { tileWidth.toPx() }
     val tileHeightPx = with(density) { 88.dp.toPx() }
 
     fun defaultFraction(id: String, index: Int): Offset {
@@ -851,7 +860,7 @@ private fun FreeformButtonsArea(
                         val cy = fraction.y * containerHeightPx - tileHeightPx / 2f
                         IntOffset(cx.roundToInt(), cy.roundToInt())
                     }
-                    .width(76.dp)
+                    .width(tileWidth)
                     .immediateDrag(
                         key = id,
                         onDragStart = {

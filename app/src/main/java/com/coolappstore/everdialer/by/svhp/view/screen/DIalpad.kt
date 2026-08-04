@@ -195,43 +195,107 @@ fun DialPadScreen(
         }
     }
 
+    // ModalBottomSheet.animateTo(targetValue, animationSpec) is internal, so we can't hand it a
+    // custom spec to slow down its own animation. Instead we drive a manual slide + scrim fade
+    // over the sheet content ourselves — slow and smooth — then finish the real dismiss/
+    // navigation once that completes. Animating the scrim's alpha down alongside the slide (not
+    // just translating the content) avoids the dim background cutting out abruptly the instant
+    // the Dialog is torn down at the end, leaving the same (quicker) swipe-to-dismiss untouched.
+    val closeProgress = remember { Animatable(0f) }
+    val slowSlideSpec = tween<Float>(durationMillis = 650, easing = FastOutSlowInEasing)
+
+    // ModalBottomSheet fires onDismissRequest itself once sheetState reaches Hidden (e.g. after
+    // a swipe-down completes). Without this guard, that auto-fire would also call navigateUp()
+    // right after we navigate forward to Contact Info, popping DialPadScreen off the back stack —
+    // so pressing back from Contact Info would skip past the dialpad entirely instead of
+    // returning to it.
+    var didNavigateAway by remember { mutableStateOf(false) }
+
+    fun finishDismiss() {
+        if (!didNavigateAway) navigator.navigateUp()
+    }
+
+    // Used by swipe-down / scrim tap / predictive back — sheetState has already played its own
+    // (quicker) hide animation by the time onDismissRequest fires, so just finish up.
+    fun animateDismiss() {
+        if (didNavigateAway) return
+        finishDismiss()
+    }
+
+    // Used by the X button — plays our own slow, smooth slide-down instead of relying on the
+    // sheet's quicker default.
+    fun closeWithSlowAnimation() {
+        if (didNavigateAway) return
+        sheetScope.launch {
+            closeProgress.animateTo(1f, slowSlideSpec)
+        }.invokeOnCompletion {
+            finishDismiss()
+        }
+    }
+
     ModalBottomSheet(
-        onDismissRequest = { navigator.navigateUp() },
+        onDismissRequest = { animateDismiss() },
         sheetState = sheetState,
+        // The default containerColor/shape/dragHandle paint their own background surface that
+        // sits BEHIND whatever we put in the content slot below. Animating only our content with
+        // Modifier.offset moved the buttons/text but left that background surface fixed in
+        // place, so the background appeared static while only the elements slid down. Making the
+        // sheet itself fully transparent and drawing our own background + handle inside the
+        // offset Box (below) means the background now moves together with the content as one
+        // unit during the slide.
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 4.dp,
-        dragHandle = {
-            Box(
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(3.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                    modifier = Modifier.size(width = 36.dp, height = 4.dp)
-                ) {}
+        containerColor = Color.Transparent,
+        tonalElevation = 0.dp,
+        // No dim behind the sheet.
+        scrimColor = Color.Transparent,
+        // Stop the sheet from reserving its own system-bar inset padding around the content —
+        // that reserved space stayed transparent once containerColor became Transparent, showing
+        // as a gap between the sheet's visible bottom and the actual screen edge. We apply the
+        // navigation-bar inset ourselves inside the Surface below instead, so the background
+        // extends all the way to the screen edge and only the content is padded above it.
+        contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+        dragHandle = null
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset(y = 700.dp * closeProgress.value),
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 4.dp
+        ) {
+            Column(modifier = Modifier.navigationBarsPadding()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(3.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                        modifier = Modifier.size(width = 36.dp, height = 4.dp)
+                    ) {}
+                }
+                DialPadContent(
+                    initialNumber = initialNumber,
+                    navigator = navigator,
+                    onDismiss = { closeWithSlowAnimation() },
+                    // Because this screen's content is a ModalBottomSheet (its own Dialog window), the
+                    // NavHost's normal slide/fade destination transition can't visually animate it — a
+                    // Dialog window ignores the parent's transition offsets. So instead of navigating
+                    // immediately (which just swapped destinations with no visible motion), we play our
+                    // own slow, smooth slide-down first, then navigate once it's finished — giving
+                    // Contact Info a gentle reveal instead of popping in instantly.
+                    onNavigateToContact = { contactId, phoneNumber ->
+                        didNavigateAway = true
+                        sheetScope.launch {
+                            closeProgress.animateTo(1f, slowSlideSpec)
+                        }.invokeOnCompletion {
+                            navigator.navigate(ContactDetailsScreenDestination(contactId = contactId, phoneNumber = phoneNumber))
+                        }
+                    }
+                )
             }
         }
-    ) {
-        DialPadContent(
-            initialNumber = initialNumber,
-            navigator = navigator,
-            onDismiss = { navigator.navigateUp() },
-            // Because this screen's content is a ModalBottomSheet (its own Dialog window), the
-            // NavHost's normal slide/fade destination transition can't visually animate it — a
-            // Dialog window ignores the parent's transition offsets. So instead of navigating
-            // immediately (which just swapped destinations with no visible motion), we play the
-            // sheet's own slide-down hide animation first, then navigate once it's actually
-            // gone — giving Contact Info a proper reveal instead of popping in instantly.
-            onNavigateToContact = { contactId, phoneNumber ->
-                sheetScope.launch {
-                    sheetState.hide()
-                }.invokeOnCompletion {
-                    navigator.navigate(ContactDetailsScreenDestination(contactId = contactId, phoneNumber = phoneNumber))
-                }
-            }
-        )
     }
 }
 

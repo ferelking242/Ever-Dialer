@@ -38,6 +38,7 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
@@ -119,32 +120,88 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
 
     if (showDialpad) {
         val dialpadSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        val dialpadScope = rememberCoroutineScope()
+        // ModalBottomSheet.animateTo(targetValue, animationSpec) is internal, so we drive our own
+        // slow, smooth slide + scrim fade over the content instead. Fading the scrim's alpha down
+        // alongside the slide (not just translating the content) avoids the dim background
+        // cutting out abruptly the instant the Dialog is torn down at the end — leaving the
+        // system's own (quicker) swipe-to-dismiss animation untouched.
+        val closeProgress = remember { Animatable(0f) }
+        val slowSlideSpec = tween<Float>(durationMillis = 650, easing = FastOutSlowInEasing)
+        var didNavigateAway by remember { mutableStateOf(false) }
+
+        fun finishDismissDialpad() {
+            if (!didNavigateAway) showDialpad = false
+        }
+
+        // Swipe-down / scrim tap / predictive back — sheetState has already played its own
+        // (quicker) hide animation by the time onDismissRequest fires, so just finish up.
+        fun animateDismissDialpad() {
+            finishDismissDialpad()
+        }
+
+        // Used by the X button — plays our own slow, smooth slide-down.
+        fun closeWithSlowAnimation() {
+            if (didNavigateAway) return
+            dialpadScope.launch {
+                closeProgress.animateTo(1f, slowSlideSpec)
+            }.invokeOnCompletion {
+                finishDismissDialpad()
+            }
+        }
+
         ModalBottomSheet(
-            onDismissRequest = { showDialpad = false },
+            onDismissRequest = { animateDismissDialpad() },
             sheetState = dialpadSheetState,
+            // The default containerColor/dragHandle paint their own background surface behind
+            // whatever we put in the content slot, so animating only our content left that
+            // background fixed while just the elements slid down. Making the sheet transparent
+            // and drawing our own background + handle inside the offset Surface (below) makes
+            // the background move together with the content as one unit.
             shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            dragHandle = {
-                Box(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) {
-                    Surface(shape = RoundedCornerShape(3.dp), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f), modifier = Modifier.size(width = 36.dp, height = 4.dp)) {}
+            containerColor = Color.Transparent,
+            tonalElevation = 0.dp,
+            // No dim behind the sheet.
+            scrimColor = Color.Transparent,
+            // Stop the sheet from reserving its own system-bar inset padding around the content —
+            // that reserved space stayed transparent once containerColor became Transparent,
+            // showing as a gap between the sheet's visible bottom and the actual screen edge. We
+            // apply the navigation-bar inset ourselves inside the Surface below instead, so the
+            // background extends all the way to the screen edge and only the content is padded
+            // above it.
+            contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+            dragHandle = null
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset(y = 700.dp * closeProgress.value),
+                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 4.dp
+            ) {
+                Column(modifier = Modifier.navigationBarsPadding()) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), contentAlignment = Alignment.Center) {
+                        Surface(shape = RoundedCornerShape(3.dp), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f), modifier = Modifier.size(width = 36.dp, height = 4.dp)) {}
+                    }
+                    DialPadContent(
+                        navigator = navigator,
+                        onDismiss = { closeWithSlowAnimation() },
+                        // Play our own slow, smooth slide-down before navigating, same as the main
+                        // Dialpad screen does, so tapping a pfp in search results animates smoothly
+                        // into Contact Info instead of popping in instantly.
+                        onNavigateToContact = { contactId, phoneNumber ->
+                            didNavigateAway = true
+                            dialpadScope.launch {
+                                closeProgress.animateTo(1f, slowSlideSpec)
+                            }.invokeOnCompletion {
+                                showDialpad = false
+                                navigator.navigate(ContactDetailsScreenDestination(contactId = contactId, phoneNumber = phoneNumber))
+                            }
+                        }
+                    )
                 }
             }
-        ) {
-            DialPadContent(
-                navigator = navigator,
-                onDismiss = { showDialpad = false },
-                // Play the sheet's own hide animation before navigating, same as the main
-                // Dialpad screen does, so tapping a pfp in search results animates into
-                // Contact Info instead of popping in instantly.
-                onNavigateToContact = { contactId, phoneNumber ->
-                    scope.launch {
-                        dialpadSheetState.hide()
-                    }.invokeOnCompletion {
-                        showDialpad = false
-                        navigator.navigate(ContactDetailsScreenDestination(contactId = contactId, phoneNumber = phoneNumber))
-                    }
-                }
-            )
         }
     }
 
