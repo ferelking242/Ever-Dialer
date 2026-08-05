@@ -117,6 +117,11 @@ class PreferenceManager(context: Context) {
         const val KEY_BLOCK_UNKNOWN         = "block_unknown_callers"
         const val KEY_BLOCK_HIDDEN          = "block_hidden_callers"
         const val KEY_OPEN_DIALPAD_DEFAULT  = "open_dialpad_default"
+        const val KEY_HIDE_RATE_AND_REVIEW  = "hide_rate_and_review"
+        const val KEY_RATE_REVIEW_HIDDEN_SECRET = "rate_review_hidden_secret"
+        // Written by the bundled Ever Call Recorder module (:recorder) directly into this same
+        // "rivo_prefs" file — see AppPreferences.isShowRecordingMenuBelowUpdatesEnabled().
+        const val KEY_SHOW_RECORDING_MENU_BELOW_UPDATES = "show_recording_menu_below_updates"
         const val KEY_APP_HAPTICS              = "app_haptics_enabled"
         const val KEY_APP_HAPTICS_STRENGTH     = "app_haptics_strength"
         const val KEY_HAPTICS_CUSTOM_INTENSITY = "haptics_custom_intensity"

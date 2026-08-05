@@ -39,6 +39,7 @@ class AppPreferences(private val context: Context) {
         // that same "rivo_prefs" file/keys.
         private const val KEY_RIVO_THEME_MODE = "theme_mode"
         private const val KEY_RIVO_DYNAMIC_COLORS = "dynamic_colors"
+        private const val KEY_RIVO_SHOW_RECORDING_MENU_BELOW_UPDATES = "show_recording_menu_below_updates"
     }
 
     object DefaultsValue {
@@ -73,7 +74,7 @@ class AppPreferences(private val context: Context) {
         val THEME_MODE = ThemeMode.SYSTEM
         const val DYNAMIC_COLOR = true
         const val SHOW_TOASTS = true
-        const val RECORDING_NOTIFICATIONS_ENABLED = true
+        const val RECORDING_NOTIFICATIONS_ENABLED = false
         const val SHIZUKU_AUTO_MANAGE = false
         const val SHIZUKU_START_ON_RECORD = false
         const val SHIZUKU_KEEP_ALIVE = false
@@ -326,6 +327,20 @@ class AppPreferences(private val context: Context) {
         context.getSharedPreferences(RIVO_PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(KEY_RIVO_DYNAMIC_COLORS, DefaultsValue.DYNAMIC_COLOR)
     fun setDynamicColorEnabled(enabled: Boolean) = setBoolean(Key.DYNAMIC_COLOR, enabled)
+
+    // ── "Show Recording Menu Below Updates" (Ever Dialer's main Settings screen) ───────────
+    // The toggle lives in this module's Settings screen, but it controls where Ever Dialer's
+    // own Settings screen positions its "Call Recording" entry — so it's written straight into
+    // the shared "rivo_prefs" file (same key Ever Dialer's PreferenceManager reads) rather than
+    // this module's own preferences file.
+    fun isShowRecordingMenuBelowUpdatesEnabled(): Boolean =
+        context.getSharedPreferences(RIVO_PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_RIVO_SHOW_RECORDING_MENU_BELOW_UPDATES, false)
+    fun setShowRecordingMenuBelowUpdatesEnabled(enabled: Boolean) {
+        context.getSharedPreferences(RIVO_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_RIVO_SHOW_RECORDING_MENU_BELOW_UPDATES, enabled).apply()
+    }
+
     fun isShowToastsEnabled() = getBoolean(Key.SHOW_TOASTS, DefaultsValue.SHOW_TOASTS)
     fun setShowToastsEnabled(enabled: Boolean) = setBoolean(Key.SHOW_TOASTS, enabled)
     fun isRecordingNotificationsEnabled() = getBoolean(Key.RECORDING_NOTIFICATIONS_ENABLED, DefaultsValue.RECORDING_NOTIFICATIONS_ENABLED)

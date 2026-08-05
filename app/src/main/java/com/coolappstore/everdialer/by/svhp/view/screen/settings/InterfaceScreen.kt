@@ -121,6 +121,11 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
     var showIncomingCallUI  by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_SHOW_INCOMING_CALL_UI, true)) }
     var showCallerUI        by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_SHOW_CALLER_UI, true)) }
     var openDialpadDefault  by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_OPEN_DIALPAD_DEFAULT, false)) }
+    var hideRateAndReview   by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_HIDE_RATE_AND_REVIEW, false)) }
+    val rateReviewToggleSettingsVersion by prefs.settingsChanged.collectAsState()
+    val rateReviewSecretActive = remember(rateReviewToggleSettingsVersion) {
+        prefs.getBoolean(PreferenceManager.KEY_RATE_REVIEW_HIDDEN_SECRET, false)
+    }
     var scrollAnimation     by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_SCROLL_ANIMATION, true)) }
     var liquidGlass         by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_LIQUID_GLASS, false)) }
     var blurEffects         by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_BLUR_EFFECTS, false)) }
@@ -1310,6 +1315,22 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                                         prefs.setBoolean(PreferenceManager.KEY_OPEN_DIALPAD_DEFAULT, it)
                                     }
                                 )
+                                if (!rateReviewSecretActive) {
+                                    HorizontalDivider(Modifier.padding(horizontal = 16.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                    RivoSwitchListItem(
+                                        headline = "Hide Rate And Review",
+                                        supporting = "Completely hides the Rate and Review section from Settings",
+                                        leadingIcon = Icons.Outlined.VisibilityOff,
+                                        iconContainerColor = ColorBlue,
+                                        checked = hideRateAndReview,
+                                        modifier = Modifier.settingsSearchHighlight("hide_rate_and_review", highlightedKey) { highlightedKey = null },
+                                        onCheckedChange = {
+                                            hideRateAndReview = it
+                                            prefs.setBoolean(PreferenceManager.KEY_HIDE_RATE_AND_REVIEW, it)
+                                        }
+                                    )
+                                }
                             }
                         }
                     }

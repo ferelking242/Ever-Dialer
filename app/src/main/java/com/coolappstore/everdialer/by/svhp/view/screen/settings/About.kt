@@ -56,6 +56,11 @@ private val ColorTeal      = Color(0xFF009688)
 fun AboutAppScreen(navigator: DestinationsNavigator, highlightKey: String? = null) {
     val context = LocalContext.current
     val prefs = org.koin.compose.koinInject<com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager>()
+    // Hidden easter egg: tapping this row 3 times quickly toggles a secret flag that hides
+    // the Rate and Review section (and its heading) from Settings, and also hides the manual
+    // "Hide Rate And Review" toggle in Appearance so there's no visible trace of it :)
+    var hariTapCount by remember { mutableStateOf(0) }
+    var lastHariTapTime by remember { mutableStateOf(0L) }
     val selectedAppNameKey = prefs.getString(
         com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager.KEY_APP_NAME_PRESET, "default"
     ) ?: "default"
@@ -166,7 +171,24 @@ fun AboutAppScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                         leadingIcon = Icons.Outlined.Person,
                         iconContainerColor = ColorBlue,
                         modifier = Modifier.settingsSearchHighlight("made_by_hari", highlightedKey) { highlightedKey = null },
-                        onClick = { openLink(context, TELEGRAM_DEV_URL) }
+                        onClick = {
+                            val now = System.currentTimeMillis()
+                            if (now - lastHariTapTime > 1500L) hariTapCount = 0
+                            lastHariTapTime = now
+                            hariTapCount++
+                            if (hariTapCount >= 3) {
+                                hariTapCount = 0
+                                val newSecretState = !prefs.getBoolean(
+                                    com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager.KEY_RATE_REVIEW_HIDDEN_SECRET,
+                                    false
+                                )
+                                prefs.setBoolean(
+                                    com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager.KEY_RATE_REVIEW_HIDDEN_SECRET,
+                                    newSecretState
+                                )
+                            }
+                            openLink(context, TELEGRAM_DEV_URL)
+                        }
                     )
                     HorizontalDivider(
                         modifier = Modifier.padding(horizontal = 16.dp),

@@ -109,6 +109,14 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
     val scope = rememberCoroutineScope()
 
     var silenceUnknown by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_SILENCE_UNKNOWN, false)) }
+    val rateReviewSettingsVersion by prefs.settingsChanged.collectAsState()
+    // Set from the bundled Ever Call Recorder module's own Settings screen (writes straight into
+    // this same "rivo_prefs" file), so just read it fresh each time this screen composes.
+    val showRecordingMenuBelowUpdates = remember { prefs.getBoolean(PreferenceManager.KEY_SHOW_RECORDING_MENU_BELOW_UPDATES, false) }
+    val hideRateAndReview = remember(rateReviewSettingsVersion) {
+        prefs.getBoolean(PreferenceManager.KEY_HIDE_RATE_AND_REVIEW, false) ||
+            prefs.getBoolean(PreferenceManager.KEY_RATE_REVIEW_HIDDEN_SECRET, false)
+    }
     var notesEnabled by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_NOTES_ENABLED, true)) }
     var proximityBg by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_PROXIMITY_BG, true)) }
     var tapHapticsEnabled by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_APP_HAPTICS, true)) }
@@ -1142,8 +1150,31 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                 }
             }
 
+            // ── Call Recording (moved here via "Show Recording Menu Below Updates") ──
+            if (showRecordingMenuBelowUpdates) item {
+                RivoAnimatedSection(delayMs = 10L) {
+                    Column {
+                        SectionLabel("Call Recording")
+                        RivoExpressiveCard {
+                            RivoListItem(
+                                headline = "Call Recording",
+                                supporting = "Open Ever Call Recorder",
+                                leadingIcon = Icons.Default.FiberManualRecord,
+                                iconContainerColor = Color(0xFFE53935),
+                                trailingIcon = Icons.Default.ChevronRight,
+                                modifier = Modifier.settingsSearchHighlight("call_recording", highlightedSettingKey) { highlightedSettingKey = null },
+                                onClick = {
+                                    NavBarVisibilityState.hideForSettingsEntry = true
+                                    navigator.navigate(com.ramcosta.composedestinations.generated.destinations.RecordingsScreenDestination(openedFromSettings = true))
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
             // ── Rate And Review ───────────────────────────────────────────────
-            item {
+            if (!hideRateAndReview) item {
                 RivoAnimatedSection(delayMs = 30L) {
                     Column {
                         SectionLabel("Rate And Review")
@@ -1386,6 +1417,7 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                         Spacer(modifier = Modifier.height(8.dp))
 
                         // ── Call Recording (bundled Ever Call Recorder app) ────
+                        if (!showRecordingMenuBelowUpdates) {
                         RivoExpressiveCard {
                             RivoListItem(
                                 headline = "Call Recording",
@@ -1403,6 +1435,7 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                                     navigator.navigate(com.ramcosta.composedestinations.generated.destinations.RecordingsScreenDestination(openedFromSettings = true))
                                 }
                             )
+                        }
                         }
                     }
                 }

@@ -6,7 +6,12 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
+import android.os.PowerManager
 import android.telecom.Call
 import android.telecom.CallAudioState
 import android.telecom.InCallService
@@ -22,8 +27,14 @@ import com.coolappstore.everdialer.by.svhp.modal.`interface`.IContactsRepository
 import com.coolappstore.everdialer.by.svhp.view.screen.BiometricCallActivity
 import com.coolappstore.everdialer.by.svhp.view.screen.CallActivity
 import com.coolappstore.everdialer.by.svhp.view.screen.settings.KEY_SELECTED_APP_ICON
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import org.koin.android.ext.android.inject
 
 data class CallSession(
@@ -46,6 +57,131 @@ class CallService : InCallService() {
     // away from the real one. This map remembers the real moment each call became ACTIVE once,
     // so every later rebuild reuses that same timestamp instead of a fresh "now".
     private val callConnectTimes = mutableMapOf<Call, Long>()
+
+    // ── Proximity screen-off (plain + "Device Orientation with Proximity Sensor") ──────────
+    // This used to live entirely inside CallActivity, acquiring/releasing a real
+    // PROXIMITY_SCREEN_OFF_WAKE_LOCK from there. That wake lock is only reliably honored by the
+    // system while the acquiring app has an actively foregrounded window — so the moment the user
+    // switched away to the main Ever Dialer app during a call (leaving CallActivity backgrounded
+    // behind it), the near-ear screen-off would silently stop taking effect, even though the
+    // sensor readings and gate logic underneath kept ticking along just fine. Re-opening the
+    // in-call UI put CallActivity back on top and "fixed" it again — but only by accident.
+    // Owning it here instead, in the InCallService that already runs continuously for the whole
+    // call as a foreground service regardless of which Activity (if any) is on top, removes that
+    // dependency on window focus entirely, for both the plain and orientation-gated modes.
+    private var proxSensorManager: SensorManager? = null
+    private var proxProximitySensor: Sensor? = null
+    private var proxAccelerometer: Sensor? = null
+    private var proxWakeLock: PowerManager.WakeLock? = null
+    private var mLastProximityNear: Boolean? = null
+    private var mInclinationValue: Int? = null
+    private var mIsSlanted: Boolean = false
+
+    private fun acquireProxWakeLock() { if (proxWakeLock?.isHeld == false) proxWakeLock?.acquire() }
+    private fun releaseProxWakeLock() { if (proxWakeLock?.isHeld == true) proxWakeLock?.release() }
+
+    /** Re-evaluates from the latest cached sensor readings + current call/audio state and
+     *  directly acquires/releases the real proximity wake lock. Called on every proximity and
+     *  accelerometer update (so either sensor changing, or the phone leaving the ear, reacts
+     *  immediately), and whenever call state or audio route changes. */
+    private fun updateProximityScreenOffGate() {
+        val session = _currentCallSession.value
+        val callState = session?.state
+        val isSpeakerOn = _audioState.value?.route == CallAudioState.ROUTE_SPEAKER
+        val inCallForScreenOff = (callState == Call.STATE_ACTIVE || callState == Call.STATE_DIALING) && !isSpeakerOn
+
+        if (!inCallForScreenOff) {
+            releaseProxWakeLock()
+            return
+        }
+
+        val orientationGateEnabled = prefs.getBoolean(PreferenceManager.KEY_PROXIMITY_ORIENTATION_BG, false)
+        if (orientationGateEnabled) {
+            val isNear = mLastProximityNear == true
+            val inclination = mInclinationValue
+            val orientedToEar = inclination != null && inclination in -90..90 && mIsSlanted
+            if (isNear && orientedToEar) acquireProxWakeLock() else releaseProxWakeLock()
+            return
+        }
+
+        // Plain mode: proximity sensor alone, no orientation/tilt gating.
+        val proximityBgEnabled = prefs.getBoolean(PreferenceManager.KEY_PROXIMITY_BG, true)
+        if (proximityBgEnabled && mLastProximityNear == true) {
+            acquireProxWakeLock()
+        } else {
+            releaseProxWakeLock()
+        }
+    }
+
+    private val proxSensorListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            when (event.sensor.type) {
+                Sensor.TYPE_ACCELEROMETER -> {
+                    val ax = event.values[0]
+                    val ay = event.values[1]
+                    val az = event.values[2]
+                    val normOfG = kotlin.math.sqrt(ax * ax + ay * ay + az * az)
+                    if (normOfG > 0f) {
+                        val nx = ax / normOfG
+                        val ny = ay / normOfG
+                        val nz = az / normOfG
+                        mInclinationValue = Math.toDegrees(kotlin.math.atan2(nx, ny).toDouble()).roundToInt()
+                        val angleFromFlatDeg = Math.toDegrees(kotlin.math.acos(nz.coerceIn(-1f, 1f).toDouble()))
+                        val angleFromFlatOrBelow = kotlin.math.min(angleFromFlatDeg, 180.0 - angleFromFlatDeg)
+                        val slantThreshold = prefs.getFloat(
+                            PreferenceManager.KEY_PROXIMITY_ORIENTATION_SLANT_THRESHOLD,
+                            PreferenceManager.DEFAULT_PROXIMITY_ORIENTATION_SLANT_THRESHOLD
+                        )
+                        mIsSlanted = angleFromFlatOrBelow > slantThreshold.toDouble()
+                    }
+                    updateProximityScreenOffGate()
+                }
+                Sensor.TYPE_PROXIMITY -> {
+                    val maxRange = event.sensor.maximumRange
+                    mLastProximityNear = event.values[0] < maxRange * 0.5f
+                    updateProximityScreenOffGate()
+                }
+            }
+        }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+    }
+
+    private fun setupProximityScreenOff() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        proxWakeLock = powerManager.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "Rivo::ServiceProx")
+        proxSensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        proxProximitySensor = proxSensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+        proxAccelerometer = proxSensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        proxProximitySensor?.let { proxSensorManager?.registerListener(proxSensorListener, it, SensorManager.SENSOR_DELAY_UI) }
+        proxAccelerometer?.let { proxSensorManager?.registerListener(proxSensorListener, it, SensorManager.SENSOR_DELAY_UI) }
+
+        // Also re-evaluate whenever the call/audio state or the relevant settings change —
+        // covers the moments proxSensorListener alone wouldn't (e.g. the call just went ACTIVE,
+        // or speakerphone was toggled, with no new sensor reading yet).
+        proxScope.launch {
+            combine(_currentCallSession, _audioState, prefs.settingsChanged) { _, _, _ -> Unit }
+                .collect { updateProximityScreenOffGate() }
+        }
+    }
+
+    private fun teardownProximityScreenOff() {
+        releaseProxWakeLock()
+        proxSensorManager?.unregisterListener(proxSensorListener)
+        proxScopeJob.cancel()
+    }
+
+    private val proxScopeJob = SupervisorJob()
+    private val proxScope = CoroutineScope(Dispatchers.Main + proxScopeJob)
+
+    override fun onCreate() {
+        super.onCreate()
+        setupProximityScreenOff()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        teardownProximityScreenOff()
+    }
 
     /**
      * The ongoing/incoming-call notification's small icon should look like whichever app icon

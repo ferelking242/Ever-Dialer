@@ -44,6 +44,7 @@ interface SettingsActions {
     fun setDynamicColorEnabled(enabled: Boolean)
     fun setShowToastsEnabled(enabled: Boolean)
     fun setRecordingNotificationsEnabled(enabled: Boolean)
+    fun setShowRecordingMenuBelowUpdatesEnabled(enabled: Boolean)
     fun setAppLanguage(languageCode: String)
     fun setLoggingEnabled(enabled: Boolean)
     fun setDebugEnabled(enabled: Boolean)
@@ -133,6 +134,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         preferences.setRecordingNotificationsEnabled(enabled)
         com.coolappstore.evercallrecorder.by.svhp.services.recording.RecordingNotificationHelper(getApplication())
             .createNotificationChannels()
+        refresh()
+    }
+
+    override fun setShowRecordingMenuBelowUpdatesEnabled(enabled: Boolean) {
+        preferences.setShowRecordingMenuBelowUpdatesEnabled(enabled)
         refresh()
     }
     override fun setAccentColor(argb: Int) { preferences.setAccentColor(argb); refresh() }

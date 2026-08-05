@@ -97,7 +97,6 @@ class CallActivity : FragmentActivity() {
     private val contactsRepo: IContactsRepository by inject()
     private val callLogRepo: ICallLogRepository by inject()
     private val prefs: PreferenceManager by inject()
-    private var proximityWakeLock: PowerManager.WakeLock? = null
 
     companion object {
         /** FloatingCallService observes this to hide the bubble when CallActivity is visible. */
@@ -109,86 +108,25 @@ class CallActivity : FragmentActivity() {
     // Pocket mode prevention
     private var sensorManager: SensorManager? = null
     private var proximitySensor: Sensor? = null
-    private var accelerometer: Sensor? = null
     private var isPocketBlocked = false
     // Auto-speaker proximity tracking
     private var autoSpeakerActive = false
 
-    // ── Device Orientation with Proximity Sensor ────────────────────────────────
-    // When enabled, the OS-level PROXIMITY_SCREEN_OFF_WAKE_LOCK is not used on its own
-    // (it can't factor in orientation and turns the real screen off on *any* near reading,
-    // e.g. a finger brushing the sensor while swiping down the status bar with the earpiece
-    // speaker in use). Instead we track proximity + accelerometer tilt ourselves and only
-    // fake a screen-off (dim + block touches) while BOTH agree: proximity reads near AND the
-    // device is actually slanted (held up to the ear), not lying flat. The moment either one
-    // stops matching, the screen comes back — whether the call screen is in the foreground or
-    // the call is running in the background with the earpiece speaker on.
-    private var mInclinationValue: Int? = null
-    /** True only when the device is meaningfully tilted, not resting flat (screen up/down). */
-    private var mIsSlanted: Boolean = false
-    private var mLastProximityNear: Boolean? = null
-
-    /** Re-evaluates the combined gate from the latest cached sensor readings and directly
-     *  acquires/releases the real proximity wake lock — a genuine OS-level screen-off, not a
-     *  window property, so it keeps working whether the call screen is in the foreground or
-     *  running in the background. Called on every proximity AND accelerometer update so either
-     *  sensor changing (or the phone leaving the ear entirely) reacts immediately. */
-    private fun updateManualScreenOffGate() {
-        if (!prefs.getBoolean(PreferenceManager.KEY_PROXIMITY_ORIENTATION_BG, false)) {
-            releaseProximityLock()
-            return
-        }
-        val session = CallService.currentCallSession.value
-        val callState = session?.state
-        val isSpeakerOn = CallService.audioState.value?.route == CallAudioState.ROUTE_SPEAKER
-        val inCallForScreenOff = (callState == Call.STATE_ACTIVE || callState == Call.STATE_DIALING) && !isSpeakerOn
-        if (!inCallForScreenOff) {
-            releaseProximityLock()
-            return
-        }
-
-        val isNear = mLastProximityNear == true
-        val inclination = mInclinationValue
-        val orientedToEar = inclination != null && inclination in -90..90 && mIsSlanted
-
-        if (isNear && orientedToEar) {
-            acquireProximityLock()
-        } else {
-            releaseProximityLock()
-        }
-    }
+    // Note: the real near-ear screen-off (both the plain "Proximity Sensor" mode and the
+    // "Device Orientation with Proximity Sensor" mode) is now owned entirely by CallService,
+    // which runs continuously as a foreground service for the whole call regardless of which
+    // Activity is on top — see CallService.updateProximityScreenOffGate(). It used to live here,
+    // but the PROXIMITY_SCREEN_OFF_WAKE_LOCK it drives only reliably takes effect while the
+    // acquiring app has a foregrounded window, so it would silently stop working the moment the
+    // user switched to the main app during a call, and only "fix itself" once this call screen
+    // was brought back on top. CallActivity no longer needs to track any of that state.
 
     private val proxSensorListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
             when (event.sensor.type) {
-                Sensor.TYPE_ACCELEROMETER -> {
-                    val ax = event.values[0]
-                    val ay = event.values[1]
-                    val az = event.values[2]
-                    val normOfG = kotlin.math.sqrt(ax * ax + ay * ay + az * az)
-                    if (normOfG > 0f) {
-                        val nx = ax / normOfG
-                        val ny = ay / normOfG
-                        val nz = az / normOfG
-                        mInclinationValue = Math.toDegrees(kotlin.math.atan2(nx, ny).toDouble()).roundToInt()
-                        // If almost all of gravity is on the z-axis, the phone is lying flat
-                        // (screen up or down) — not slanted, regardless of what the x/y-only
-                        // inclination angle above says (it reads as "0" — in range — when flat).
-                        val angleFromFlatDeg = Math.toDegrees(kotlin.math.acos(nz.coerceIn(-1f, 1f).toDouble()))
-                        val angleFromFlatOrBelow = kotlin.math.min(angleFromFlatDeg, 180.0 - angleFromFlatDeg)
-                        val slantThreshold = prefs.getFloat(
-                            PreferenceManager.KEY_PROXIMITY_ORIENTATION_SLANT_THRESHOLD,
-                            PreferenceManager.DEFAULT_PROXIMITY_ORIENTATION_SLANT_THRESHOLD
-                        )
-                        mIsSlanted = angleFromFlatOrBelow > slantThreshold.toDouble()
-                    }
-                    updateManualScreenOffGate()
-                    return
-                }
                 Sensor.TYPE_PROXIMITY -> {
                     val maxRange = event.sensor.maximumRange
                     val isNear = event.values[0] < maxRange * 0.5f
-                    mLastProximityNear = isNear
 
                     // Pocket mode prevention
                     if (prefs.getBoolean(PreferenceManager.KEY_POCKET_MODE_PREVENTION, false)) {
@@ -210,10 +148,6 @@ class CallActivity : FragmentActivity() {
                             }
                         }
                     }
-
-                    // Device Orientation with Proximity Sensor: gate the manual screen-off
-                    // on BOTH proximity and an ear-held tilt, same range Raise to Answer uses.
-                    updateManualScreenOffGate()
                 }
             }
         }
@@ -223,19 +157,14 @@ class CallActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         showWhenLockedAndTurnScreenOn()
-        setupProximitySensor()
         // Prevent notification shade from being pulled down during a call
         window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
         enableEdgeToEdge()
-        // Register pocket mode / auto-speaker / device-orientation proximity listener
+        // Register pocket mode / auto-speaker proximity listener. The real near-ear
+        // screen-off is handled entirely by CallService now (see comment above).
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         proximitySensor = sensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
-        accelerometer = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
         proximitySensor?.let {
-            sensorManager?.registerListener(proxSensorListener, it, SensorManager.SENSOR_DELAY_UI)
-        }
-        // Only needed to derive the ear-held tilt for "Device Orientation with Proximity Sensor".
-        accelerometer?.let {
             sensorManager?.registerListener(proxSensorListener, it, SensorManager.SENSOR_DELAY_UI)
         }
 
@@ -249,35 +178,10 @@ class CallActivity : FragmentActivity() {
                 val call = session?.call
                 val callState = session?.state
 
-                val proximityBgEnabled = remember(settingsVersion) {
-                    prefs.getBoolean(PreferenceManager.KEY_PROXIMITY_BG, true)
-                }
-                val proximityOrientationBgEnabled = remember(settingsVersion) {
-                    prefs.getBoolean(PreferenceManager.KEY_PROXIMITY_ORIENTATION_BG, false)
-                }
-                val isSpeakerOn = audioState?.route == CallAudioState.ROUTE_SPEAKER
-
-                LaunchedEffect(callState, isSpeakerOn, proximityBgEnabled, proximityOrientationBgEnabled) {
-                    // "Device Orientation with Proximity Sensor" hands control of the real
-                    // proximity wake lock to updateManualScreenOffGate() (driven by live
-                    // proximity + accelerometer readings in proxSensorListener) instead of the
-                    // plain call-state/prefs check below. Acquiring/releasing the actual OS
-                    // wake lock — rather than dimming this window — is what makes it keep
-                    // working while the call screen is backgrounded, not just while it's open.
-                    if (proximityOrientationBgEnabled) {
-                        updateManualScreenOffGate()
-                    } else {
-                        when (callState) {
-                            Call.STATE_ACTIVE, Call.STATE_DIALING -> {
-                                if (proximityBgEnabled && !isSpeakerOn) {
-                                    acquireProximityLock()
-                                } else {
-                                    releaseProximityLock()
-                                }
-                            }
-                            else -> releaseProximityLock()
-                        }
-                    }
+                LaunchedEffect(callState) {
+                    // Real near-ear screen-off (plain + orientation-gated) is now handled
+                    // entirely by CallService regardless of which Activity is on top — this
+                    // effect only needs to worry about auto-closing the call screen.
                     if (session == null || callState == Call.STATE_DISCONNECTED) {
                         delay(800)
                         // Wait for any pending auto-redial dialog or job to complete before closing
@@ -287,6 +191,7 @@ class CallActivity : FragmentActivity() {
                         finishAndRemoveTask()
                     }
                 }
+
 
                 if (call != null && session != null) {
                     val number = call.details?.handle?.schemeSpecificPart ?: ""
@@ -361,30 +266,6 @@ class CallActivity : FragmentActivity() {
     override fun onResume() {
         super.onResume()
         isInForeground.value = true
-        val proximityOrientationBgEnabled = prefs.getBoolean(PreferenceManager.KEY_PROXIMITY_ORIENTATION_BG, false)
-        if (proximityOrientationBgEnabled) {
-            // Re-evaluate from the latest cached sensor readings — updateManualScreenOffGate()
-            // (driven continuously by proxSensorListener, foreground or background) owns the
-            // real wake lock for this mode.
-            updateManualScreenOffGate()
-            return
-        }
-        val session = CallService.currentCallSession.value
-        val audioState = CallService.audioState.value
-        val proximityBgEnabled = prefs.getBoolean(PreferenceManager.KEY_PROXIMITY_BG, true)
-        val isSpeakerOn = audioState?.route == CallAudioState.ROUTE_SPEAKER
-        val callState = session?.state
-        if (proximityBgEnabled && !isSpeakerOn &&
-            (callState == Call.STATE_ACTIVE || callState == Call.STATE_DIALING)) {
-            acquireProximityLock()
-        } else if (!proximityBgEnabled || isSpeakerOn) {
-            releaseProximityLock()
-        }
-    }
-
-    private fun setupProximitySensor() {
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        proximityWakeLock = powerManager.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "Rivo::Prox")
     }
 
     private fun showWhenLockedAndTurnScreenOn() {
@@ -404,7 +285,6 @@ class CallActivity : FragmentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        releaseProximityLock()
         sensorManager?.unregisterListener(proxSensorListener)
         keepAliveForRedial.value = false
     }
@@ -413,8 +293,6 @@ class CallActivity : FragmentActivity() {
         super.onPause()
         isInForeground.value = false
     }
-    private fun acquireProximityLock() { if (proximityWakeLock?.isHeld == false) proximityWakeLock?.acquire() }
-    private fun releaseProximityLock() { if (proximityWakeLock?.isHeld == true) proximityWakeLock?.release() }
 }
 
 private fun sanitizedPhoneForChatApps(number: String): String = number.filter { it.isDigit() || it == '+' }

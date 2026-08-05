@@ -630,11 +630,27 @@ class ContactsRepository(private val contentResolver: ContentResolver, private v
             ContactsContract.PhoneLookup._ID,
             ContactsContract.PhoneLookup.DISPLAY_NAME,
             ContactsContract.PhoneLookup.PHOTO_URI,
-            ContactsContract.PhoneLookup.STARRED
+            ContactsContract.PhoneLookup.STARRED,
+            ContactsContract.PhoneLookup.NUMBER
         )
+
+        // PhoneLookup's own fuzzy matching isn't always a genuine suffix match — on some
+        // OEMs/Android versions a short, unsaved number (e.g. a 3-digit short code like "787")
+        // can incorrectly match a much longer saved contact number that merely *starts* with
+        // those same digits (e.g. a saved "787XXXXXXX"), pointing call logs at the wrong contact.
+        // Guard against that here by re-verifying the digits ourselves: the saved number must
+        // actually END with the dialed digits (a real suffix match), not just contain them.
+        val queriedDigits = number.filter { it.isDigit() }
 
         contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
+                val matchedDigits = (cursor.getString(4) ?: "").filter { it.isDigit() }
+                val isGenuineSuffixMatch = queriedDigits.isNotEmpty() &&
+                    matchedDigits.length >= queriedDigits.length &&
+                    matchedDigits.endsWith(queriedDigits)
+
+                if (!isGenuineSuffixMatch) return null
+
                 val id = cursor.getString(0)
                 val name = cursor.getString(1)
                 val photoUri = cursor.getString(2)

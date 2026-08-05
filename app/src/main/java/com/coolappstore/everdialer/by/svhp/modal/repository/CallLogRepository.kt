@@ -210,8 +210,16 @@ class CallLogRepository(
         val projection = arrayOf(
             ContactsContract.PhoneLookup._ID,
             ContactsContract.PhoneLookup.DISPLAY_NAME,
-            ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI
+            ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI,
+            ContactsContract.PhoneLookup.NUMBER
         )
+
+        // Same guard as ContactsRepository.getContactByNumber(): PhoneLookup's built-in fuzzy
+        // matching can wrongly match a short, unsaved number (e.g. a 3-digit short code "787")
+        // against a much longer saved contact number that merely starts with those digits
+        // (e.g. "787XXXXXXX"), attaching the wrong name/photo to a call log entry. Re-verify
+        // the saved number genuinely ENDS with the dialed digits before accepting the match.
+        val queriedDigits = number.filter { it.isDigit() }
 
         return try {
             contentResolver.query(uri, projection, null, null, null)
@@ -223,6 +231,15 @@ class CallLogRepository(
                             cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
                         val photoIdx =
                             cursor.getColumnIndex(ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI)
+                        val numberIdx =
+                            cursor.getColumnIndex(ContactsContract.PhoneLookup.NUMBER)
+
+                        val matchedDigits = (cursor.getString(numberIdx) ?: "").filter { it.isDigit() }
+                        val isGenuineSuffixMatch = queriedDigits.isNotEmpty() &&
+                            matchedDigits.length >= queriedDigits.length &&
+                            matchedDigits.endsWith(queriedDigits)
+
+                        if (!isGenuineSuffixMatch) return Triple(null, null, null)
 
                         val contactId = cursor.getLong(idIdx)
                         val name = cursor.getString(nameIdx)

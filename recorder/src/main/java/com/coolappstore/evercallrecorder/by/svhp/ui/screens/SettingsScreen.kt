@@ -175,6 +175,7 @@ fun SettingsContent(
                     // ORDER: Call Recording Switch → Notifications → Recording → Audio → Security → Languages → About → Debug
                     CallRecordingMasterSwitchSection(preferences, updateTrigger, actions)
                     AppearanceSection(preferences, updateTrigger, actions)
+                    RecordingMenuAppearanceSection(preferences, updateTrigger, actions)
                     RecordingSection(preferences, updateTrigger, actions, onStorageClick, onOpenContactsIncoming, onOpenContactsOutgoing)
                     AutoDeleteSection(preferences, updateTrigger, actions)
                     AudioSection(preferences, updateTrigger, actions)
@@ -259,6 +260,23 @@ private fun AppearanceSection(preferences: AppPreferences, updateTrigger: Int, a
         )
         ToggleListItem(label = stringResource(R.string.settings_show_toasts), checked = isShowToastsEnabled, onCheckedChange = { actions.setShowToastsEnabled(it) })
         ToggleListItem(label = stringResource(R.string.settings_vibration_enabled), checked = isVibrationEnabled, onCheckedChange = { actions.setVibrationEnabled(it) })
+    }
+}
+
+// ── Appearance (Call Recording menu placement in Ever Dialer's Settings) ──────────
+
+@Composable
+private fun RecordingMenuAppearanceSection(preferences: AppPreferences, updateTrigger: Int, actions: SettingsActions) {
+    val showBelowUpdates = remember(updateTrigger) { preferences.isShowRecordingMenuBelowUpdatesEnabled() }
+    SettingsSection(title = "Appearance", icon = Icons.Outlined.Palette) {
+        ToggleListItem(
+            label = "Show Recording Menu Below Updates",
+            description = "Normally the Call Recording menu sits below Fake Calls in Ever " +
+                "Dialer's Settings. Turn this on to move it up near the top, right below " +
+                "Updates, under its own \"Call Recording\" heading.",
+            checked = showBelowUpdates,
+            onCheckedChange = { actions.setShowRecordingMenuBelowUpdatesEnabled(it) }
+        )
     }
 }
 
@@ -969,6 +987,7 @@ private fun SettingsScreenPreview() {
             override fun setDynamicColorEnabled(enabled: Boolean) {}
             override fun setShowToastsEnabled(enabled: Boolean) {}
             override fun setRecordingNotificationsEnabled(enabled: Boolean) {}
+            override fun setShowRecordingMenuBelowUpdatesEnabled(enabled: Boolean) {}
             override fun setAppLanguage(languageCode: String) {}
             override fun setLoggingEnabled(enabled: Boolean) {}
             override fun setDebugEnabled(enabled: Boolean) {}
