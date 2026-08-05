@@ -225,31 +225,15 @@ fun NotesScreen(navController: NavController, navigator: DestinationsNavigator, 
                 }
             },
         topBar = {
-            TopAppBar(
-                title = { Text("Notes", fontWeight = FontWeight.Bold) },
-                actions = {
-                    if (!isLandscape) {
-                        IconButton(onClick = {
-                            navigator.navigate(com.ramcosta.composedestinations.generated.destinations.SettingsScreenDestination())
-                        }) {
-                            Icon(Icons.Default.Tune, contentDescription = "Settings")
-                        }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
-            )
+            // Same shared top bar (search pill + settings button) used on the Calls tab, so the
+            // settings button matches its size and placement exactly.
+            com.coolappstore.everdialer.by.svhp.view.components.TopBar(navController, navigator)
         },
         containerColor = MaterialTheme.colorScheme.surface,
         contentWindowInsets = WindowInsets(0)
     ) { innerPadding ->
         Box(modifier = Modifier.padding(innerPadding).fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize()) {
-            if (!isLandscape && !isSearchResultView) {
-                com.coolappstore.everdialer.by.svhp.view.components.SearchBarPill(
-                    navigator = navigator,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                )
-            }
             if (notes.isEmpty()) {
                 if (isLandscape && !isSearchResultView) {
                     com.coolappstore.everdialer.by.svhp.view.components.SearchBarPill(

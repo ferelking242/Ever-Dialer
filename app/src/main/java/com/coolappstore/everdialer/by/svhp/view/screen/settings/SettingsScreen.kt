@@ -1045,7 +1045,12 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
             state = listState,
             modifier = Modifier.fillMaxSize().padding(padding).alpha(alpha).offset(y = offsetY).imePadding(),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            // While showing search results, every visible item below the search field is one
+            // row of the same result group, so the list-wide gap must be 0 there — otherwise the
+            // grouped rows render with a visible gap between them despite [groupedRowShape]
+            // making them look like a single continuous card. A separate Spacer item restores the
+            // normal 16dp gap between the search field and the results/empty-state below it.
+            verticalArrangement = if (settingsSearchQuery.isNotBlank()) Arrangement.spacedBy(0.dp) else Arrangement.spacedBy(16.dp)
         ) {
 
             item {
@@ -1079,8 +1084,9 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
             }
 
             if (settingsSearchQuery.isNotBlank()) {
-                item {
-                    if (filteredSettingsResults.isEmpty()) {
+                item { Spacer(modifier = Modifier.height(16.dp)) }
+                if (filteredSettingsResults.isEmpty()) {
+                    item {
                         Box(modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp), contentAlignment = Alignment.Center) {
                             Text(
                                 "No settings found for \"$settingsSearchQuery\"",
@@ -1088,9 +1094,26 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                    } else {
-                        RivoExpressiveCard {
-                            filteredSettingsResults.forEachIndexed { index, entry ->
+                    }
+                } else {
+                    // Each matched row is its own LazyColumn item (itemsIndexed) instead of being
+                    // eagerly forEach-composed inside a single non-lazy item {}. That non-lazy
+                    // pattern is what made typing feel laggy/hardcoded: every keystroke recomposed
+                    // and measured every matched row at once before the frame could show the new
+                    // character. Rows are now composed/measured only as they scroll into view,
+                    // while [groupedRowShape] keeps the same rounded-card look as RivoExpressiveCard
+                    // — and since verticalArrangement is 0dp while searching (see above), there's
+                    // no gap between rows either.
+                    itemsIndexed(
+                        items = filteredSettingsResults,
+                        key = { _, entry -> "settings_search_${entry.key}" }
+                    ) { index, entry ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = groupedRowShape(index, filteredSettingsResults.size),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow
+                        ) {
+                            Column {
                                 RivoListItem(
                                     headline = entry.title,
                                     supporting = entry.subtitle,
@@ -1108,7 +1131,12 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                                         }
                                     }
                                 )
-                                if (index < filteredSettingsResults.size - 1) CardDivider()
+                                if (index < filteredSettingsResults.size - 1) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                    )
+                                }
                             }
                         }
                     }
@@ -1639,4 +1667,16 @@ internal fun CardDivider() {
         Modifier.padding(horizontal = 16.dp),
         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
     )
+}
+
+/**
+ * Corner shape for a row inside a visually-grouped "card" of lazily rendered settings-search
+ * results — rounded only on the outer edge of the first/last row in the group so consecutive
+ * rows still read as one continuous card, just like [RivoExpressiveCard], while each row is its
+ * own LazyColumn item (see the settings-search results in [SettingsScreen]).
+ */
+private fun groupedRowShape(index: Int, count: Int, corner: androidx.compose.ui.unit.Dp = 28.dp): androidx.compose.ui.graphics.Shape {
+    val top = if (index == 0) corner else 0.dp
+    val bottom = if (index == count - 1) corner else 0.dp
+    return RoundedCornerShape(topStart = top, topEnd = top, bottomStart = bottom, bottomEnd = bottom)
 }

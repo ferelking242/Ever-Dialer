@@ -80,10 +80,6 @@ fun SearchScreen(navController: NavController, navigator: DestinationsNavigator)
                 onRequestPermission = { permState.launchPermissionRequest() },
                 listState = listState
             )
-            ScrollToTopButton(
-                visible = showButton,
-                onClick = { scope.launch { listState.animateScrollToItem(0) } }
-            )
         }
     }
 }
@@ -416,7 +412,19 @@ fun ContactSearchContent(
                     contentPadding = PaddingValues(16.dp)
                 ) {
                     item {
-                        RivoSectionHeader(title = "$totalResults Result${if (totalResults != 1) "s" else ""}")
+                        Surface(
+                            modifier = Modifier.padding(start = 8.dp),
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh
+                        ) {
+                            Text(
+                                text = "$totalResults Result${if (totalResults != 1) "s" else ""}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                            )
+                        }
                         Spacer(modifier = Modifier.height(8.dp))
                     }
 
