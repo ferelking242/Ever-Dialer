@@ -37,6 +37,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinActivityViewModel
 import org.koin.compose.koinInject
 import java.util.Locale
+import com.coolappstore.everdialer.by.svhp.controller.util.numbersLikelyMatch
 
 @Destination<RootGraph>(route = "call_log_detail_screen")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,10 +77,12 @@ fun CallLogFullScreen(
     LaunchedEffect(Unit) { screenVisible = true }
 
     val filteredLogsByContact = remember(allLogs, contactId, phoneNumber) {
+        // numbersLikelyMatch — `.contains()` would wrongly pull in entries for unrelated short
+        // numbers/codes that merely appear as a substring of the requested number.
         if (contactId == null && phoneNumber == null) allLogs
         else allLogs.filter { log ->
             (contactId != null && contactId != "null" && log.contactId == contactId) ||
-            (phoneNumber != null && log.number.replace(" ", "").contains(phoneNumber.replace(" ", "")))
+            (phoneNumber != null && numbersLikelyMatch(log.number, phoneNumber))
         }
     }
 

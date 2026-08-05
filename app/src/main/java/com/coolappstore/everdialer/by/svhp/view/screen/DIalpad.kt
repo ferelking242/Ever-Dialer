@@ -132,11 +132,12 @@ private fun DialpadExtraResultTile(
     onCallNumber: (String) -> Unit,
     onOpenContactInfo: (String) -> Unit
 ) {
-    // Tapping the row body still dials, same as before. Tapping the avatar/pfp now opens the
-    // contact info page for that number (pre-filled as "Unknown"/add-new since it isn't a saved
-    // contact yet) instead of also placing a call — matching how saved-contact rows in this same
-    // search results list already treat pfp taps (onAvatarClick -> ContactDetailsScreen) rather
-    // than the pfp being just another way to trigger the call.
+    // Tapping the row body dials directly only when Settings → Call Settings → "Direct Call on
+    // Tap" is on; otherwise it opens Contact Info instead (see onCallNumber passed in by the
+    // caller). Tapping the avatar/pfp always opens the contact info page for that number
+    // (pre-filled as "Unknown"/add-new since it isn't a saved contact yet) regardless of that
+    // setting — matching how saved-contact rows in this same search results list already treat
+    // pfp taps (onAvatarClick -> ContactDetailsScreen).
     when (result) {
         is DialpadExtraResult.NonContact -> SingleTile(
             title = result.entry.name?.ifEmpty { result.entry.number } ?: result.entry.number,
@@ -331,6 +332,10 @@ fun DialPadContent(
     val contactsVM: ContactsViewModel = koinActivityViewModel()
     val prefs = koinInject<PreferenceManager>()
     val settingsState by prefs.settingsChanged.collectAsState()
+    // Settings → App Settings → Call Settings → "Direct Call on Tap". When off, tapping a
+    // search-result row (saved contact or non-contact) should open Contact Info instead of
+    // placing a call directly — same behaviour Recents/Favorites already apply.
+    val directCallOnTap = remember(settingsState) { prefs.getBoolean(PreferenceManager.KEY_DIRECT_CALL_ON_TAP, true) }
 
     val allContacts by contactsVM.allContacts.collectAsState()
     fun navigateToContact(contactId: String? = null, phoneNumber: String? = null) {
@@ -794,15 +799,21 @@ fun DialPadContent(
                                         navigateToContact(contactId = contact.id)
                                     },
                                     onClick  = {
-                                        val num = contact.phoneNumbers.firstOrNull() ?: return@SingleTile
-                                        initiateCall(num)
+                                        if (directCallOnTap) {
+                                            val num = contact.phoneNumbers.firstOrNull() ?: return@SingleTile
+                                            initiateCall(num)
+                                        } else {
+                                            navigateToContact(contactId = contact.id)
+                                        }
                                     }
                                 )
                             }
                             extraSearchResults.forEach { extra ->
                                 DialpadExtraResultTile(
                                     result = extra,
-                                    onCallNumber = { initiateCall(it) },
+                                    onCallNumber = { num ->
+                                        if (directCallOnTap) initiateCall(num) else navigateToContact(phoneNumber = num)
+                                    },
                                     onOpenContactInfo = { num ->
                                         navigateToContact(phoneNumber = num)
                                     }
@@ -1017,15 +1028,21 @@ fun DialPadContent(
                                     navigateToContact(contactId = contact.id)
                                 },
                                 onClick  = {
-                                    val num = contact.phoneNumbers.firstOrNull() ?: return@SingleTile
-                                    initiateCall(num)
+                                    if (directCallOnTap) {
+                                        val num = contact.phoneNumbers.firstOrNull() ?: return@SingleTile
+                                        initiateCall(num)
+                                    } else {
+                                        navigateToContact(contactId = contact.id)
+                                    }
                                 }
                             )
                         }
                         extraSearchResults.forEach { extra ->
                             DialpadExtraResultTile(
                                     result = extra,
-                                    onCallNumber = { initiateCall(it) },
+                                    onCallNumber = { num ->
+                                        if (directCallOnTap) initiateCall(num) else navigateToContact(phoneNumber = num)
+                                    },
                                     onOpenContactInfo = { num ->
                                         navigateToContact(phoneNumber = num)
                                     }

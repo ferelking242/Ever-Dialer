@@ -8,6 +8,7 @@ import android.provider.CallLog
 import android.provider.ContactsContract
 import android.telephony.SubscriptionManager
 import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
+import com.coolappstore.everdialer.by.svhp.controller.util.numbersLikelyMatch
 import com.coolappstore.everdialer.by.svhp.modal.`interface`.ICallLogRepository
 import com.coolappstore.everdialer.by.svhp.modal.data.CallLogEntry
 
@@ -215,10 +216,13 @@ class CallLogRepository(
         )
 
         // Same guard as ContactsRepository.getContactByNumber(): PhoneLookup's built-in fuzzy
-        // matching can wrongly match a short, unsaved number (e.g. a 3-digit short code "787")
-        // against a much longer saved contact number that merely starts with those digits
-        // (e.g. "787XXXXXXX"), attaching the wrong name/photo to a call log entry. Re-verify
-        // the saved number genuinely ENDS with the dialed digits before accepting the match.
+        // matching can wrongly match a short, unsaved number (e.g. a 3-digit short code "787"
+        // or "875") against a much longer saved contact number that merely contains or starts
+        // with those digits (e.g. "7875XXXXXX"), attaching the wrong name/photo to a call log
+        // entry. Re-verify with numbersLikelyMatch: exact match always passes, and a suffix
+        // match (needed so a contact saved with a country code still matches a plain call-log
+        // number, e.g. across a contact's multiple saved numbers) is only trusted when both
+        // numbers are long enough to be real phone numbers — never for short codes.
         val queriedDigits = number.filter { it.isDigit() }
 
         return try {
@@ -234,12 +238,10 @@ class CallLogRepository(
                         val numberIdx =
                             cursor.getColumnIndex(ContactsContract.PhoneLookup.NUMBER)
 
-                        val matchedDigits = (cursor.getString(numberIdx) ?: "").filter { it.isDigit() }
-                        val isGenuineSuffixMatch = queriedDigits.isNotEmpty() &&
-                            matchedDigits.length >= queriedDigits.length &&
-                            matchedDigits.endsWith(queriedDigits)
+                        val matchedRaw = cursor.getString(numberIdx) ?: ""
+                        val isMatch = numbersLikelyMatch(queriedDigits, matchedRaw)
 
-                        if (!isGenuineSuffixMatch) return Triple(null, null, null)
+                        if (!isMatch) return Triple(null, null, null)
 
                         val contactId = cursor.getLong(idIdx)
                         val name = cursor.getString(nameIdx)

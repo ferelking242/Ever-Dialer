@@ -99,6 +99,25 @@ private val ColorAmber   = Color(0xFFFFC107)
 private val ColorBrown   = Color(0xFF795548)
 private val ColorCyan    = Color(0xFF00BCD4)
 
+/**
+ * The main settings list is built from a fixed sequence of `item { }` blocks (one per section
+ * card), in this exact order, after the always-present search field item and the conditional
+ * "Set as Default Dialer" banner item. Each entry here lists the `settingsSearchHighlight` keys
+ * that live inside that section's item, so a search-result tap can resolve straight to which
+ * LazyColumn item index needs to be scrolled to before that row can be brought into view.
+ */
+private val settingsSectionKeyGroups: List<List<String>> = listOf(
+    listOf("check_for_updates", "call_recording", "rate_and_review", "check_ratings", "more_apps"),
+    listOf("interface"),
+    listOf("tap_haptics", "scroll_haptics"),
+    listOf("authentication"),
+    listOf("app_settings", "contacts_hider", "fake_call", "call_recording"),
+    listOf("silence_unknown", "blocked_numbers"),
+    listOf("auto_check_updates"),
+    listOf("create_backup", "restore_backup"),
+    listOf("about_app")
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
@@ -914,6 +933,7 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
         SettingsSearchEntry("Default SIM", "Which SIM is used to place calls", "default_sim", Icons.Outlined.SimCard, ColorGreen) { it.navigate(CallSettingsScreenDestination(highlightKey = "default_sim")) },
         SettingsSearchEntry("Contacts to display", "Choose which accounts' contacts are shown", "contacts_to_display", Icons.Outlined.Contacts, ColorBlue) { it.navigate(CallSettingsScreenDestination(highlightKey = "contacts_to_display")) },
         SettingsSearchEntry("Proximity Sensor on in background", "Turn off screen when phone is near ear during a call", "proximity_sensor_bg", Icons.Outlined.Sensors, ColorTeal) { it.navigate(CallSettingsScreenDestination(highlightKey = "proximity_sensor_bg")) },
+        SettingsSearchEntry("Device Orientation with Proximity Sensor", "Combine orientation and proximity to prevent false screen-offs during a call", "proximity_orientation_bg", Icons.Outlined.ScreenLockPortrait, ColorRed) { it.navigate(CallSettingsScreenDestination(highlightKey = "proximity_orientation_bg")) },
         SettingsSearchEntry("Pocket Mode Prevention", "Block accidental answer/decline when phone is in pocket", "pocket_mode_prevention", Icons.Outlined.Sensors, ColorAmber) { it.navigate(CallSettingsScreenDestination(highlightKey = "pocket_mode_prevention")) },
         SettingsSearchEntry("Floating Ongoing Call", "Draggable floating bubble during calls", "floating_ongoing_call", Icons.Outlined.Sensors, ColorBlue) { it.navigate(CallSettingsScreenDestination(highlightKey = "floating_ongoing_call")) },
         SettingsSearchEntry("Direct Call on Tap", "Tap a call log entry to call directly", "direct_call_on_tap", Icons.Outlined.Call, ColorGreen) { it.navigate(CallSettingsScreenDestination(highlightKey = "direct_call_on_tap")) },
@@ -983,6 +1003,24 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
     // Seeded from the `highlightKey` nav arg when arriving here from a search result tapped
     // on a different settings page (see SettingsSearchEntryPoint).
     var highlightedSettingKey by remember { mutableStateOf(highlightKey) }
+    // The main settings list below is a LazyColumn: rows far down (e.g. "About Ever Dialer")
+    // simply aren't composed until scrolled near, so settingsSearchHighlight()'s
+    // BringIntoViewRequester silently has nothing to scroll to and a search-result tap on a
+    // far-down setting appeared to do nothing. Each `item { }` block below corresponds to one
+    // entry here, in the same order, so we can resolve a highlighted key to its containing
+    // item's index and jump the list there first — after that, the row itself is composed and
+    // settingsSearchHighlight can bring it precisely into view and flash it.
+    LaunchedEffect(highlightedSettingKey, settingsSearchQuery, isDefaultDialer) {
+        val key = highlightedSettingKey
+        if (key != null && settingsSearchQuery.isBlank()) {
+            val sectionIndex = settingsSectionKeyGroups.indexOfFirst { key in it }
+            if (sectionIndex >= 0) {
+                val searchFieldItem = 1
+                val bannerItem = if (!isDefaultDialer) 1 else 0
+                listState.scrollToItem((searchFieldItem + bannerItem + sectionIndex).coerceAtLeast(0))
+            }
+        }
+    }
     LaunchedEffect(settingsSearchQuery.isNotBlank()) {
         if (settingsSearchQuery.isNotBlank()) {
             listState.animateScrollToItem(0)

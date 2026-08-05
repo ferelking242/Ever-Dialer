@@ -64,6 +64,7 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinActivityViewModel
 import org.koin.compose.koinInject
+import com.coolappstore.everdialer.by.svhp.controller.util.numbersLikelyMatch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
@@ -82,7 +83,18 @@ fun ContactDetailsScreen(
 
     val contact = remember(contactId, phoneNumber, contacts) {
         if (contactId != null && contactId != "null") contacts.find { it.id == contactId }
-        else if (phoneNumber != null) contacts.find { c -> c.phoneNumbers.any { n -> n.replace(" ", "").contains(phoneNumber.replace(" ", "")) } }
+        else if (phoneNumber != null) {
+            // numbersLikelyMatch: exact digit match always counts, and a suffix match (needed so
+            // a contact saved with a country code, e.g. "+917875551234", still resolves from the
+            // plain call-log number "7875551234", including across a contact's other saved
+            // numbers) is only trusted when both numbers are long enough to be real phone
+            // numbers. A previous `.contains()` check here matched any saved number that merely
+            // contained the dialed digits as a substring anywhere — e.g. dialing the short code
+            // "787" or "875" would wrongly match a saved contact like "7875XXXXXX".
+            contacts.find { c ->
+                c.phoneNumbers.any { n -> numbersLikelyMatch(phoneNumber, n) }
+            }
+        }
         else null
     }
 
@@ -113,9 +125,13 @@ fun ContactDetailsScreen(
     }
 
     val contactLogs = remember(contact, phoneNumber, allLogs) {
+        // Same numbersLikelyMatch rule as the contact lookup above — plain `.contains()` would
+        // pull in call log entries for unrelated short numbers/codes that merely appear as a
+        // substring of this contact's/number's digits.
         allLogs.filter { log ->
-            (contact != null && (log.contactId == contact.id || contact.phoneNumbers.any { n -> log.number.replace(" ", "").contains(n.replace(" ", "")) })) ||
-            (phoneNumber != null && log.number.replace(" ", "").contains(phoneNumber.replace(" ", "")))
+            (contact != null && (log.contactId == contact.id ||
+                contact.phoneNumbers.any { n -> numbersLikelyMatch(log.number, n) })) ||
+            (phoneNumber != null && numbersLikelyMatch(log.number, phoneNumber))
         }
     }
 

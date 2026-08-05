@@ -13,6 +13,7 @@ import com.coolappstore.everdialer.by.svhp.modal.data.ContactAccount
 import com.coolappstore.everdialer.by.svhp.modal.data.ContactEvent
 import com.coolappstore.everdialer.by.svhp.modal.data.ContactSaveTarget
 import com.coolappstore.everdialer.by.svhp.modal.`interface`.IContactsRepository
+import com.coolappstore.everdialer.by.svhp.controller.util.numbersLikelyMatch
 
 class ContactsRepository(private val contentResolver: ContentResolver, private val context: Context) : IContactsRepository {
 
@@ -634,22 +635,22 @@ class ContactsRepository(private val contentResolver: ContentResolver, private v
             ContactsContract.PhoneLookup.NUMBER
         )
 
-        // PhoneLookup's own fuzzy matching isn't always a genuine suffix match — on some
-        // OEMs/Android versions a short, unsaved number (e.g. a 3-digit short code like "787")
-        // can incorrectly match a much longer saved contact number that merely *starts* with
-        // those same digits (e.g. a saved "787XXXXXXX"), pointing call logs at the wrong contact.
-        // Guard against that here by re-verifying the digits ourselves: the saved number must
-        // actually END with the dialed digits (a real suffix match), not just contain them.
+        // PhoneLookup's own fuzzy matching isn't a genuine match — on some OEMs/Android versions
+        // a short, unsaved number (e.g. a 3-digit short code like "787" or "875") can incorrectly
+        // match a much longer saved contact number that merely *contains* or *starts with* those
+        // same digits (e.g. a saved "7875XXXXXX"), pointing call logs at the wrong contact.
+        // Guard against that here with numbersLikelyMatch: exact digit match always passes, and a
+        // suffix match (needed so a contact saved with a country code, e.g. "+917875551234",
+        // still matches the plain call-log number "7875551234") is only trusted when both numbers
+        // are long enough to be real phone numbers — never for short codes.
         val queriedDigits = number.filter { it.isDigit() }
 
         contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
-                val matchedDigits = (cursor.getString(4) ?: "").filter { it.isDigit() }
-                val isGenuineSuffixMatch = queriedDigits.isNotEmpty() &&
-                    matchedDigits.length >= queriedDigits.length &&
-                    matchedDigits.endsWith(queriedDigits)
+                val matchedRaw = cursor.getString(4) ?: ""
+                val isMatch = numbersLikelyMatch(queriedDigits, matchedRaw)
 
-                if (!isGenuineSuffixMatch) return null
+                if (!isMatch) return null
 
                 val id = cursor.getString(0)
                 val name = cursor.getString(1)

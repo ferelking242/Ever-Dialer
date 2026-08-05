@@ -131,17 +131,29 @@ fun normalizeNumberDigits(number: String): String =
     number.filter { it.isDigit() || it == '+' }
 
 /**
- * Loose equality check for two phone numbers: compares the last 9 digits (enough to avoid
- * false positives while still matching across differing country-code / leading-zero / spacing
- * conventions). Used to decide whether a call-log number belongs to a saved contact.
+ * The shortest digit length at which a suffix match is trusted. Below this, a short/partial
+ * dialed number (e.g. a 3-digit short code like "787" or "875") must NOT be allowed to match
+ * a saved contact just because the contact's full number happens to start with, end with, or
+ * contain those same digits — that's what previously caused call-log entries for short codes
+ * to incorrectly resolve to (and redirect to) an unrelated saved contact.
+ */
+private const val MIN_TRUSTED_SUFFIX_MATCH_LEN = 7
+
+/**
+ * Equality check for two phone numbers that correctly handles a contact being saved with a
+ * country code (e.g. "+917875551234") while the call-log/dialed number is the plain national
+ * number ("7875551234"), or vice versa — WITHOUT falling into the trap of a short number
+ * (a 3-digit short code) matching against a much longer number that merely contains those
+ * digits somewhere in it. Used to decide whether a call-log number belongs to a saved contact.
  */
 fun numbersLikelyMatch(a: String, b: String): Boolean {
     val da = normalizeNumberDigits(a).filter { it.isDigit() }
     val db = normalizeNumberDigits(b).filter { it.isDigit() }
     if (da.isEmpty() || db.isEmpty()) return false
-    val tailLen = minOf(9, da.length, db.length)
-    if (tailLen <= 0) return false
-    return da.takeLast(tailLen) == db.takeLast(tailLen)
+    if (da == db) return true
+    val shorterLen = minOf(da.length, db.length)
+    if (shorterLen < MIN_TRUSTED_SUFFIX_MATCH_LEN) return false
+    return da.endsWith(db) || db.endsWith(da)
 }
 
 fun openInContacts(context: Context, contactId: String) {
