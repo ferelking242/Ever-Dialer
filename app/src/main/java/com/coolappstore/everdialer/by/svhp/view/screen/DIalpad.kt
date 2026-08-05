@@ -301,11 +301,7 @@ fun DialPadScreen(
                     // Contact Info a gentle reveal instead of popping in instantly.
                     onNavigateToContact = { contactId, phoneNumber ->
                         didNavigateAway = true
-                        sheetScope.launch {
-                            closeProgress.animateTo(1f, slowSlideSpec)
-                        }.invokeOnCompletion {
-                            navigator.navigate(ContactDetailsScreenDestination(contactId = contactId, phoneNumber = phoneNumber))
-                        }
+                        navigator.navigate(ContactDetailsScreenDestination(contactId = contactId, phoneNumber = phoneNumber))
                     }
                 )
             }

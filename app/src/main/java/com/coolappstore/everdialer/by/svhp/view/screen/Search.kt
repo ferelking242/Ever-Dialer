@@ -60,6 +60,20 @@ import kotlinx.coroutines.withContext
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinActivityViewModel
 
+/**
+ * Matches note text against a query loosely: words can appear in any order and punctuation is
+ * ignored, so a note like "today 5:30 pm" is still found by "pm today" or "5 30". Falls back to
+ * a plain substring check for a single-token query so simple searches behave as before.
+ */
+private fun matchesNoteQuery(text: String, query: String): Boolean {
+    if (query.isBlank()) return false
+    fun normalize(s: String) = s.lowercase().map { if (it.isLetterOrDigit()) it else ' ' }.joinToString("")
+    val normalizedText = normalize(text)
+    val tokens = normalize(query).split(" ").filter { it.isNotBlank() }
+    if (tokens.isEmpty()) return text.contains(query, ignoreCase = true)
+    return tokens.all { normalizedText.contains(it) }
+}
+
 @OptIn(ExperimentalPermissionsApi::class)
 @Destination<RootGraph>
 @Composable
@@ -226,12 +240,12 @@ fun ContactSearchContent(
         else allNotes.filter { note ->
             note.contactName.contains(q, ignoreCase = true) ||
                     note.phoneNumber.contains(q.filter { c -> c.isDigit() || c == '+' }.ifEmpty { q }, ignoreCase = true) ||
-                    note.content.contains(q, ignoreCase = true)
+                    matchesNoteQuery(note.content, q)
         }
 
         // Notes attached to individual call recordings (call recorder's playback screen).
         val rnr = if (!filterState.recordingNotes) emptyList()
-        else recordings.filter { it.noteText.isNotBlank() && it.noteText.contains(q, ignoreCase = true) }
+        else recordings.filter { it.noteText.isNotBlank() && matchesNoteQuery(it.noteText, q) }
 
         // The call recordings themselves — matched by the caller's name/number rather than
         // by note content (that's `rnr` above). Excludes anything already counted there so

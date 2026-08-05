@@ -179,6 +179,17 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
     fun persistTabOrder() {
         prefs.setString(PreferenceManager.KEY_TAB_ORDER, tabOrder.joinToString(","))
     }
+    fun resetTabSectionsToDefault() {
+        val defaults = PreferenceManager.DEFAULT_TAB_ORDER.split(",").map { it.trim() }.filter { it.isNotBlank() }
+        tabOrder.clear()
+        tabOrder.addAll(defaults)
+        persistTabOrder()
+        tabShowFavorites  = true; prefs.setBoolean(PreferenceManager.KEY_TAB_SHOW_FAVORITES,  true)
+        tabShowCalls      = true; prefs.setBoolean(PreferenceManager.KEY_TAB_SHOW_CALLS,      true)
+        tabShowContacts   = true; prefs.setBoolean(PreferenceManager.KEY_TAB_SHOW_CONTACTS,   true)
+        tabShowRecordings = true; prefs.setBoolean(PreferenceManager.KEY_TAB_SHOW_RECORDINGS, true)
+        tabShowNotes      = true; prefs.setBoolean(PreferenceManager.KEY_TAB_SHOW_NOTES,      true)
+    }
 
     // ── Context Menu Elements ──────────────────────────────────────────────
     // Top level: 3 fixed sections (Favourites, Call Logs, Contacts) — these are just
@@ -555,6 +566,9 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
             },
             confirmButton = {
                 TextButton(onClick = { showTabSectionsDialog = false }) { Text("Done") }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetTabSectionsToDefault() }) { Text("Default") }
             }
         )
     }
@@ -1216,7 +1230,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                                     headline = "Auto Delete Unknown No in call log",
                                     supporting = if (autoDeleteUnknownEnabled)
                                         "Deletes call log entries from unsaved numbers older than $autoDeleteUnknownValue ${if (autoDeleteUnknownUnit == "hours") "hour(s)" else "day(s)"}"
-                                    else "Automatically remove old call log entries from numbers not in your contacts",
+                                    else "Set a duration below, then turn this on to remove old call log entries from numbers not in your contacts",
                                     leadingIcon = Icons.Outlined.AutoDelete,
                                     iconContainerColor = ColorRed,
                                     checked = autoDeleteUnknownEnabled,
@@ -1225,56 +1239,57 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                                         autoDeleteUnknownEnabled = enabled
                                         prefs.setBoolean(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_ENABLED, enabled)
                                         if (enabled) {
-                                            // Reset to the 1-day default every time it's turned on, and stamp "now"
-                                            // as the cutoff — only call log entries from *after* this moment are
-                                            // ever eligible for auto-deletion, so existing history is never touched.
-                                            autoDeleteUnknownValue = "1"
-                                            autoDeleteUnknownUnit = "days"
-                                            prefs.setInt(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_VALUE, 1)
-                                            prefs.setString(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_UNIT, "days")
+                                            // Use whatever duration the user has already set in the
+                                            // input below, and stamp "now" as the cutoff — only call log
+                                            // entries from *after* this moment are ever eligible for
+                                            // auto-deletion, so existing history is never touched.
+                                            val n = autoDeleteUnknownValue.toIntOrNull()?.coerceAtLeast(1) ?: 1
+                                            autoDeleteUnknownValue = n.toString()
+                                            prefs.setInt(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_VALUE, n)
+                                            prefs.setString(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_UNIT, autoDeleteUnknownUnit)
                                             prefs.setLong(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_ENABLED_AT, System.currentTimeMillis())
                                         }
                                     }
                                 )
-                                AnimatedVisibility(visible = autoDeleteUnknownEnabled) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        modifier = Modifier.fillMaxWidth().padding(start = 68.dp, end = 16.dp, bottom = 14.dp, top = 2.dp)
-                                    ) {
-                                        OutlinedTextField(
-                                            value = autoDeleteUnknownValue,
-                                            onValueChange = { raw ->
-                                                val digitsOnly = raw.filter { it.isDigit() }.take(4)
-                                                autoDeleteUnknownValue = digitsOnly
-                                                val n = digitsOnly.toIntOrNull()
-                                                if (n != null && n > 0) {
-                                                    prefs.setInt(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_VALUE, n)
-                                                }
-                                            },
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
-                                            keyboardActions = KeyboardActions(onDone = { keyboardController?.hide() }),
-                                            shape = RoundedCornerShape(12.dp),
-                                            modifier = Modifier.width(90.dp)
-                                        )
-                                        FilterChip(
-                                            selected = autoDeleteUnknownUnit == "days",
-                                            onClick = {
-                                                autoDeleteUnknownUnit = "days"
-                                                prefs.setString(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_UNIT, "days")
-                                            },
-                                            label = { Text("Days") }
-                                        )
-                                        FilterChip(
-                                            selected = autoDeleteUnknownUnit == "hours",
-                                            onClick = {
-                                                autoDeleteUnknownUnit = "hours"
-                                                prefs.setString(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_UNIT, "hours")
-                                            },
-                                            label = { Text("Hours") }
-                                        )
-                                    }
+                                // Always visible — regardless of the switch state — so the user can set
+                                // the duration and unit BEFORE ever turning the feature on.
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.fillMaxWidth().padding(start = 68.dp, end = 16.dp, bottom = 14.dp, top = 2.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = autoDeleteUnknownValue,
+                                        onValueChange = { raw ->
+                                            val digitsOnly = raw.filter { it.isDigit() }.take(4)
+                                            autoDeleteUnknownValue = digitsOnly
+                                            val n = digitsOnly.toIntOrNull()
+                                            if (n != null && n > 0) {
+                                                prefs.setInt(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_VALUE, n)
+                                            }
+                                        },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                                        keyboardActions = KeyboardActions(onDone = { keyboardController?.hide() }),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.width(90.dp)
+                                    )
+                                    FilterChip(
+                                        selected = autoDeleteUnknownUnit == "days",
+                                        onClick = {
+                                            autoDeleteUnknownUnit = "days"
+                                            prefs.setString(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_UNIT, "days")
+                                        },
+                                        label = { Text("Days") }
+                                    )
+                                    FilterChip(
+                                        selected = autoDeleteUnknownUnit == "hours",
+                                        onClick = {
+                                            autoDeleteUnknownUnit = "hours"
+                                            prefs.setString(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_UNIT, "hours")
+                                        },
+                                        label = { Text("Hours") }
+                                    )
                                 }
                                 HorizontalDivider(Modifier.padding(horizontal = 16.dp),
                                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))

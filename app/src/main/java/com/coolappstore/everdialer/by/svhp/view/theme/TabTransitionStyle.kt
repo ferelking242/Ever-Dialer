@@ -103,33 +103,57 @@ object TabTransitionStyle : NavHostAnimatedDestinationStyle() {
         }
     }
 
+    // Navigation-Compose treats returning to the graph's start destination (the "Calls" tab is
+    // marked start = true) as a *pop*, not a regular navigate — so tapping that tab plays this
+    // pop transition instead of enterTransition/exitTransition above. It must resolve its slide
+    // direction from tabRouteOrder exactly like the regular transitions do, or else it'll always
+    // slide in from the same hardcoded side no matter where the user has actually placed that
+    // tab in Settings > Appearance > Tab Sections.
     override val popEnterTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
-        val toTab = isTabRoute(targetState.destination.route)
-        if (!isLandscapeMode) {
-            if (toTab) {
+        val fromTab = isTabRoute(initialState.destination.route)
+        val toTab   = isTabRoute(targetState.destination.route)
+        val fromIdx = routeOrder(initialState.destination.route)
+        val toIdx   = routeOrder(targetState.destination.route)
+
+        when {
+            fromTab && toTab && !isLandscapeMode -> {
+                val goRight = toIdx > fromIdx
                 slideInHorizontally(
                     animationSpec = tween(550, easing = EaseOutQuart),
-                    initialOffsetX = { -(it * 0.25f).toInt() }
+                    initialOffsetX = { if (goRight) (it * 0.25f).toInt() else -(it * 0.25f).toInt() }
                 ) + fadeIn(tween(400, easing = EaseOutQuart))
-            } else {
+            }
+            toTab && !isLandscapeMode -> {
                 slideInHorizontally(
                     animationSpec = tween(600, easing = EaseOutExpo),
                     initialOffsetX = { -(it * 0.12f).toInt() }
                 ) + fadeIn(tween(450, easing = EaseOutExpo))
             }
-        } else {
-            fadeIn(tween(450, easing = EaseOutQuart))
+            else -> fadeIn(tween(450, easing = EaseOutQuart))
         }
     }
 
     override val popExitTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
-        if (!isLandscapeMode) {
-            slideOutHorizontally(
-                animationSpec = tween(600, easing = EaseOutExpo),
-                targetOffsetX = { (it * 0.35f).toInt() }
-            ) + fadeOut(tween(450, easing = EaseOutExpo))
-        } else {
-            fadeOut(tween(380, easing = EaseOutQuart))
+        val fromTab = isTabRoute(initialState.destination.route)
+        val toTab   = isTabRoute(targetState.destination.route)
+        val fromIdx = routeOrder(initialState.destination.route)
+        val toIdx   = routeOrder(targetState.destination.route)
+
+        when {
+            fromTab && toTab && !isLandscapeMode -> {
+                val goRight = toIdx > fromIdx
+                slideOutHorizontally(
+                    animationSpec = tween(550, easing = EaseOutQuart),
+                    targetOffsetX = { if (goRight) -(it * 0.25f).toInt() else (it * 0.25f).toInt() }
+                ) + fadeOut(tween(350, easing = EaseOutQuart))
+            }
+            fromTab && !isLandscapeMode -> {
+                slideOutHorizontally(
+                    animationSpec = tween(600, easing = EaseOutExpo),
+                    targetOffsetX = { (it * 0.35f).toInt() }
+                ) + fadeOut(tween(450, easing = EaseOutExpo))
+            }
+            else -> fadeOut(tween(380, easing = EaseOutQuart))
         }
     }
 }

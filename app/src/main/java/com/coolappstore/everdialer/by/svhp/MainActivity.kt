@@ -415,13 +415,13 @@ class MainActivity : FragmentActivity() {
                     }
 
                     if (isLandscape) {
-                        val ctx = LocalContext.current
-                        @Suppress("DEPRECATION")
-                        val rotation = (ctx.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).defaultDisplay.rotation
-                        val isRotation90  = rotation == Surface.ROTATION_90
-                        val isRotation270 = rotation == Surface.ROTATION_270
-                        val railPaddingStart = if (isRotation270) 10.dp else 0.dp
-                        val railPaddingEnd   = if (isRotation90)  10.dp else 0.dp
+                        // The rail's own windowInsetsPadding(displayCutout) below already keeps
+                        // the whole column clear of the camera cutout — no need for any per-item
+                        // horizontal padding, which was both throwing off centering and eating
+                        // into the width labels like "Favourites"/"Recordings" need to fit
+                        // without getting clipped ("Favourit", "Recordin").
+                        val railPaddingStart = 0.dp
+                        val railPaddingEnd   = 0.dp
 
                         val liquidGlassBackdropLandscape = rememberLayerBackdrop()
                         CompositionLocalProvider(LocalLiquidGlassBackdrop provides liquidGlassBackdropLandscape) {
@@ -433,7 +433,7 @@ class MainActivity : FragmentActivity() {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxHeight()
-                                        .width(96.dp)
+                                        .width(112.dp)
                                         .windowInsetsPadding(
                                             WindowInsets.displayCutout
                                                 .union(WindowInsets.systemBars)
@@ -442,64 +442,83 @@ class MainActivity : FragmentActivity() {
                                 ) {
                                     Column(
                                         modifier = Modifier.fillMaxSize(),
-                                        verticalArrangement = Arrangement.Center,
+                                        // Evenly distribute every item (including the divider) across
+                                        // the full rail height so the gaps are always uniform, instead
+                                        // of clustering everything in the middle with big empty space
+                                        // above/below.
+                                        verticalArrangement = Arrangement.SpaceEvenly,
                                         horizontalAlignment = Alignment.CenterHorizontally
                                     ) {
-                                        // Nav items — perfectly centered
-                                        RailItem(
-                                            selected = currentDest?.hierarchy?.any { it.route == FavoritesScreenDestination.route } == true,
-                                            icon = { sel -> Icon(if (sel) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, "Favourites", modifier = Modifier.size(24.dp)) },
-                                            label = "Favourites",
-                                            paddingStart = railPaddingStart,
-                                            paddingEnd = railPaddingEnd,
-                                            onClick = { navTo(FavoritesScreenDestination.route) }
-                                        )
-                                        RailItem(
-                                            selected = currentDest?.hierarchy?.any { it.route == RecentScreenDestination.route } == true,
-                                            icon = { sel -> Icon(if (sel) Icons.Filled.History else Icons.Outlined.History, "Calls", modifier = Modifier.size(24.dp)) },
-                                            label = "Calls",
-                                            paddingStart = railPaddingStart,
-                                            paddingEnd = railPaddingEnd,
-                                            onClick = { navTo(RecentScreenDestination.route) }
-                                        )
-                                        RailItem(
-                                            selected = currentDest?.hierarchy?.any { it.route == ContactScreenDestination.route } == true,
-                                            icon = { sel -> Icon(if (sel) Icons.Filled.Person else Icons.Outlined.Person, "Contacts", modifier = Modifier.size(24.dp)) },
-                                            label = "Contacts",
-                                            paddingStart = railPaddingStart,
-                                            paddingEnd = railPaddingEnd,
-                                            onClick = { navTo(ContactScreenDestination.route) }
-                                        )
-                                        if (showRecordingsRail) {
-                                            RailItem(
-                                                selected = currentDest?.hierarchy?.any { it.route == RecordingsScreenDestination.route } == true,
-                                                icon = { sel -> Icon(if (sel) Icons.Filled.FiberManualRecord else Icons.Outlined.FiberManualRecord, "Recordings", modifier = Modifier.size(24.dp)) },
-                                                label = "Recordings",
-                                                paddingStart = railPaddingStart,
-                                                paddingEnd = railPaddingEnd,
-                                                onClick = { navTo(RecordingsScreenDestination.route) }
-                                            )
-                                        }
-                                        if (showNotesRail) {
-                                            RailItem(
-                                                selected = currentDest?.hierarchy?.any { it.route == NotesScreenDestination.route } == true,
-                                                icon = { sel -> Icon(if (sel) Icons.Filled.Note else Icons.Outlined.Note, "Notes", modifier = Modifier.size(24.dp)) },
-                                                label = "Notes",
-                                                paddingStart = railPaddingStart,
-                                                paddingEnd = railPaddingEnd,
-                                                onClick = { navTo(NotesScreenDestination.route) }
-                                            )
+                                        // Nav items — order and visibility driven by the same
+                                        // Settings > Appearance > Tab Sections config as the
+                                        // portrait bottom bar, never hardcoded.
+                                        val showFavoritesRail = prefs2.getBoolean(PreferenceManager.KEY_TAB_SHOW_FAVORITES, true)
+                                        val showCallsRail     = prefs2.getBoolean(PreferenceManager.KEY_TAB_SHOW_CALLS, true)
+                                        val showContactsRail  = prefs2.getBoolean(PreferenceManager.KEY_TAB_SHOW_CONTACTS, true)
+                                        val railTabOrder = remember(settingsVer) {
+                                            PreferenceManager.parseTabOrder(prefs2.getString(PreferenceManager.KEY_TAB_ORDER, null))
                                         }
 
-                                        Spacer(Modifier.height(16.dp))
+                                        railTabOrder.forEach { tabKey ->
+                                            key(tabKey) {
+                                                when (tabKey) {
+                                                    "favorites" -> if (showFavoritesRail) RailItem(
+                                                        selected = currentDest?.hierarchy?.any { it.route == FavoritesScreenDestination.route } == true,
+                                                        icon = { sel -> Icon(if (sel) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder, "Favourites", modifier = Modifier.size(24.dp)) },
+                                                        label = "Favourites",
+                                                        paddingStart = railPaddingStart,
+                                                        paddingEnd = railPaddingEnd,
+                                                        onClick = { navTo(FavoritesScreenDestination.route) }
+                                                    )
+                                                    "calls" -> if (showCallsRail) RailItem(
+                                                        selected = currentDest?.hierarchy?.any { it.route == RecentScreenDestination.route } == true,
+                                                        icon = { sel -> Icon(if (sel) Icons.Filled.History else Icons.Outlined.History, "Calls", modifier = Modifier.size(24.dp)) },
+                                                        label = "Calls",
+                                                        paddingStart = railPaddingStart,
+                                                        paddingEnd = railPaddingEnd,
+                                                        onClick = { navTo(RecentScreenDestination.route) }
+                                                    )
+                                                    "contacts" -> if (showContactsRail) RailItem(
+                                                        selected = currentDest?.hierarchy?.any { it.route == ContactScreenDestination.route } == true,
+                                                        icon = { sel -> Icon(if (sel) Icons.Filled.Person else Icons.Outlined.Person, "Contacts", modifier = Modifier.size(24.dp)) },
+                                                        label = "Contacts",
+                                                        paddingStart = railPaddingStart,
+                                                        paddingEnd = railPaddingEnd,
+                                                        onClick = { navTo(ContactScreenDestination.route) }
+                                                    )
+                                                    "recordings" -> if (showRecordingsRail) RailItem(
+                                                        selected = currentDest?.hierarchy?.any { it.route == RecordingsScreenDestination.route } == true,
+                                                        icon = { sel -> Icon(if (sel) Icons.Filled.FiberManualRecord else Icons.Outlined.FiberManualRecord, "Recordings", modifier = Modifier.size(24.dp)) },
+                                                        label = "Recordings",
+                                                        paddingStart = railPaddingStart,
+                                                        paddingEnd = railPaddingEnd,
+                                                        onClick = { navTo(RecordingsScreenDestination.route) }
+                                                    )
+                                                    "notes" -> if (showNotesRail) RailItem(
+                                                        selected = currentDest?.hierarchy?.any { it.route == NotesScreenDestination.route } == true,
+                                                        icon = { sel -> Icon(if (sel) Icons.Filled.Note else Icons.Outlined.Note, "Notes", modifier = Modifier.size(24.dp)) },
+                                                        label = "Notes",
+                                                        paddingStart = railPaddingStart,
+                                                        paddingEnd = railPaddingEnd,
+                                                        onClick = { navTo(NotesScreenDestination.route) }
+                                                    )
+                                                }
+                                            }
+                                        }
+
                                         HorizontalDivider(
                                             modifier = Modifier.padding(horizontal = 8.dp),
                                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
                                         )
-                                        Spacer(Modifier.height(4.dp))
 
                                         RailItem(
-                                            selected = currentDest?.hierarchy?.any { it.route?.contains("settings", ignoreCase = true) == true } == true,
+                                            // Compare only the path portion of the route (before any "?" query
+                                            // args) — Recordings' own route params like "openedFromSettings"
+                                            // contain the substring "settings" too, which used to falsely
+                                            // highlight this icon while just sitting on the Recordings tab.
+                                            selected = currentDest?.hierarchy?.any {
+                                                it.route?.substringBefore("?")?.contains("settings", ignoreCase = true) == true
+                                            } == true,
                                             icon = { _ -> Icon(Icons.Default.Tune, "Settings", modifier = Modifier.size(24.dp)) },
                                             label = "Settings",
                                             paddingStart = railPaddingStart,
@@ -795,7 +814,11 @@ private fun RailItem(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = contentColor,
-            maxLines = 1
+            maxLines = 1,
+            softWrap = false,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = androidx.compose.ui.Modifier.fillMaxWidth()
         )
     }
 }

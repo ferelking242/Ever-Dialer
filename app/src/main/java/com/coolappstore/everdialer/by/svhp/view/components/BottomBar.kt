@@ -304,14 +304,16 @@ fun BottomBar(navController: NavController) {
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
                         orderedTabs.forEach { tab ->
-                            PillNavItem(
-                                selected       = tab.selected,
-                                selectedIcon   = tab.selectedIcon,
-                                unselectedIcon = tab.unselectedIcon,
-                                label          = tab.label,
-                                iconOnly       = iconOnly,
-                                onClick        = tab.onClick
-                            )
+                            key(tab.key) {
+                                PillNavItem(
+                                    selected       = tab.selected,
+                                    selectedIcon   = tab.selectedIcon,
+                                    unselectedIcon = tab.unselectedIcon,
+                                    label          = tab.label,
+                                    iconOnly       = iconOnly,
+                                    onClick        = tab.onClick
+                                )
+                            }
                         }
                     }
                 }
@@ -376,15 +378,17 @@ fun BottomBar(navController: NavController) {
                 .graphicsLayer { alpha = navBarAlpha }
         ) {
             orderedTabs.forEach { tab ->
-                AnimatedNavBarItem(
-                    selected       = tab.selected,
-                    selectedIcon   = tab.selectedIcon,
-                    unselectedIcon = tab.unselectedIcon,
-                    label          = tab.label,
-                    iconOnly       = iconOnly,
-                    labelStyle     = labelStyle,
-                    onClick        = tab.onClick
-                )
+                key(tab.key) {
+                    AnimatedNavBarItem(
+                        selected       = tab.selected,
+                        selectedIcon   = tab.selectedIcon,
+                        unselectedIcon = tab.unselectedIcon,
+                        label          = tab.label,
+                        iconOnly       = iconOnly,
+                        labelStyle     = labelStyle,
+                        onClick        = tab.onClick
+                    )
+                }
             }
         }
     }
