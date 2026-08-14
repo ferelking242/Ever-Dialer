@@ -6,14 +6,31 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.coolappstore.everdialer.by.svhp.controller.util.WHATSAPP_PACKAGES
+import com.coolappstore.everdialer.by.svhp.controller.util.getTelegramIcon
+import com.coolappstore.everdialer.by.svhp.controller.util.getWhatsAppIcon
+import com.coolappstore.everdialer.by.svhp.controller.util.isAnyPackageInstalled
+import com.coolappstore.everdialer.by.svhp.controller.util.isTelegramInstalled
+import com.coolappstore.everdialer.by.svhp.controller.util.openTelegramChat
+import com.coolappstore.everdialer.by.svhp.controller.util.openWhatsAppChat
+import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVideoCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVoiceCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVideoCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVoiceCall
 
 /**
  * Floating popup shown after tapping WhatsApp/Telegram (Contact Info → Social, or the Dialpad's
@@ -66,5 +83,79 @@ private fun AppQuickActionRow(icon: androidx.compose.ui.graphics.vector.ImageVec
         Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.width(16.dp))
         Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+    }
+}
+
+/**
+ * Self-contained "Call/Chat Via" flow: an app picker (WhatsApp/Telegram, whichever are
+ * installed) followed by that app's Chat/Voice Call/Video Call [AppQuickActionsDialog]. Shared by
+ * every long-press context menu that offers "Call/Chat Via" (Favourites, Call Logs, Contacts, and
+ * the Dialpad's own long-press menu) plus the Dialpad call button's long-press, so all of them
+ * present the exact same picker and popup for a given [phoneNumber].
+ *
+ * [showPicker] is owned by the caller (typically toggled true from a menu item's onClick, right
+ * after that menu closes itself). Once an app is chosen here, the Chat/Voice Call/Video Call
+ * dialog is tracked internally and needs no further involvement from the caller.
+ */
+@Composable
+fun CallChatViaOverlay(
+    phoneNumber: String?,
+    showPicker: Boolean,
+    onPickerDismiss: () -> Unit
+) {
+    if (phoneNumber.isNullOrBlank()) return
+    val context = LocalContext.current
+    var showAppQuickActions by remember { mutableStateOf<String?>(null) }
+
+    if (showPicker) {
+        val hasWhatsApp = remember(context) { isAnyPackageInstalled(context, WHATSAPP_PACKAGES) }
+        val hasTelegram = remember(context) { isTelegramInstalled(context) }
+        RivoDropdownMenu(expanded = showPicker, onDismissRequest = onPickerDismiss) {
+            if (hasWhatsApp) {
+                RivoDropdownMenuItem(
+                    text = "WhatsApp",
+                    iconBitmap = remember(context) { getWhatsAppIcon(context) },
+                    onClick = { onPickerDismiss(); showAppQuickActions = "whatsapp" }
+                )
+            }
+            if (hasTelegram) {
+                RivoDropdownMenuItem(
+                    text = "Telegram",
+                    iconBitmap = remember(context) { getTelegramIcon(context) },
+                    onClick = { onPickerDismiss(); showAppQuickActions = "telegram" }
+                )
+            }
+            if (!hasWhatsApp && !hasTelegram) {
+                RivoDropdownMenuItem(
+                    text = "No apps installed",
+                    icon = Icons.Default.Info,
+                    onClick = onPickerDismiss
+                )
+            }
+        }
+    }
+
+    if (showAppQuickActions != null) {
+        val app = showAppQuickActions!!
+        val appLabel = if (app == "whatsapp") "WhatsApp" else "Telegram"
+        AppQuickActionsDialog(
+            appName = appLabel,
+            onChat = {
+                showAppQuickActions = null
+                val opened = if (app == "whatsapp") openWhatsAppChat(context, phoneNumber) else openTelegramChat(context, phoneNumber)
+                if (!opened) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onVoiceCall = {
+                showAppQuickActions = null
+                val started = if (app == "whatsapp") startWhatsAppVoiceCall(context, phoneNumber) else startTelegramVoiceCall(context, phoneNumber)
+                if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onVideoCall = {
+                showAppQuickActions = null
+                val started = if (app == "whatsapp") startWhatsAppVideoCall(context, phoneNumber) else startTelegramVideoCall(context, phoneNumber)
+                if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showAppQuickActions = null }
+        )
     }
 }

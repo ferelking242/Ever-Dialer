@@ -485,10 +485,9 @@ fun DialPadContent(
     }
     var showClipboardBanner by remember { mutableStateOf(clipText.length in 7..15) }
     var showOverflowMenu by remember { mutableStateOf(false) }
-    // App picker (WhatsApp/Telegram) shown from the long-press overflow menu, and which app's
-    // Chat/Voice Call/Video Call sheet ("whatsapp"/"telegram") is currently showing, if any.
+    // "Call/Chat Via" app picker (WhatsApp/Telegram), shown from the call button's long-press
+    // and the long-press overflow menu — see CallChatViaOverlay for what happens after a pick.
     var showAppPicker by remember { mutableStateOf(false) }
-    var showAppQuickActions by remember { mutableStateOf<String?>(null) }
     var searchFieldFocused by remember { mutableStateOf(false) }
 
     // When search field is focused, intercept back press to dismiss keyboard and restore dialpad
@@ -706,57 +705,14 @@ fun DialPadContent(
         )
     }
 
-    if (showAppPicker && number.isNotEmpty()) {
-        val hasWhatsApp = remember(context) { isAnyPackageInstalled(context, WHATSAPP_PACKAGES) }
-        val hasTelegram = remember(context) { isTelegramInstalled(context) }
-        RivoDropdownMenu(expanded = showAppPicker, onDismissRequest = { showAppPicker = false }) {
-            if (hasWhatsApp) {
-                RivoDropdownMenuItem(
-                    text = "WhatsApp",
-                    iconBitmap = remember(context) { getWhatsAppIcon(context) },
-                    onClick = { showAppPicker = false; showAppQuickActions = "whatsapp" }
-                )
-            }
-            if (hasTelegram) {
-                RivoDropdownMenuItem(
-                    text = "Telegram",
-                    iconBitmap = remember(context) { getTelegramIcon(context) },
-                    onClick = { showAppPicker = false; showAppQuickActions = "telegram" }
-                )
-            }
-            if (!hasWhatsApp && !hasTelegram) {
-                RivoDropdownMenuItem(
-                    text = "No apps installed",
-                    icon = Icons.Default.Info,
-                    onClick = { showAppPicker = false }
-                )
-            }
-        }
-    }
-
-    if (showAppQuickActions != null && number.isNotEmpty()) {
-        val app = showAppQuickActions!!
-        val appLabel = if (app == "whatsapp") "WhatsApp" else "Telegram"
-        AppQuickActionsDialog(
-            appName = appLabel,
-            onChat = {
-                showAppQuickActions = null
-                val opened = if (app == "whatsapp") openWhatsAppChat(context, number) else openTelegramChat(context, number)
-                if (!opened) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
-            },
-            onVoiceCall = {
-                showAppQuickActions = null
-                val started = if (app == "whatsapp") startWhatsAppVoiceCall(context, number) else startTelegramVoiceCall(context, number)
-                if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
-            },
-            onVideoCall = {
-                showAppQuickActions = null
-                val started = if (app == "whatsapp") startWhatsAppVideoCall(context, number) else startTelegramVideoCall(context, number)
-                if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
-            },
-            onDismiss = { showAppQuickActions = null }
-        )
-    }
+    // "Call/Chat Via" — WhatsApp/Telegram app picker followed by the Chat/Voice Call/Video Call
+    // popup, shared with every other long-press context menu in the app (see CallChatViaOverlay).
+    // Triggered from the call button's long-press and from the "Call/Chat Via" overflow menu item.
+    CallChatViaOverlay(
+        phoneNumber = number.takeIf { it.isNotEmpty() },
+        showPicker = showAppPicker,
+        onPickerDismiss = { showAppPicker = false }
+    )
 
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -951,6 +907,7 @@ fun DialPadContent(
                                     initiateCall(number)
                                 }
                             },
+                            onLongClick = if (number.isNotEmpty()) ({ showAppPicker = true }) else null,
                             icon = Icons.Default.Call,
                             contentDescription = "Call",
                             containerColor = Color(0xFF34A853),
@@ -1335,7 +1292,7 @@ fun DialPadContent(
                             }
                             if (number.isNotEmpty()) {
                                 RivoDropdownMenuItem(
-                                    text     = "Message via App",
+                                    text     = "Call/Chat Via",
                                     icon     = Icons.AutoMirrored.Filled.Chat,
                                     iconTint = MaterialTheme.colorScheme.primary,
                                     onClick  = {
@@ -1411,6 +1368,7 @@ fun DialPadContent(
                                 initiateCall(number)
                             }
                         },
+                        onLongClick = if (number.isNotEmpty()) ({ showAppPicker = true }) else null,
                         icon = Icons.Default.Call,
                         contentDescription = "Call",
                         containerColor = Color(0xFF34A853),

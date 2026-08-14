@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.PhoneCallback
 import androidx.compose.material3.*
@@ -301,6 +302,7 @@ fun ContactListItem(
         prefs.getBoolean(PreferenceManager.KEY_FAKE_CALL_IN_CONTEXT_MENU, false)
     }
     var showFakeCallSheet by remember { mutableStateOf(false) }
+    var showCallChatViaPicker by remember { mutableStateOf(false) }
 
     val scale by animateFloatAsState(
         targetValue = if (showMenu) 0.97f else if (isPressed) 0.97f else 1f,
@@ -466,12 +468,13 @@ fun ContactListItem(
             com.coolappstore.everdialer.by.svhp.controller.util.ContextMenuPrefs.resolvedKeys(
                 prefs,
                 com.coolappstore.everdialer.by.svhp.controller.util.ContextMenuPrefs.SECTION_CONTACTS,
-                listOf("select", "view_contact", "edit_contact", "copy_number", "share_contact", "move_contact", "toggle_favorite", "block_contact", "fake_call", "delete_contact")
+                listOf("select", "view_contact", "edit_contact", "copy_number", "share_contact", "call_chat_via", "move_contact", "toggle_favorite", "block_contact", "fake_call", "delete_contact")
             ).filter { key ->
                 when (key) {
                     "copy_number" -> hasNumber
                     "block_contact" -> hasNumber
                     "fake_call" -> fakeCallInContextMenu
+                    "call_chat_via" -> hasNumber
                     else -> true
                 }
             }
@@ -483,7 +486,7 @@ fun ContactListItem(
         ) {
             fun groupOf(key: String) = when (key) {
                 "select" -> 0
-                "view_contact", "edit_contact", "copy_number", "share_contact" -> 1
+                "view_contact", "edit_contact", "copy_number", "share_contact", "call_chat_via" -> 1
                 "move_contact", "toggle_favorite", "block_contact", "fake_call" -> 2
                 "delete_contact" -> 3
                 else -> 1
@@ -535,6 +538,15 @@ fun ContactListItem(
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             clipboard.setPrimaryClip(ClipData.newPlainText("Phone number", contact.phoneNumbers.first()))
                             Toast.makeText(context, "Number copied", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                    "call_chat_via" -> RivoDropdownMenuItem(
+                        text     = "Call/Chat Via",
+                        icon     = Icons.AutoMirrored.Filled.Chat,
+                        iconTint = Color(0xFF00BFA5),
+                        onClick  = {
+                            showMenu = false
+                            showCallChatViaPicker = true
                         }
                     )
                     "share_contact" -> RivoDropdownMenuItem(
@@ -610,6 +622,12 @@ fun ContactListItem(
             }
         }
     }
+
+    CallChatViaOverlay(
+        phoneNumber = contact.phoneNumbers.firstOrNull()?.takeIf { it.isNotBlank() },
+        showPicker = showCallChatViaPicker,
+        onPickerDismiss = { showCallChatViaPicker = false }
+    )
 } // end AZListContent
 
 @Composable

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.*
@@ -488,6 +489,7 @@ private fun FavoriteContactCard(
         prefs.getBoolean(PreferenceManager.KEY_FAKE_CALL_IN_CONTEXT_MENU, false)
     }
     var showFakeCallSheet by remember { mutableStateOf(false) }
+    var showCallChatViaPicker by remember { mutableStateOf(false) }
 
     val scale by animateFloatAsState(
         targetValue = when {
@@ -661,11 +663,12 @@ private fun FavoriteContactCard(
         com.coolappstore.everdialer.by.svhp.controller.util.ContextMenuPrefs.resolvedKeys(
             prefs,
             com.coolappstore.everdialer.by.svhp.controller.util.ContextMenuPrefs.SECTION_FAVORITES,
-            listOf("select", "call", "send_sms", "view_details", "fake_call", "remove_favorite")
+            listOf("select", "call", "send_sms", "call_chat_via", "view_details", "fake_call", "remove_favorite")
         ).filter { key ->
             when (key) {
                 "send_sms" -> !phoneNumber.isNullOrEmpty()
                 "fake_call" -> fakeCallInContextMenu
+                "call_chat_via" -> !phoneNumber.isNullOrEmpty()
                 else -> true
             }
         }
@@ -713,6 +716,15 @@ private fun FavoriteContactCard(
                             data = android.net.Uri.parse("sms:$phoneNumber")
                         }
                         context.startActivity(intent)
+                    }
+                )
+                "call_chat_via" -> RivoDropdownMenuItem(
+                    text = "Call/Chat Via",
+                    icon = Icons.AutoMirrored.Filled.Chat,
+                    iconTint = Color(0xFF00BFA5),
+                    onClick = {
+                        showMenu = false
+                        showCallChatViaPicker = true
                     }
                 )
                 "view_details" -> RivoDropdownMenuItem(
@@ -765,4 +777,10 @@ private fun FavoriteContactCard(
             }
         )
     }
+
+    com.coolappstore.everdialer.by.svhp.view.components.CallChatViaOverlay(
+        phoneNumber = phoneNumber?.takeIf { it.isNotBlank() },
+        showPicker = showCallChatViaPicker,
+        onPickerDismiss = { showCallChatViaPicker = false }
+    )
 }

@@ -19,6 +19,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -212,6 +213,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
             ContextMenuItemOption("select",          "Select",                    Icons.Default.CheckBox),
             ContextMenuItemOption("call",             "Call",                      Icons.Default.Call),
             ContextMenuItemOption("send_sms",         "Send SMS",                  Icons.Default.Message),
+            ContextMenuItemOption("call_chat_via",    "Call/Chat Via",             Icons.AutoMirrored.Filled.Chat),
             ContextMenuItemOption("view_details",     "View Details",              Icons.Default.Info),
             ContextMenuItemOption("fake_call",        "Fake Call",                 Icons.Outlined.PhoneCallback),
             ContextMenuItemOption("remove_favorite",  "Remove from Favourites",    Icons.Default.Favorite)
@@ -219,6 +221,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
         "call_logs" to listOf(
             ContextMenuItemOption("select",           "Select",                    Icons.Default.CheckBox),
             ContextMenuItemOption("call_back",         "Call back",                 Icons.Default.Call),
+            ContextMenuItemOption("call_chat_via",     "Call/Chat Via",             Icons.AutoMirrored.Filled.Chat),
             ContextMenuItemOption("copy_number",       "Copy number",               Icons.Default.ContentCopy),
             ContextMenuItemOption("add_to_contacts",   "Add to contacts",           Icons.Default.PersonAdd),
             ContextMenuItemOption("block_number",      "Block/Unblock number",      Icons.Default.Block),
@@ -231,6 +234,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
             ContextMenuItemOption("edit_contact",      "Edit contact",              Icons.Default.Edit),
             ContextMenuItemOption("copy_number",       "Copy number",               Icons.Default.ContentCopy),
             ContextMenuItemOption("share_contact",     "Share contact",             Icons.Default.Share),
+            ContextMenuItemOption("call_chat_via",     "Call/Chat Via",             Icons.AutoMirrored.Filled.Chat),
             ContextMenuItemOption("move_contact",      "Move contact",              Icons.Default.DriveFileMove),
             ContextMenuItemOption("toggle_favorite",   "Add/Remove Favourites",     Icons.Default.Favorite),
             ContextMenuItemOption("block_contact",     "Block/Unblock contact",     Icons.Default.Block),

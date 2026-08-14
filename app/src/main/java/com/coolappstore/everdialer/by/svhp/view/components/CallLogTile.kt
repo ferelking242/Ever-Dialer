@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.automirrored.filled.CallMissed
 import androidx.compose.material.icons.automirrored.filled.CallReceived
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.PhoneCallback
 import androidx.compose.foundation.layout.Box
@@ -148,6 +149,7 @@ fun CallLogTile(
     val use24HourTime = remember(settingsVer) { prefs.getBoolean(PreferenceManager.KEY_CALL_TIME_FORMAT_24H, false) }
     val isNumberBlocked = remember(settingsVer, log.number) { BlockedNumbersManager.isBlocked(prefs, log.number) }
     var showFakeCallSheet by remember { mutableStateOf(false) }
+    var showCallChatViaPicker by remember { mutableStateOf(false) }
 
     // Contacts Hider: mask name if enabled and this contact is hidden
     val hideNames = remember(settingsVer) { prefs.getBoolean(PreferenceManager.KEY_CONTACTS_HIDER_HIDE_NAMES, false) }
@@ -233,11 +235,12 @@ fun CallLogTile(
             com.coolappstore.everdialer.by.svhp.controller.util.ContextMenuPrefs.resolvedKeys(
                 prefs,
                 com.coolappstore.everdialer.by.svhp.controller.util.ContextMenuPrefs.SECTION_CALL_LOGS,
-                listOf("select", "call_back", "copy_number", "add_to_contacts", "block_number", "fake_call", "delete_call_log")
+                listOf("select", "call_back", "call_chat_via", "copy_number", "add_to_contacts", "block_number", "fake_call", "delete_call_log")
             ).filter { key ->
                 when (key) {
                     "add_to_contacts" -> !isContact
                     "fake_call" -> fakeCallInContextMenu
+                    "call_chat_via" -> log.number.isNotBlank()
                     else -> true
                 }
             }
@@ -269,6 +272,15 @@ fun CallLogTile(
                         icon     = Icons.Default.Call,
                         iconTint = Color(0xFF4CAF50),
                         onClick  = { showMenu = false; onButtonClick(log) }
+                    )
+                    "call_chat_via" -> RivoDropdownMenuItem(
+                        text     = "Call/Chat Via",
+                        icon     = Icons.AutoMirrored.Filled.Chat,
+                        iconTint = Color(0xFF00BFA5),
+                        onClick  = {
+                            showMenu = false
+                            showCallChatViaPicker = true
+                        }
                     )
                     "copy_number" -> RivoDropdownMenuItem(
                         text     = "Copy number",
@@ -362,4 +374,10 @@ fun CallLogTile(
             }
         )
     }
+
+    CallChatViaOverlay(
+        phoneNumber = log.number.takeIf { it.isNotBlank() },
+        showPicker = showCallChatViaPicker,
+        onPickerDismiss = { showCallChatViaPicker = false }
+    )
 }
