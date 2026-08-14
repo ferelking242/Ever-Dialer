@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.coolappstore.everdialer.by.svhp.controller.util.BlockedNumbersManager
 import com.coolappstore.everdialer.by.svhp.controller.util.FakeCallManager
 import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
 import com.coolappstore.everdialer.by.svhp.controller.util.formatDate
@@ -145,6 +146,7 @@ fun CallLogTile(
         prefs.getBoolean(PreferenceManager.KEY_FAKE_CALL_IN_CONTEXT_MENU, false)
     }
     val use24HourTime = remember(settingsVer) { prefs.getBoolean(PreferenceManager.KEY_CALL_TIME_FORMAT_24H, false) }
+    val isNumberBlocked = remember(settingsVer, log.number) { BlockedNumbersManager.isBlocked(prefs, log.number) }
     var showFakeCallSheet by remember { mutableStateOf(false) }
 
     // Contacts Hider: mask name if enabled and this contact is hidden
@@ -293,12 +295,18 @@ fun CallLogTile(
                         }
                     )
                     "block_number" -> RivoDropdownMenuItem(
-                        text     = "Block number",
-                        icon     = Icons.Default.Block,
-                        iconTint = Color(0xFFFF9800),
+                        text     = if (isNumberBlocked) "Unblock number" else "Block number",
+                        icon     = if (isNumberBlocked) Icons.Default.RemoveCircleOutline else Icons.Default.Block,
+                        iconTint = if (isNumberBlocked) Color(0xFF4CAF50) else Color(0xFFFF9800),
                         onClick  = {
                             showMenu = false
-                            Toast.makeText(context, "Number blocked", Toast.LENGTH_SHORT).show()
+                            if (log.number.isBlank()) return@RivoDropdownMenuItem
+                            BlockedNumbersManager.toggle(context, prefs, log.number)
+                            Toast.makeText(
+                                context,
+                                if (isNumberBlocked) "Number unblocked" else "Number blocked",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     )
                     "fake_call" -> RivoDropdownMenuItem(

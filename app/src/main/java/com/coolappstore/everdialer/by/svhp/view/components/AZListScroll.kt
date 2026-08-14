@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.coolappstore.everdialer.by.svhp.controller.util.BlockedNumbersManager
 import com.coolappstore.everdialer.by.svhp.controller.util.FakeCallManager
 import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
 import com.coolappstore.everdialer.by.svhp.controller.ContactsViewModel
@@ -458,14 +459,18 @@ fun ContactListItem(
         }
 
         val hasNumber = !contact.phoneNumbers.firstOrNull().isNullOrEmpty()
+        val contactNumberBlocked = remember(settingsVer, hasNumber, contact.phoneNumbers) {
+            hasNumber && BlockedNumbersManager.isBlocked(prefs, contact.phoneNumbers.firstOrNull())
+        }
         val contactContextMenuKeys = remember(settingsVer, hasNumber, fakeCallInContextMenu, contact.isFavorite) {
             com.coolappstore.everdialer.by.svhp.controller.util.ContextMenuPrefs.resolvedKeys(
                 prefs,
                 com.coolappstore.everdialer.by.svhp.controller.util.ContextMenuPrefs.SECTION_CONTACTS,
-                listOf("select", "view_contact", "edit_contact", "copy_number", "share_contact", "move_contact", "toggle_favorite", "fake_call", "delete_contact")
+                listOf("select", "view_contact", "edit_contact", "copy_number", "share_contact", "move_contact", "toggle_favorite", "block_contact", "fake_call", "delete_contact")
             ).filter { key ->
                 when (key) {
                     "copy_number" -> hasNumber
+                    "block_contact" -> hasNumber
                     "fake_call" -> fakeCallInContextMenu
                     else -> true
                 }
@@ -479,7 +484,7 @@ fun ContactListItem(
             fun groupOf(key: String) = when (key) {
                 "select" -> 0
                 "view_contact", "edit_contact", "copy_number", "share_contact" -> 1
-                "move_contact", "toggle_favorite", "fake_call" -> 2
+                "move_contact", "toggle_favorite", "block_contact", "fake_call" -> 2
                 "delete_contact" -> 3
                 else -> 1
             }
@@ -562,6 +567,24 @@ fun ContactListItem(
                         onClick  = {
                             showMenu = false
                             showMoveDialog = true
+                        }
+                    )
+                    "block_contact" -> RivoDropdownMenuItem(
+                        text     = if (contactNumberBlocked) "Unblock contact" else "Block contact",
+                        icon     = if (contactNumberBlocked) Icons.Default.RemoveCircleOutline else Icons.Default.Block,
+                        iconTint = if (contactNumberBlocked) Color(0xFF4CAF50) else Color(0xFFFF9800),
+                        isDestructive = false,
+                        onClick  = {
+                            showMenu = false
+                            val number = contact.phoneNumbers.firstOrNull()
+                            if (!number.isNullOrBlank()) {
+                                BlockedNumbersManager.toggle(context, prefs, number)
+                                Toast.makeText(
+                                    context,
+                                    if (contactNumberBlocked) "Contact unblocked" else "Contact blocked",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         }
                     )
                     "fake_call" -> RivoDropdownMenuItem(

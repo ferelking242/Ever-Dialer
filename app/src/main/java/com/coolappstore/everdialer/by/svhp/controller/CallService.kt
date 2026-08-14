@@ -460,15 +460,8 @@ class CallService : InCallService() {
         return (n.startsWith("*") || n.startsWith("#")) && n.endsWith("#")
     }
 
-    private fun isNumberBlocked(number: String): Boolean {
-        val blockedList = prefs.getString(PreferenceManager.KEY_BLOCKED_CONTACTS, "")
-            ?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
-        return blockedList.any { blocked ->
-            val cb = blocked.replace(" ", "").replace("-", "")
-            val cn = number.replace(" ", "").replace("-", "")
-            cn.endsWith(cb) || cb.endsWith(cn)
-        }
-    }
+    private fun isNumberBlocked(number: String): Boolean =
+        com.coolappstore.everdialer.by.svhp.controller.util.BlockedNumbersManager.isBlocked(prefs, number)
 
     private fun launchCallActivity(answeredFromNotification: Boolean = false) {
         val intent = Intent(this, CallActivity::class.java).apply {

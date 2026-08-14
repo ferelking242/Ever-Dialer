@@ -163,6 +163,12 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                 ?: emptyList()
         )
     }
+    // Keep this in sync if a number gets blocked/unblocked elsewhere (Calls tab or Contacts tab
+    // context menus) while this screen is alive in the back stack.
+    LaunchedEffect(rateReviewSettingsVersion) {
+        blockedContactsList = prefs.getString(PreferenceManager.KEY_BLOCKED_CONTACTS, "")
+            ?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+    }
 
     var updateDialogState by remember { mutableStateOf<UpdateDialogState>(UpdateDialogState.Idle) }
     var backupState       by remember { mutableStateOf<BackupDialogState>(BackupDialogState.Idle) }
@@ -481,9 +487,8 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
 
         fun blockNumber(number: String) {
             if (!blockedContactsList.contains(number)) {
-                val updated = blockedContactsList + number
-                blockedContactsList = updated
-                prefs.setString(PreferenceManager.KEY_BLOCKED_CONTACTS, updated.joinToString(","))
+                com.coolappstore.everdialer.by.svhp.controller.util.BlockedNumbersManager.block(context, prefs, number)
+                blockedContactsList = blockedContactsList + number
             }
         }
 
@@ -774,9 +779,8 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                                             if (name != number) Text(number, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                                         }
                                         IconButton(onClick = {
-                                            val updated = blockedContactsList.toMutableList().also { it.removeAt(index) }
-                                            blockedContactsList = updated
-                                            prefs.setString(PreferenceManager.KEY_BLOCKED_CONTACTS, updated.joinToString(","))
+                                            com.coolappstore.everdialer.by.svhp.controller.util.BlockedNumbersManager.unblock(context, prefs, number)
+                                            blockedContactsList = blockedContactsList.toMutableList().also { it.removeAt(index) }
                                         }, modifier = Modifier.size(32.dp)) {
                                             Icon(Icons.Default.Close, "Remove", tint = ColorRed, modifier = Modifier.size(16.dp))
                                         }

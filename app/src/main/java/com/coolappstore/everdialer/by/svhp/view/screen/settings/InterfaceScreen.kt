@@ -221,7 +221,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
             ContextMenuItemOption("call_back",         "Call back",                 Icons.Default.Call),
             ContextMenuItemOption("copy_number",       "Copy number",               Icons.Default.ContentCopy),
             ContextMenuItemOption("add_to_contacts",   "Add to contacts",           Icons.Default.PersonAdd),
-            ContextMenuItemOption("block_number",      "Block number",              Icons.Default.Block),
+            ContextMenuItemOption("block_number",      "Block/Unblock number",      Icons.Default.Block),
             ContextMenuItemOption("fake_call",         "Fake Call",                 Icons.Outlined.PhoneCallback),
             ContextMenuItemOption("delete_call_log",   "Delete from call log",      Icons.Default.Delete)
         ),
@@ -233,6 +233,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
             ContextMenuItemOption("share_contact",     "Share contact",             Icons.Default.Share),
             ContextMenuItemOption("move_contact",      "Move contact",              Icons.Default.DriveFileMove),
             ContextMenuItemOption("toggle_favorite",   "Add/Remove Favourites",     Icons.Default.Favorite),
+            ContextMenuItemOption("block_contact",     "Block/Unblock contact",     Icons.Default.Block),
             ContextMenuItemOption("fake_call",         "Fake Call",                 Icons.Outlined.PhoneCallback),
             ContextMenuItemOption("delete_contact",    "Delete contact",            Icons.Default.Delete)
         )
