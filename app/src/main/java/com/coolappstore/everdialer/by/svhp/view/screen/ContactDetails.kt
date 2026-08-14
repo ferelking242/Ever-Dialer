@@ -54,7 +54,18 @@ import com.coolappstore.everdialer.by.svhp.controller.util.NoteManager
 import com.coolappstore.everdialer.by.svhp.controller.util.QrCodeUtils
 import com.coolappstore.everdialer.by.svhp.controller.util.makeCall
 import com.coolappstore.everdialer.by.svhp.controller.util.placeCallWithSimPreference
+import com.coolappstore.everdialer.by.svhp.controller.util.placeCallWithContactSimPreference
 import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
+import com.coolappstore.everdialer.by.svhp.controller.util.getWhatsAppIcon
+import com.coolappstore.everdialer.by.svhp.controller.util.getTelegramIcon
+import com.coolappstore.everdialer.by.svhp.controller.util.getGoogleMeetIcon
+import com.coolappstore.everdialer.by.svhp.controller.util.openWhatsAppChat
+import com.coolappstore.everdialer.by.svhp.controller.util.openTelegramChat
+import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVoiceCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVideoCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVoiceCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVideoCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startGoogleMeetCall
 import com.coolappstore.everdialer.by.svhp.view.components.*
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -112,6 +123,10 @@ fun ContactDetailsScreen(
     var showNoteEditor by remember { mutableStateOf(false) }
     var showMoveDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var showChooseSimDialog by remember { mutableStateOf(false) }
+    // "chat_app" for the Social card's WhatsApp/Telegram quick-action popup: null when hidden,
+    // otherwise "whatsapp" or "telegram" to say which app's Chat/Voice Call/Video Call sheet to show.
+    var showAppQuickActions by remember { mutableStateOf<String?>(null) }
 
     // Respect Settings → Appearance → "Context Menu Elements" (Contacts section) customization
     // so the actions shown here always match what's configured for the contact's context menu.
@@ -138,7 +153,18 @@ fun ContactDetailsScreen(
     val isFavorite = contact?.isFavorite ?: false
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    val showButton by remember { derivedStateOf { listState.firstVisibleItemIndex > 2 } }
+
+    // Contact Info → "Choose Sim" — per-contact override of which SIM is used to call this
+    // contact. Keyed by the saved contact's id, or the raw number for an unsaved/unknown one, so
+    // both kinds of contacts remember their own choice independently. Defaults to "According to
+    // settings" (falls back to the app-wide default SIM setting).
+    val contactSimKey = contact?.id ?: phoneNumber ?: displayPhone
+    val contactSimChoice = remember(settingsVer, contactSimKey) { prefs.getContactSimChoice(contactSimKey) }
+    // Most recent SIM slot used on a call with this contact, for the "last used SIM for this
+    // contact" option — derived straight from this contact's call log history.
+    val recentSimSlotForContact = remember(contactLogs) {
+        contactLogs.maxByOrNull { it.date }?.simSlot?.takeIf { it >= 0 }
+    }
 
     // Entrance / exit animation
     var screenVisible by remember { mutableStateOf(false) }
@@ -171,7 +197,9 @@ fun ContactDetailsScreen(
     BackHandler { navigateBack() }
 
     val initiateCall = { number: String ->
-        placeCallWithSimPreference(context, number, simPref) {
+        placeCallWithContactSimPreference(
+            context, number, contactSimChoice, simPref, recentSimSlotForContact
+        ) {
             pendingNumber = number; showSimPicker = true
         }
     }
@@ -181,6 +209,38 @@ fun ContactDetailsScreen(
     }
     if (showSimPicker && pendingNumber != null) {
         SimPickerDialog(onDismissRequest = { showSimPicker = false }, onSimSelected = { handle -> makeCall(context, pendingNumber!!, handle); showSimPicker = false })
+    }
+    if (showChooseSimDialog) {
+        ChooseSimDialog(
+            currentChoice = contactSimChoice,
+            onSelect = { choice ->
+                prefs.setContactSimChoice(contactSimKey, choice)
+                showChooseSimDialog = false
+            },
+            onDismiss = { showChooseSimDialog = false }
+        )
+    }
+    if (showAppQuickActions != null && displayPhone != "Unknown") {
+        val app = showAppQuickActions!!
+        AppQuickActionsDialog(
+            appName = if (app == "whatsapp") "WhatsApp" else "Telegram",
+            onChat = {
+                showAppQuickActions = null
+                val opened = if (app == "whatsapp") openWhatsAppChat(context, displayPhone) else openTelegramChat(context, displayPhone)
+                if (!opened) android.widget.Toast.makeText(context, "${if (app == "whatsapp") "WhatsApp" else "Telegram"} isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onVoiceCall = {
+                showAppQuickActions = null
+                val started = if (app == "whatsapp") startWhatsAppVoiceCall(context, displayPhone) else startTelegramVoiceCall(context, displayPhone)
+                if (!started) android.widget.Toast.makeText(context, "${if (app == "whatsapp") "WhatsApp" else "Telegram"} isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onVideoCall = {
+                showAppQuickActions = null
+                val started = if (app == "whatsapp") startWhatsAppVideoCall(context, displayPhone) else startTelegramVideoCall(context, displayPhone)
+                if (!started) android.widget.Toast.makeText(context, "${if (app == "whatsapp") "WhatsApp" else "Telegram"} isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showAppQuickActions = null }
+        )
     }
     if (showQrDialog) {
         QrCodeDialog(name = displayName, phone = displayPhone, email = contact?.emails?.firstOrNull(), onDismiss = { showQrDialog = false })
@@ -469,9 +529,7 @@ fun ContactDetailsScreen(
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                             RivoExpressiveButton(icon = Icons.Default.Chat, iconBitmap = whatsAppIcon, label = "WhatsApp", containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface, onClick = {
                                 if (displayPhone == "Unknown") return@RivoExpressiveButton
-                                if (!openWhatsAppChat(context, displayPhone)) {
-                                    android.widget.Toast.makeText(context, "WhatsApp isn't installed", android.widget.Toast.LENGTH_SHORT).show()
-                                }
+                                showAppQuickActions = "whatsapp"
                             })
                             // Telegram has many third-party clients/forks, so rather than forcing
                             // one specific app this opens Android's own chooser sheet listing
@@ -480,12 +538,10 @@ fun ContactDetailsScreen(
                             // registers to handle tg:// links.
                             RivoExpressiveButton(icon = Icons.Default.Send, iconBitmap = telegramIcon, label = "Telegram", containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface, onClick = {
                                 if (displayPhone == "Unknown") return@RivoExpressiveButton
-                                if (!openTelegramChat(context, displayPhone)) {
-                                    android.widget.Toast.makeText(context, "No Telegram app is installed", android.widget.Toast.LENGTH_SHORT).show()
-                                }
+                                showAppQuickActions = "telegram"
                             })
                             RivoExpressiveButton(icon = Icons.Default.VideoCall, iconBitmap = meetIcon, label = "Meet", containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface, onClick = {
-                                if (!openGoogleMeet(context)) {
+                                if (!startGoogleMeetCall(context, displayPhone)) {
                                     android.widget.Toast.makeText(context, "Google Meet isn't installed", android.widget.Toast.LENGTH_SHORT).show()
                                 }
                             })
@@ -537,6 +593,22 @@ fun ContactDetailsScreen(
                     }
                 }
 
+                // Choose Sim — per-contact override of which SIM is used to call this contact
+                // (saved or unsaved), defaulting to "According to Settings". Available for every
+                // contact, so it always shows here regardless of whether Recent Activity or
+                // Saved In end up rendering around it.
+                item {
+                    RivoExpressiveCard(title = "Choose Sim", icon = Icons.Default.SimCard) {
+                        RivoListItem(
+                            headline = simChoiceLabel(contactSimChoice),
+                            supporting = "Sim used to call this contact",
+                            leadingIcon = Icons.Default.SimCard,
+                            trailingIcon = Icons.Default.ChevronRight,
+                            onClick = { showChooseSimDialog = true }
+                        )
+                    }
+                }
+
                 // Saved In — shows the user which account(s) this contact actually lives in
                 // (Google account(s), SIM, phone storage, etc.), since a contact merged across
                 // multiple sources can be stored in more than one place at once.
@@ -561,8 +633,6 @@ fun ContactDetailsScreen(
 
                 item { Spacer(modifier = Modifier.height(100.dp)) }
             }
-
-            ScrollToTopButton(visible = showButton, onClick = { scope.launch { listState.animateScrollToItem(0) } })
         }
     }
 }
@@ -607,116 +677,4 @@ private fun buildClickableAnnotatedString(text: String): AnnotatedString {
         }
         append(text.substring(lastIdx))
     }
-}
-
-// ── WhatsApp / Telegram "contact through" quick actions ────────────────────
-// Only ever redirects into the target app when it's actually installed — if it's not
-// present, the caller is told (return false) instead of silently doing nothing or bouncing
-// out to a browser/web fallback the user never asked for.
-
-private val WHATSAPP_PACKAGES = setOf("com.whatsapp", "com.whatsapp.w4b")
-
-private fun isAnyPackageInstalled(context: Context, packages: Set<String>): Boolean =
-    packages.any { pkg ->
-        try {
-            context.packageManager.getPackageInfo(pkg, 0)
-            true
-        } catch (_: Exception) { false }
-    }
-
-private fun drawableToImageBitmap(drawable: android.graphics.drawable.Drawable): androidx.compose.ui.graphics.ImageBitmap {
-    val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 96
-    val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 96
-    val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
-    val canvas = android.graphics.Canvas(bitmap)
-    drawable.setBounds(0, 0, canvas.width, canvas.height)
-    drawable.draw(canvas)
-    return bitmap.asImageBitmap()
-}
-
-/** Loads the real launcher icon of whichever WhatsApp variant is installed (WhatsApp or WhatsApp
- *  Business), so the "Social" card can show the actual app icon instead of a generic chat glyph. */
-private fun getWhatsAppIcon(context: Context): androidx.compose.ui.graphics.ImageBitmap? {
-    val pkg = WHATSAPP_PACKAGES.firstOrNull { p ->
-        try { context.packageManager.getPackageInfo(p, 0); true } catch (_: Exception) { false }
-    } ?: return null
-    return try {
-        drawableToImageBitmap(context.packageManager.getApplicationIcon(pkg))
-    } catch (_: Exception) { null }
-}
-
-private const val OFFICIAL_TELEGRAM_PACKAGE = "org.telegram.messenger"
-
-/** Telegram has many third-party clients/forks. Rather than guessing a package name, this
- *  resolves the exact same "tg://resolve" intent used to actually open the chat, and loads the
- *  icon of whichever app is registered to handle it — so the icon shown always matches an app
- *  that will really open. If the official Telegram app is one of the installed handlers, its icon
- *  is used; otherwise the first genuine handler is used. Android's own "Open with…" chooser
- *  (which has its own generic share icon and isn't a real Telegram client) is always excluded. */
-private fun getTelegramIcon(context: Context): androidx.compose.ui.graphics.ImageBitmap? {
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("tg://resolve?phone=0"))
-    val packageManager = context.packageManager
-    val handlers = try {
-        packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
-    } catch (_: Exception) { emptyList() }
-        .mapNotNull { it.activityInfo?.packageName }
-        // Exclude Android's own intent resolver / chooser — it isn't a real Telegram client and
-        // shows a generic "share" glyph, not a Telegram icon.
-        .filterNot { it == "android" || it.startsWith("com.android.internal") || it == context.packageName }
-        .distinct()
-
-    val chosenPackage = handlers.firstOrNull { it == OFFICIAL_TELEGRAM_PACKAGE } ?: handlers.firstOrNull() ?: return null
-
-    return try {
-        drawableToImageBitmap(packageManager.getApplicationIcon(chosenPackage))
-    } catch (_: Exception) { null }
-}
-
-private const val GOOGLE_MEET_PACKAGE = "com.google.android.apps.tachyon"
-
-/** Loads Google Meet's real launcher icon if it's installed. */
-private fun getGoogleMeetIcon(context: Context): androidx.compose.ui.graphics.ImageBitmap? {
-    return try {
-        context.packageManager.getPackageInfo(GOOGLE_MEET_PACKAGE, 0)
-        drawableToImageBitmap(context.packageManager.getApplicationIcon(GOOGLE_MEET_PACKAGE))
-    } catch (_: Exception) { null }
-}
-
-/** Opens the Google Meet app. Returns false (does nothing) if it isn't installed. */
-private fun openGoogleMeet(context: Context): Boolean {
-    val launchIntent = try { context.packageManager.getLaunchIntentForPackage(GOOGLE_MEET_PACKAGE) } catch (_: Exception) { null }
-        ?: return false
-    return try {
-        context.startActivity(launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        true
-    } catch (_: Exception) { false }
-}
-
-/** Opens a WhatsApp chat with [phoneNumber]. Returns false (does nothing) if WhatsApp isn't installed. */
-private fun openWhatsAppChat(context: Context, phoneNumber: String): Boolean {
-    if (!isAnyPackageInstalled(context, WHATSAPP_PACKAGES)) return false
-    val clean = phoneNumber.filter { it.isDigit() || it == '+' }
-    return try {
-        context.startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$clean"))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
-        true
-    } catch (_: Exception) { false }
-}
-
-/** Opens a Telegram chat with [phoneNumber] via Android's own app chooser, so the user can pick
- *  whichever Telegram client/fork they have installed rather than the request being forced into
- *  one specific app. Returns false (does nothing) if no Telegram-capable app is installed. */
-private fun openTelegramChat(context: Context, phoneNumber: String): Boolean {
-    val clean = phoneNumber.filter { it.isDigit() || it == '+' }
-    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("tg://resolve?phone=$clean"))
-    val handlers = try { context.packageManager.queryIntentActivities(intent, 0) } catch (_: Exception) { emptyList() }
-    if (handlers.isEmpty()) return false
-    return try {
-        context.startActivity(
-            Intent.createChooser(intent, "Open with").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
-        true
-    } catch (_: Exception) { false }
 }

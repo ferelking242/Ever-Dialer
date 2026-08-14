@@ -30,6 +30,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.PhoneCallback
 import androidx.compose.material3.*
@@ -76,6 +77,18 @@ import com.coolappstore.everdialer.by.svhp.controller.util.DialpadTonePlayer
 import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
 import com.coolappstore.everdialer.by.svhp.controller.util.makeCall
 import com.coolappstore.everdialer.by.svhp.controller.util.normalizeNumberDigits
+import com.coolappstore.everdialer.by.svhp.controller.util.getWhatsAppIcon
+import com.coolappstore.everdialer.by.svhp.controller.util.getTelegramIcon
+import com.coolappstore.everdialer.by.svhp.controller.util.isAnyPackageInstalled
+import com.coolappstore.everdialer.by.svhp.controller.util.isTelegramInstalled
+import com.coolappstore.everdialer.by.svhp.controller.util.WHATSAPP_PACKAGES
+import com.coolappstore.everdialer.by.svhp.controller.util.openWhatsAppChat
+import com.coolappstore.everdialer.by.svhp.controller.util.openTelegramChat
+import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVoiceCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVideoCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVoiceCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVideoCall
+import com.coolappstore.everdialer.by.svhp.view.components.AppQuickActionsDialog
 import com.coolappstore.everdialer.by.svhp.modal.data.CallLogEntry
 import com.coolappstore.everdialer.by.svhp.view.components.SimPickerDialog
 import com.coolappstore.everdialer.by.svhp.view.components.TopBar
@@ -472,6 +485,10 @@ fun DialPadContent(
     }
     var showClipboardBanner by remember { mutableStateOf(clipText.length in 7..15) }
     var showOverflowMenu by remember { mutableStateOf(false) }
+    // App picker (WhatsApp/Telegram) shown from the long-press overflow menu, and which app's
+    // Chat/Voice Call/Video Call sheet ("whatsapp"/"telegram") is currently showing, if any.
+    var showAppPicker by remember { mutableStateOf(false) }
+    var showAppQuickActions by remember { mutableStateOf<String?>(null) }
     var searchFieldFocused by remember { mutableStateOf(false) }
 
     // When search field is focused, intercept back press to dismiss keyboard and restore dialpad
@@ -686,6 +703,58 @@ fun DialPadContent(
                 FakeCallManager.addEntry(context, prefs, entry, exactTriggerOverride)
                 showFakeCallSheet = false
             }
+        )
+    }
+
+    if (showAppPicker && number.isNotEmpty()) {
+        val hasWhatsApp = remember(context) { isAnyPackageInstalled(context, WHATSAPP_PACKAGES) }
+        val hasTelegram = remember(context) { isTelegramInstalled(context) }
+        RivoDropdownMenu(expanded = showAppPicker, onDismissRequest = { showAppPicker = false }) {
+            if (hasWhatsApp) {
+                RivoDropdownMenuItem(
+                    text = "WhatsApp",
+                    iconBitmap = remember(context) { getWhatsAppIcon(context) },
+                    onClick = { showAppPicker = false; showAppQuickActions = "whatsapp" }
+                )
+            }
+            if (hasTelegram) {
+                RivoDropdownMenuItem(
+                    text = "Telegram",
+                    iconBitmap = remember(context) { getTelegramIcon(context) },
+                    onClick = { showAppPicker = false; showAppQuickActions = "telegram" }
+                )
+            }
+            if (!hasWhatsApp && !hasTelegram) {
+                RivoDropdownMenuItem(
+                    text = "No apps installed",
+                    icon = Icons.Default.Info,
+                    onClick = { showAppPicker = false }
+                )
+            }
+        }
+    }
+
+    if (showAppQuickActions != null && number.isNotEmpty()) {
+        val app = showAppQuickActions!!
+        val appLabel = if (app == "whatsapp") "WhatsApp" else "Telegram"
+        AppQuickActionsDialog(
+            appName = appLabel,
+            onChat = {
+                showAppQuickActions = null
+                val opened = if (app == "whatsapp") openWhatsAppChat(context, number) else openTelegramChat(context, number)
+                if (!opened) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onVoiceCall = {
+                showAppQuickActions = null
+                val started = if (app == "whatsapp") startWhatsAppVoiceCall(context, number) else startTelegramVoiceCall(context, number)
+                if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onVideoCall = {
+                showAppQuickActions = null
+                val started = if (app == "whatsapp") startWhatsAppVideoCall(context, number) else startTelegramVideoCall(context, number)
+                if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showAppQuickActions = null }
         )
     }
 
@@ -1261,6 +1330,17 @@ fun DialPadContent(
                                     onClick  = {
                                         showOverflowMenu = false
                                         showFakeCallSheet = true
+                                    }
+                                )
+                            }
+                            if (number.isNotEmpty()) {
+                                RivoDropdownMenuItem(
+                                    text     = "Message via App",
+                                    icon     = Icons.AutoMirrored.Filled.Chat,
+                                    iconTint = MaterialTheme.colorScheme.primary,
+                                    onClick  = {
+                                        showOverflowMenu = false
+                                        showAppPicker = true
                                     }
                                 )
                             }

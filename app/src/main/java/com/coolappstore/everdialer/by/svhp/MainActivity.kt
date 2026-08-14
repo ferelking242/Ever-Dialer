@@ -56,6 +56,7 @@ import com.coolappstore.everdialer.by.svhp.view.screen.CallActivity
 import com.coolappstore.everdialer.by.svhp.view.components.Android14WelcomeDialog
 import com.coolappstore.everdialer.by.svhp.view.components.TelegramJoinDialog
 import com.coolappstore.everdialer.by.svhp.view.components.FullScreenIntentDialog
+import com.coolappstore.everdialer.by.svhp.view.components.SimPickerDialog
 import com.coolappstore.everdialer.by.svhp.view.components.BottomBar
 import com.coolappstore.everdialer.by.svhp.view.components.enterNotesTab
 import com.coolappstore.everdialer.by.svhp.liquidglass.LocalLiquidGlassBackdrop
@@ -103,6 +104,20 @@ class MainActivity : FragmentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ -> /* permissions result; dialer popup now shown after welcome */ }
 
+    // Holds whatever intent should currently be processed by handleIntent(). Set from onCreate's
+    // initial intent and re-set from onNewIntent() so Compose actually reacts to intents delivered
+    // to an already-running instance (contact/dial shortcuts, "call back" from other apps like
+    // Truecaller, widgets, etc.) — a plain onNewIntent() { setIntent(intent) } does NOT retrigger
+    // the LaunchedEffect below, since Compose has no way to observe a mutation of the Activity's
+    // own `intent` field.
+    private var pendingIntent by mutableStateOf<Intent?>(null)
+
+    // SIM picker for calls placed by external apps (e.g. Truecaller "call back" on a missed
+    // call, Contacts shortcuts) on dual/multi-SIM devices, so an ambiguous outgoing call never
+    // gets left waiting on a system SIM disambiguation prompt hidden behind our own CallActivity.
+    private var showExternalSimPicker by mutableStateOf(false)
+    private var pendingExternalCallNumber by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // enableEdgeToEdge() triggers Adreno GPU driver SIGSEGV on first RenderThread draw.
@@ -112,6 +127,8 @@ class MainActivity : FragmentActivity() {
         requestRequiredPermissions()
         // On first launch, show default dialer prompt first; welcome dialog appears after.
         requestDefaultDialer()
+
+        pendingIntent = intent
 
         setContent {
             Rivo4Theme {
@@ -240,6 +257,23 @@ class MainActivity : FragmentActivity() {
                 var autoDownloadId by remember { mutableStateOf<Long?>(null) }
                 var autoDownloadProgress by remember { mutableFloatStateOf(0f) }
                 var showAutoDownloadProgress by remember { mutableStateOf(false) }
+
+                // ── SIM picker for calls placed by external apps (e.g. Truecaller "call
+                // back" on a missed call, Contacts shortcuts) on dual/multi-SIM devices,
+                // so an ambiguous outgoing call never gets left waiting on a system SIM
+                // disambiguation prompt hidden behind our own CallActivity.
+                if (showExternalSimPicker) {
+                    SimPickerDialog(
+                        onDismissRequest = { showExternalSimPicker = false; pendingExternalCallNumber = null },
+                        onSimSelected = { handle ->
+                            showExternalSimPicker = false
+                            pendingExternalCallNumber?.let {
+                                com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this@MainActivity, it, handle)
+                            }
+                            pendingExternalCallNumber = null
+                        }
+                    )
+                }
 
                 LaunchedEffect(Unit) {
                     val autoCheck = prefs.getBoolean(PreferenceManager.KEY_AUTO_UPDATE_CHECK, true)
@@ -613,8 +647,11 @@ class MainActivity : FragmentActivity() {
                     }
                 } // end outer Box
 
-                LaunchedEffect(intent) {
-                    handleIntent(intent, navController)
+                LaunchedEffect(pendingIntent) {
+                    pendingIntent?.let {
+                        handleIntent(it, navController)
+                        pendingIntent = null
+                    }
                 }
             }
         }
@@ -623,6 +660,7 @@ class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        pendingIntent = intent
     }
 
     private fun resolvePhoneNumberFromContactUri(context: Context, uri: Uri): String? {
@@ -699,7 +737,8 @@ class MainActivity : FragmentActivity() {
                 }
             }
             Intent.ACTION_CALL -> {
-                // Contact widgets/Assistant "call [contact]" shortcuts send ACTION_CALL expecting
+                // Contact widgets/Assistant "call [contact]" shortcuts, and third-party caller-ID
+                // apps like Truecaller "call back" on a missed call, send ACTION_CALL expecting
                 // the call to be placed immediately, not just shown on a dialpad.
                 val number = when {
                     data?.scheme == "tel" -> data.schemeSpecificPart
@@ -708,7 +747,22 @@ class MainActivity : FragmentActivity() {
                 }
                 if (number != null) {
                     navController.navigate(DialPadScreenDestination(initialNumber = number).route)
-                    com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this, number)
+                    val telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+                    val accounts = try { telecomManager.callCapablePhoneAccounts } catch (_: SecurityException) { emptyList() }
+                    if (accounts.size > 1) {
+                        val prefsInstance = org.koin.core.context.GlobalContext.get().get<PreferenceManager>()
+                        val simPref = prefsInstance.getInt(PreferenceManager.KEY_DEFAULT_SIM, prefsInstance.getDefaultSimIndexDefault())
+                        when {
+                            simPref == 1 && accounts.isNotEmpty() -> com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this, number, accounts[0])
+                            simPref == 2 && accounts.size >= 2 -> com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this, number, accounts[1])
+                            else -> {
+                                pendingExternalCallNumber = number
+                                showExternalSimPicker = true
+                            }
+                        }
+                    } else {
+                        com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this, number)
+                    }
                 }
             }
             Intent.ACTION_INSERT -> {

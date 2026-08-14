@@ -937,6 +937,7 @@ fun RivoDropdownMenuItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    iconBitmap: androidx.compose.ui.graphics.ImageBitmap? = null,
     iconTint: Color = MaterialTheme.colorScheme.primary,
     isDestructive: Boolean = false
 ) {
@@ -975,7 +976,7 @@ fun RivoDropdownMenuItem(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (icon != null) {
+            if (icon != null || iconBitmap != null) {
                 // solid = LG on AND dropdown toggle on → fully opaque icon bg
                 // translucent = LG off OR LG on but dropdown toggle off → 0.15f alpha (same as settings icons)
                 val solidMode = liquidGlass2 && lgDropdown
@@ -993,16 +994,24 @@ fun RivoDropdownMenuItem(
 
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = iconBgColor,
+                    color = if (iconBitmap != null) Color.Transparent else iconBgColor,
                     modifier = Modifier.size(34.dp)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector        = icon,
-                            contentDescription = null,
-                            tint               = iconTintColor,
-                            modifier           = Modifier.size(18.dp)
-                        )
+                        if (iconBitmap != null) {
+                            androidx.compose.foundation.Image(
+                                bitmap = iconBitmap,
+                                contentDescription = null,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        } else if (icon != null) {
+                            Icon(
+                                imageVector        = icon,
+                                contentDescription = null,
+                                tint               = iconTintColor,
+                                modifier           = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }

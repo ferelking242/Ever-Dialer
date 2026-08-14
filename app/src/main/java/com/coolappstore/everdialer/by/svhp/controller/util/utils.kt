@@ -84,6 +84,7 @@ fun makeCall(context: Context, number: String, accountHandle: PhoneAccountHandle
     val extras = Bundle()
     if (accountHandle != null) {
         extras.putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, accountHandle)
+        rememberLastUsedSim(context, telecomManager, accountHandle)
     }
     if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
         telecomManager.placeCall(uri, extras)
@@ -92,6 +93,22 @@ fun makeCall(context: Context, number: String, accountHandle: PhoneAccountHandle
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
         context.startActivity(intent)
     }
+}
+
+/** Persists which SIM (1-based index) [accountHandle] corresponds to, so a later call can honor
+ *  the "Choose the last used SIM in previous call" per-contact preference. Best-effort/no-op if
+ *  the handle can't be matched to a call-capable account. */
+private fun rememberLastUsedSim(context: Context, telecomManager: TelecomManager, accountHandle: PhoneAccountHandle) {
+    try {
+        val hasPhoneState = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+        if (!hasPhoneState) return
+        val idx = telecomManager.callCapablePhoneAccounts.indexOf(accountHandle)
+        if (idx >= 0) {
+            context.getSharedPreferences("rivo_prefs", Context.MODE_PRIVATE).edit()
+                .putInt(PreferenceManager.KEY_LAST_USED_SIM_GLOBAL, idx + 1)
+                .apply()
+        }
+    } catch (_: Exception) { /* best-effort only */ }
 }
 
 /**
@@ -120,6 +137,52 @@ fun placeCallWithSimPreference(
         }
     } else {
         makeCall(context, number)
+    }
+}
+
+/**
+ * Places a call for a specific contact, honoring that contact's "Choose Sim" preference
+ * (Contact Info → Choose Sim) before falling back to the app-wide default SIM setting.
+ *
+ * [contactSimChoice] is one of the PreferenceManager.SIM_CHOICE_* constants.
+ * [recentSimSlotForContact] is the 0-based SIM slot of this contact's most recent call log
+ * entry (or null/unknown), used for the "last used SIM for this contact" option.
+ * [globalSimPref] is the app-wide default-SIM setting (0 = ask, 1 = SIM1, 2 = SIM2), used when
+ * the contact's own choice is "According to settings".
+ */
+fun placeCallWithContactSimPreference(
+    context: Context,
+    number: String,
+    contactSimChoice: String,
+    globalSimPref: Int,
+    recentSimSlotForContact: Int?,
+    onShowSimPicker: () -> Unit
+) {
+    val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+    val hasPhoneState = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
+    if (!hasPhoneState) { makeCall(context, number); return }
+
+    val accounts = telecomManager.callCapablePhoneAccounts
+    if (accounts.size <= 1) { makeCall(context, number, accounts.firstOrNull()); return }
+
+    when (contactSimChoice) {
+        PreferenceManager.SIM_CHOICE_ASK -> onShowSimPicker()
+        PreferenceManager.SIM_CHOICE_SIM1 -> makeCall(context, number, accounts[0])
+        PreferenceManager.SIM_CHOICE_SIM2 -> {
+            if (accounts.size >= 2) makeCall(context, number, accounts[1]) else onShowSimPicker()
+        }
+        PreferenceManager.SIM_CHOICE_LAST_FOR_CONTACT -> {
+            val slot = recentSimSlotForContact
+            if (slot != null && slot in accounts.indices) makeCall(context, number, accounts[slot])
+            else onShowSimPicker()
+        }
+        PreferenceManager.SIM_CHOICE_LAST_IN_CALL -> {
+            val lastIdx = context.getSharedPreferences("rivo_prefs", Context.MODE_PRIVATE)
+                .getInt(PreferenceManager.KEY_LAST_USED_SIM_GLOBAL, 0)
+            if (lastIdx in 1..accounts.size) makeCall(context, number, accounts[lastIdx - 1])
+            else onShowSimPicker()
+        }
+        else -> placeCallWithSimPreference(context, number, globalSimPref, onShowSimPicker) // SIM_CHOICE_SETTINGS
     }
 }
 

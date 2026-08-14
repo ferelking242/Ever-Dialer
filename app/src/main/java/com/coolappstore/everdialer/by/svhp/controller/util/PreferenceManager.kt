@@ -82,6 +82,17 @@ class PreferenceManager(context: Context) {
         return if (mode == "specified") match else !match
     }
 
+    /** Per-contact "Choose Sim" preference from the contact info screen (Contact Info → Choose
+     *  Sim, between "Recent Activity" and "Saved In"). [contactKey] should be the contact's id
+     *  for a saved contact, or the raw phone number for an unsaved/unknown number, so both kinds
+     *  of contacts can have their own remembered choice. Defaults to [SIM_CHOICE_SETTINGS], which
+     *  means "fall back to the app-wide default SIM setting". */
+    fun getContactSimChoice(contactKey: String): String =
+        getString(KEY_CONTACT_SIM_CHOICE_PREFIX + contactKey, SIM_CHOICE_SETTINGS) ?: SIM_CHOICE_SETTINGS
+
+    fun setContactSimChoice(contactKey: String, choice: String) =
+        setString(KEY_CONTACT_SIM_CHOICE_PREFIX + contactKey, choice)
+
     /** Returns the user-configured tab order (Settings > Appearance > Tab Sections) as an
      *  ordered list of tab keys (e.g. "favorites", "calls", "contacts", "recordings", "notes").
      *  This is the single source of truth for tab ordering — both the bottom nav bar and the
@@ -103,6 +114,20 @@ class PreferenceManager(context: Context) {
         }
 
         const val KEY_DEFAULT_SIM           = "default_sim"
+        // Contact Info → "Choose Sim" — per-contact override of which SIM is used to call that
+        // specific contact. Key is prefixed per contact (id for saved contacts, raw phone number
+        // for unsaved ones) so every contact can remember its own choice independently.
+        const val KEY_CONTACT_SIM_CHOICE_PREFIX = "contact_sim_choice_"
+        // Global "SIM used in the last call placed from the app" (1 = SIM 1, 2 = SIM 2, 0 = none
+        // yet), written every time a call is placed on a specific SIM. Backs the "Choose the last
+        // used SIM in previous call" per-contact option.
+        const val KEY_LAST_USED_SIM_GLOBAL  = "last_used_sim_global"
+        const val SIM_CHOICE_SETTINGS           = "settings"
+        const val SIM_CHOICE_ASK                = "ask"
+        const val SIM_CHOICE_SIM1               = "sim1"
+        const val SIM_CHOICE_SIM2               = "sim2"
+        const val SIM_CHOICE_LAST_FOR_CONTACT   = "last_for_contact"
+        const val SIM_CHOICE_LAST_IN_CALL       = "last_in_call"
         const val KEY_DYNAMIC_COLORS        = "dynamic_colors"
         const val KEY_AMOLED_MODE           = "amoled_mode"
         const val KEY_SHOW_FIRST_LETTER     = "show_first_letter"

@@ -3,6 +3,7 @@ package com.coolappstore.everdialer.by.svhp.view.screen.settings
 import android.app.Activity
 import android.app.DownloadManager
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -10,6 +11,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1456,6 +1458,35 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                                 onClick = { navigator.navigate(AppSettingsScreenDestination()) }
                             )
                             CardDivider()
+                            RivoListItem(
+                                headline = "Open System Additional Settings",
+                                supporting = "Manage phone accounts in Android system settings",
+                                leadingIcon = Icons.Outlined.Settings,
+                                iconContainerColor = ColorBluGrey,
+                                trailingIcon = Icons.Default.ChevronRight,
+                                onClick = {
+                                    try {
+                                        val intent = Intent().apply {
+                                            component = ComponentName(
+                                                "com.android.phone",
+                                                "com.android.phone.settings.PhoneAccountSettingsActivity"
+                                            )
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        try {
+                                            context.startActivity(
+                                                Intent(android.provider.Settings.ACTION_SETTINGS)
+                                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            )
+                                        } catch (_: Exception) {
+                                            Toast.makeText(context, "Couldn't open system settings", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                            )
+                            CardDivider()
                             val hiderMenuHidden = remember(prefs.settingsChanged.collectAsState().value) {
                                 prefs.getBoolean(PreferenceManager.KEY_CONTACTS_HIDER_HIDE_MENU, false)
                             }
@@ -1483,6 +1514,8 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                                 onClick = { navigator.navigate(FakeCallScreenDestination) }
                             )
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         Spacer(modifier = Modifier.height(8.dp))
 
