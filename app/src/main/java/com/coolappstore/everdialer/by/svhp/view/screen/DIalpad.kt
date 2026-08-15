@@ -57,6 +57,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.font.FontWeight
@@ -89,6 +90,7 @@ import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVideoCal
 import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVoiceCall
 import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVideoCall
 import com.coolappstore.everdialer.by.svhp.view.components.AppQuickActionsDialog
+import com.coolappstore.everdialer.by.svhp.view.components.CallChatViaOverlay
 import com.coolappstore.everdialer.by.svhp.modal.data.CallLogEntry
 import com.coolappstore.everdialer.by.svhp.view.components.SimPickerDialog
 import com.coolappstore.everdialer.by.svhp.view.components.TopBar
@@ -201,6 +203,11 @@ fun DialPadScreen(
     )
     val sheetScope = rememberCoroutineScope()
 
+    // See DialPadContent's `closing` param doc — flipping this (rather than clearing focus from
+    // out here) is what actually reaches the search field's real focus manager, since the sheet
+    // renders in its own separate Dialog window.
+    var dialpadClosing by remember { mutableStateOf(false) }
+
     // Lock the window so the keyboard never pushes the bottom sheet up.
     // WindowCompat.setDecorFitsSystemWindows(false) in MainActivity normally causes
     // the sheet to resize with the IME; overriding softInputMode here prevents that.
@@ -243,6 +250,7 @@ fun DialPadScreen(
     // (quicker) hide animation by the time onDismissRequest fires, so just finish up.
     fun animateDismiss() {
         if (didNavigateAway) return
+        dialpadClosing = true
         finishDismiss()
     }
 
@@ -250,6 +258,7 @@ fun DialPadScreen(
     // sheet's quicker default.
     fun closeWithSlowAnimation() {
         if (didNavigateAway) return
+        dialpadClosing = true
         sheetScope.launch {
             closeProgress.animateTo(1f, slowSlideSpec)
         }.invokeOnCompletion {
@@ -306,6 +315,7 @@ fun DialPadScreen(
                     initialNumber = initialNumber,
                     navigator = navigator,
                     onDismiss = { closeWithSlowAnimation() },
+                    closing = dialpadClosing,
                     // Because this screen's content is a ModalBottomSheet (its own Dialog window), the
                     // NavHost's normal slide/fade destination transition can't visually animate it — a
                     // Dialog window ignores the parent's transition offsets. So instead of navigating
@@ -332,12 +342,30 @@ fun DialPadContent(
     /** Optional override for opening Contact Info (e.g. to play a bottom-sheet hide animation
      *  first when this content is hosted inside [DialPadScreen]'s ModalBottomSheet). Falls back
      *  to a plain [navigator] navigation when this content isn't sheet-hosted. */
-    onNavigateToContact: ((contactId: String?, phoneNumber: String?) -> Unit)? = null
+    onNavigateToContact: ((contactId: String?, phoneNumber: String?) -> Unit)? = null,
+    /** Flips to true right when the hosting sheet (DialPadScreen / Recents' inline quick-dial
+     *  sheet) starts closing, for any dismiss path — X button, swipe, scrim tap, or back. Must be
+     *  read here rather than have the caller clear focus itself: when this content is hosted
+     *  inside a ModalBottomSheet, the sheet renders in its own Dialog window with its own
+     *  LocalFocusManager/LocalSoftwareKeyboardController, separate from the one in the composable
+     *  that hosts the ModalBottomSheet call — clearing focus/hiding the keyboard from out there
+     *  silently misses the search field's real owner, which is what caused the keyboard to
+     *  glitch/flash back open only sometimes (whenever that mismatch happened to matter). */
+    closing: Boolean = false
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val clipboard = LocalClipboardManager.current
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    // See the `closing` param doc above — this is the correctly-scoped focus manager/keyboard
+    // controller for whichever window this content actually lives in.
+    LaunchedEffect(closing) {
+        if (closing) {
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
+        }
+    }
     val contactsVM: ContactsViewModel = koinActivityViewModel()
     val prefs = koinInject<PreferenceManager>()
     val settingsState by prefs.settingsChanged.collectAsState()

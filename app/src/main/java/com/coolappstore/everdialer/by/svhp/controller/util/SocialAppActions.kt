@@ -238,8 +238,74 @@ fun startWhatsAppVideoCall(context: Context, phoneNumber: String): Boolean {
     return openWhatsAppChat(context, phoneNumber)
 }
 
-/** Telegram doesn't expose a public deep link that starts a call directly (unlike WhatsApp's
- *  ContactsContract call rows), so "Voice Call" / "Video Call" open the chat itself — from there
- *  the call button is one tap away. Returns false only if no Telegram-capable app is installed. */
-fun startTelegramVoiceCall(context: Context, phoneNumber: String): Boolean = openTelegramChat(context, phoneNumber)
-fun startTelegramVideoCall(context: Context, phoneNumber: String): Boolean = openTelegramChat(context, phoneNumber)
+/**
+ * Looks up a ContactsContract.Data row that a Telegram-capable app has registered for a synced
+ * contact as a direct call action — the same mechanism findWhatsAppCallDataUri (above) uses for
+ * WhatsApp. Unlike WhatsApp, Telegram (and its forks) don't share one single fixed MIME type
+ * across versions/builds, so instead of an exact-string match this scans for any Data row whose
+ * MIMETYPE merely mentions both "telegram" and "call" — still specific enough to avoid false
+ * positives, but resilient to the exact suffix varying. [wantVideo] prefers a row whose MIMETYPE
+ * also mentions "video" when one exists, falling back to whatever call-shaped row is found.
+ */
+private fun findTelegramCallDataUri(context: Context, phoneNumber: String, wantVideo: Boolean): Uri? {
+    if (!isTelegramInstalled(context)) return null
+    if (!hasReadContactsPermission(context)) return null
+    val digits = phoneNumber.filter { it.isDigit() }
+    if (digits.isEmpty()) return null
+    return try {
+        val cr = context.contentResolver
+        cr.query(
+            ContactsContract.Data.CONTENT_URI,
+            arrayOf(ContactsContract.Data._ID, ContactsContract.Data.CONTACT_ID, ContactsContract.Data.MIMETYPE),
+            null, null, null
+        )?.use { cursor ->
+            val idIdx = cursor.getColumnIndexOrThrow(ContactsContract.Data._ID)
+            val contactIdIdx = cursor.getColumnIndexOrThrow(ContactsContract.Data.CONTACT_ID)
+            val mimeIdx = cursor.getColumnIndexOrThrow(ContactsContract.Data.MIMETYPE)
+            var fallbackUri: Uri? = null
+            while (cursor.moveToNext()) {
+                val mime = cursor.getString(mimeIdx)?.lowercase() ?: continue
+                if (!mime.contains("telegram") || !mime.contains("call")) continue
+                val contactId = cursor.getLong(contactIdIdx)
+                if (!contactHasMatchingNumber(cr, contactId, digits)) continue
+                val uri = ContentUris.withAppendedId(ContactsContract.Data.CONTENT_URI, cursor.getLong(idIdx))
+                if (mime.contains("video") == wantVideo) return uri
+                if (fallbackUri == null) fallbackUri = uri
+            }
+            fallbackUri
+        }
+    } catch (_: Exception) { null }
+}
+
+/** Starts a real Telegram voice call to [phoneNumber] when this contact is Telegram-synced on the
+ *  device with a registered call action (see findTelegramCallDataUri). Falls back to opening the
+ *  Telegram chat (so the user can tap Call themselves) when no direct-call action is available —
+ *  this is the common case, since most Telegram installs don't register one. Returns false only
+ *  if no Telegram-capable app is installed. */
+fun startTelegramVoiceCall(context: Context, phoneNumber: String): Boolean {
+    if (!isTelegramInstalled(context)) return false
+    val uri = findTelegramCallDataUri(context, phoneNumber, wantVideo = false)
+    if (uri != null) {
+        return try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (_: Exception) { openTelegramChat(context, phoneNumber) }
+    }
+    return openTelegramChat(context, phoneNumber)
+}
+
+/** Starts a real Telegram video call to [phoneNumber] when this contact is Telegram-synced on the
+ *  device with a registered call action (see findTelegramCallDataUri). Falls back to opening the
+ *  Telegram chat (so the user can tap Video Call themselves) when no direct-call action is
+ *  available. Returns false only if no Telegram-capable app is installed. */
+fun startTelegramVideoCall(context: Context, phoneNumber: String): Boolean {
+    if (!isTelegramInstalled(context)) return false
+    val uri = findTelegramCallDataUri(context, phoneNumber, wantVideo = true)
+    if (uri != null) {
+        return try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (_: Exception) { openTelegramChat(context, phoneNumber) }
+    }
+    return openTelegramChat(context, phoneNumber)
+}

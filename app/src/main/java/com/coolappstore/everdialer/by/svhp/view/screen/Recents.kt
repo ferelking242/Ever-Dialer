@@ -121,6 +121,10 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
     if (showDialpad) {
         val dialpadSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val dialpadScope = rememberCoroutineScope()
+        // See DialPadContent's `closing` param doc — flipping this (rather than clearing focus
+        // from out here) is what actually reaches the search field's real focus manager, since
+        // the sheet renders in its own separate Dialog window.
+        var dialpadClosing by remember { mutableStateOf(false) }
         // ModalBottomSheet.animateTo(targetValue, animationSpec) is internal, so we drive our own
         // slow, smooth slide + scrim fade over the content instead. Fading the scrim's alpha down
         // alongside the slide (not just translating the content) avoids the dim background
@@ -142,12 +146,14 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
         // Swipe-down / scrim tap / predictive back — sheetState has already played its own
         // (quicker) hide animation by the time onDismissRequest fires, so just finish up.
         fun animateDismissDialpad() {
+            dialpadClosing = true
             finishDismissDialpad()
         }
 
         // Used by the X button — plays our own slow, smooth slide-down.
         fun closeWithSlowAnimation() {
             if (didNavigateAway) return
+            dialpadClosing = true
             dialpadScope.launch {
                 closeProgress.animateTo(1f, slowSlideSpec)
             }.invokeOnCompletion {
@@ -195,6 +201,7 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
                     DialPadContent(
                         navigator = navigator,
                         onDismiss = { closeWithSlowAnimation() },
+                        closing = dialpadClosing,
                         // Play our own slow, smooth slide-down before navigating, same as the main
                         // Dialpad screen does, so tapping a pfp in search results animates smoothly
                         // into Contact Info instead of popping in instantly.
