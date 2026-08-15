@@ -130,9 +130,21 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
         // after the sheet's own hide animation has already finished playing — otherwise the
         // search field keeps its focus and the keyboard stays up for that whole animation before
         // finally hiding. See DialPadScreen's identical fix.
+        //
+        // sheetState.targetValue actually starts at Hidden too, for the single frame before the
+        // sheet's own internal LaunchedEffect calls show() to open it — so naively treating
+        // "target == Hidden" as "closing" misfired on that very first frame and permanently
+        // blocked the search field from ever focusing (via DialPadContent's `closing`-gated
+        // focusProperties) even on a fresh open. hasOpenedOnce guards against that: we only start
+        // treating a Hidden target as a real close once the sheet has reached non-Hidden once.
+        var hasOpenedOnce by remember { mutableStateOf(false) }
         LaunchedEffect(dialpadSheetState) {
             snapshotFlow { dialpadSheetState.targetValue }.collect { target ->
-                if (target == SheetValue.Hidden) dialpadClosing = true
+                if (target != SheetValue.Hidden) {
+                    hasOpenedOnce = true
+                } else if (hasOpenedOnce) {
+                    dialpadClosing = true
+                }
             }
         }
         // ModalBottomSheet.animateTo(targetValue, animationSpec) is internal, so we drive our own

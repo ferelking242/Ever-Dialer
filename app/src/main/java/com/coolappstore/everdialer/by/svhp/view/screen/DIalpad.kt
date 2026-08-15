@@ -69,7 +69,10 @@ import androidx.compose.ui.unit.sp
 import android.view.WindowManager
 import androidx.compose.ui.platform.LocalView
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.navigation.NavController
 import com.coolappstore.everdialer.by.svhp.controller.CallLogViewModel
 import com.coolappstore.everdialer.by.svhp.controller.ContactsViewModel
@@ -214,9 +217,21 @@ fun DialPadScreen(
     // its focus and the keyboard stays up for that whole animation before finally hiding, which is
     // exactly the "sometimes" glitch (X button / back already set dialpadClosing immediately and
     // don't have this gap; only swipe/scrim-tap went through the delayed onDismissRequest path).
+    //
+    // sheetState.targetValue actually starts at Hidden too, for the single frame before the sheet's
+    // own internal LaunchedEffect calls show() to open it — so naively treating "target == Hidden"
+    // as "closing" misfired on that very first frame and permanently blocked the search field from
+    // ever focusing (via DialPadContent's `closing`-gated focusProperties) even on a fresh open.
+    // hasOpenedOnce guards against that: we only start treating a Hidden target as a real close
+    // once the sheet has actually reached a non-Hidden target at least once first.
+    var hasOpenedOnce by remember { mutableStateOf(false) }
     LaunchedEffect(sheetState) {
         snapshotFlow { sheetState.targetValue }.collect { target ->
-            if (target == SheetValue.Hidden) dialpadClosing = true
+            if (target != SheetValue.Hidden) {
+                hasOpenedOnce = true
+            } else if (hasOpenedOnce) {
+                dialpadClosing = true
+            }
         }
     }
 
@@ -366,6 +381,7 @@ fun DialPadContent(
     closing: Boolean = false
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val haptic = LocalHapticFeedback.current
     val clipboard = LocalClipboardManager.current
     val focusManager = LocalFocusManager.current
@@ -376,6 +392,11 @@ fun DialPadContent(
         if (closing) {
             focusManager.clearFocus(force = true)
             keyboardController?.hide()
+            // Compose's keyboardController.hide() goes through the IME's WindowInsetsController
+            // too, but some OEM keyboards/Android builds don't reliably honor it. Going straight
+            // through WindowInsetsControllerCompat on the real Android View is the lower-level,
+            // more forceful equivalent and catches the cases the Compose call alone misses.
+            ViewCompat.getWindowInsetsController(view)?.hide(WindowInsetsCompat.Type.ime())
         }
     }
     val contactsVM: ContactsViewModel = koinActivityViewModel()
