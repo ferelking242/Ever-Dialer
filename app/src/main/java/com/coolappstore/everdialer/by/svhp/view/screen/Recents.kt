@@ -125,6 +125,16 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
         // from out here) is what actually reaches the search field's real focus manager, since
         // the sheet renders in its own separate Dialog window.
         var dialpadClosing by remember { mutableStateOf(false) }
+        // Catch a swipe-down or scrim-tap dismiss the moment the drag/tap decides to close the
+        // sheet (sheetState.targetValue flips to Hidden), not only once onDismissRequest fires
+        // after the sheet's own hide animation has already finished playing — otherwise the
+        // search field keeps its focus and the keyboard stays up for that whole animation before
+        // finally hiding. See DialPadScreen's identical fix.
+        LaunchedEffect(dialpadSheetState) {
+            snapshotFlow { dialpadSheetState.targetValue }.collect { target ->
+                if (target == SheetValue.Hidden) dialpadClosing = true
+            }
+        }
         // ModalBottomSheet.animateTo(targetValue, animationSpec) is internal, so we drive our own
         // slow, smooth slide + scrim fade over the content instead. Fading the scrim's alpha down
         // alongside the slide (not just translating the content) avoids the dim background
@@ -323,7 +333,12 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
                         containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.0f),
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         shape = fabShape,
-                        elevation = FloatingActionButtonDefaults.elevation(0.dp),
+                        elevation = FloatingActionButtonDefaults.elevation(
+                        defaultElevation = 6.dp,
+                        pressedElevation = 6.dp,
+                        focusedElevation = 6.dp,
+                        hoveredElevation = 6.dp
+                    ),
                     ) { Icon(Icons.Default.Dialpad, "Dialpad") }
                 }
             } else {
@@ -335,7 +350,12 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
                         MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     shape = fabShape,
-                    elevation = FloatingActionButtonDefaults.elevation(0.dp),
+                    elevation = FloatingActionButtonDefaults.elevation(
+                        defaultElevation = 6.dp,
+                        pressedElevation = 6.dp,
+                        focusedElevation = 6.dp,
+                        hoveredElevation = 6.dp
+                    ),
                     modifier = baseModifier
                 ) { Icon(Icons.Default.Dialpad, "Dialpad") }
             }

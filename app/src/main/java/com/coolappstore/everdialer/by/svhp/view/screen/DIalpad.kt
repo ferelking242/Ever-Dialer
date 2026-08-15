@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.platform.LocalConfiguration
@@ -207,6 +208,17 @@ fun DialPadScreen(
     // out here) is what actually reaches the search field's real focus manager, since the sheet
     // renders in its own separate Dialog window.
     var dialpadClosing by remember { mutableStateOf(false) }
+    // Catch a swipe-down or scrim-tap dismiss the moment the drag/tap decides to close the sheet
+    // (sheetState.targetValue flips to Hidden), not only once onDismissRequest fires after the
+    // sheet's own hide animation has already finished playing — otherwise the search field keeps
+    // its focus and the keyboard stays up for that whole animation before finally hiding, which is
+    // exactly the "sometimes" glitch (X button / back already set dialpadClosing immediately and
+    // don't have this gap; only swipe/scrim-tap went through the delayed onDismissRequest path).
+    LaunchedEffect(sheetState) {
+        snapshotFlow { sheetState.targetValue }.collect { target ->
+            if (target == SheetValue.Hidden) dialpadClosing = true
+        }
+    }
 
     // Lock the window so the keyboard never pushes the bottom sheet up.
     // WindowCompat.setDecorFitsSystemWindows(false) in MainActivity normally causes
@@ -771,7 +783,13 @@ fun DialPadContent(
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            // Once the hosting sheet starts closing, permanently refuse focus —
+                            // stronger than reactively clearing/hiding after the fact, since it
+                            // guarantees the keyboard can't be re-triggered by window refocus or
+                            // any other later event during the close animation/teardown.
+                            .focusProperties { canFocus = !closing },
                         placeholder = { Text("Search contacts...") },
                         leadingIcon = { Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
                         trailingIcon = {
@@ -980,6 +998,11 @@ fun DialPadContent(
                 onValueChange = { searchQuery = it },
                 modifier = Modifier
                     .weight(1f)
+                    // Once the hosting sheet starts closing, permanently refuse focus — stronger
+                    // than reactively clearing/hiding after the fact, since it guarantees the
+                    // keyboard can't be re-triggered by window refocus or any other later event
+                    // during the close animation/teardown.
+                    .focusProperties { canFocus = !closing }
                     .onFocusChanged { focusState -> searchFieldFocused = focusState.isFocused },
                 placeholder = { Text("Search contacts...") },
                 leadingIcon = { Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },

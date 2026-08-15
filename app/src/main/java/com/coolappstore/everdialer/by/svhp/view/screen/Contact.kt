@@ -198,7 +198,12 @@ fun ContactScreen(navController: NavController, navigator: DestinationsNavigator
                         containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.0f),
                         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         shape = fabShape,
-                        elevation = FloatingActionButtonDefaults.elevation(0.dp),
+                        elevation = FloatingActionButtonDefaults.elevation(
+                        defaultElevation = 6.dp,
+                        pressedElevation = 6.dp,
+                        focusedElevation = 6.dp,
+                        hoveredElevation = 6.dp
+                    ),
                     ) { Icon(Icons.Default.PersonAdd, "Add Contact") }
                 }
             } else {
@@ -210,7 +215,12 @@ fun ContactScreen(navController: NavController, navigator: DestinationsNavigator
                         MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     shape = fabShape,
-                    elevation = FloatingActionButtonDefaults.elevation(0.dp),
+                    elevation = FloatingActionButtonDefaults.elevation(
+                        defaultElevation = 6.dp,
+                        pressedElevation = 6.dp,
+                        focusedElevation = 6.dp,
+                        hoveredElevation = 6.dp
+                    ),
                     modifier = baseModifier
                 ) { Icon(Icons.Default.PersonAdd, "Add Contact") }
             }

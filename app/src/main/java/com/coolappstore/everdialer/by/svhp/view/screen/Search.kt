@@ -153,12 +153,21 @@ fun ContactSearchContent(
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    // Only auto-focus + show the keyboard the very first time this screen is genuinely entered,
+    // not every time it re-enters composition — which also happens when returning here after a
+    // destination pushed on top of it (e.g. tapping a result to open the Dialpad, then closing
+    // the Dialpad) navigates back. Without this guard, LaunchedEffect(Unit) refires on that
+    // return trip and pops the keyboard back open right as the Dialpad page closes.
+    var hasAutoFocused by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-        // Restore the cursor to the end of any already-typed query rather than letting the
-        // newly (re)created text field default the selection back to the very start.
-        queryFieldValue = queryFieldValue.copy(selection = TextRange(queryFieldValue.text.length))
-        keyboardController?.show()
+        if (!hasAutoFocused) {
+            hasAutoFocused = true
+            focusRequester.requestFocus()
+            // Restore the cursor to the end of any already-typed query rather than letting the
+            // newly (re)created text field default the selection back to the very start.
+            queryFieldValue = queryFieldValue.copy(selection = TextRange(queryFieldValue.text.length))
+            keyboardController?.show()
+        }
     }
 
     // ── Precomputed search index over `contacts` ────────────────────────────────────────────
