@@ -174,19 +174,24 @@ object RecordingFileNameFormatter {
         val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME, ContactsContract.PhoneLookup.NUMBER)
 
         return context.contentResolver.query(lookupUri, projection, null, null, null)?.use { cursor ->
-            if (!cursor.moveToFirst()) return@use null
-
-            // Only trust the match if the returned contact's own number actually shares the
-            // normalized digits with the number we looked up.
-            val matchedNumber = runCatching { cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.PhoneLookup.NUMBER)) }.getOrNull()
-            val matchedDigits = matchedNumber?.filter { it.isDigit() }.orEmpty()
-            val queryDigits   = normalized.filter { it.isDigit() }
-            val isPlausibleMatch = matchedDigits.isNotEmpty() && queryDigits.isNotEmpty() &&
-                (matchedDigits.endsWith(queryDigits.takeLast(7)) || queryDigits.endsWith(matchedDigits.takeLast(7)))
-            if (!isPlausibleMatch) return@use null
-
+            // A contact with multiple saved numbers (home/mobile/work) can produce several rows
+            // here, one per raw number PhoneLookup fuzzy-matched against. Only ever checking the
+            // first row meant that if that row's number wasn't a plausible match, the lookup
+            // gave up entirely even when a later row for the same contact matched correctly —
+            // walk every row and accept the first genuine match.
+            val queryDigits = normalized.filter { it.isDigit() }
             val nameIndex = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
-            if (nameIndex != -1) cursor.getString(nameIndex) else null
+            var matchedName: String? = null
+            while (cursor.moveToNext()) {
+                val matchedNumber = runCatching { cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.PhoneLookup.NUMBER)) }.getOrNull()
+                val matchedDigits = matchedNumber?.filter { it.isDigit() }.orEmpty()
+                val isPlausibleMatch = matchedDigits.isNotEmpty() && queryDigits.isNotEmpty() &&
+                    (matchedDigits.endsWith(queryDigits.takeLast(7)) || queryDigits.endsWith(matchedDigits.takeLast(7)))
+                if (!isPlausibleMatch) continue
+                matchedName = if (nameIndex != -1) cursor.getString(nameIndex) else null
+                break
+            }
+            matchedName
         }
     }
 }

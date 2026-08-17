@@ -228,29 +228,39 @@ class CallLogRepository(
         return try {
             contentResolver.query(uri, projection, null, null, null)
                 ?.use { cursor ->
-                    if (cursor.moveToFirst()) {
-                        val idIdx =
-                            cursor.getColumnIndex(ContactsContract.PhoneLookup._ID)
-                        val nameIdx =
-                            cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
-                        val photoIdx =
-                            cursor.getColumnIndex(ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI)
-                        val numberIdx =
-                            cursor.getColumnIndex(ContactsContract.PhoneLookup.NUMBER)
+                    val idIdx =
+                        cursor.getColumnIndex(ContactsContract.PhoneLookup._ID)
+                    val nameIdx =
+                        cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
+                    val photoIdx =
+                        cursor.getColumnIndex(ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI)
+                    val numberIdx =
+                        cursor.getColumnIndex(ContactsContract.PhoneLookup.NUMBER)
 
+                    // A contact with 2+ saved numbers (e.g. home/mobile/work) can produce
+                    // multiple rows here, one per raw number PhoneLookup fuzzy-matched
+                    // against. Checking only the first row meant that if that particular
+                    // row's number wasn't an exact/suffix match to the number actually
+                    // dialed/received, the lookup bailed out entirely — even though a
+                    // later row for the very same contact was a perfect match. This is why
+                    // calling from a contact's 2nd or 3rd saved number could show up as
+                    // "Unknown" in the call log. Walk every row and accept the first
+                    // genuine match instead.
+                    var result: Triple<String?, String?, Long?> = Triple(null, null, null)
+                    while (cursor.moveToNext()) {
                         val matchedRaw = cursor.getString(numberIdx) ?: ""
                         val isMatch = numbersLikelyMatch(queriedDigits, matchedRaw)
 
-                        if (!isMatch) return Triple(null, null, null)
+                        if (!isMatch) continue
 
                         val contactId = cursor.getLong(idIdx)
                         val name = cursor.getString(nameIdx)
                         val photoUri = cursor.getString(photoIdx)
 
-                        Triple(name, photoUri, contactId)
-                    } else {
-                        Triple(null, null, null)
+                        result = Triple(name, photoUri, contactId)
+                        break
                     }
+                    result
                 } ?: Triple(null, null, null)
         } catch (e: Exception) {
             Triple(null, null, null)
