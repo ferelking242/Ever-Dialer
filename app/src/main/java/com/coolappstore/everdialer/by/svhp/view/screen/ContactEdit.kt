@@ -147,7 +147,8 @@ fun ContactEditScreen(
         LazyColumn(
             modifier = Modifier
                 .padding(innerPadding)
-                .fillMaxSize(),
+                .fillMaxSize()
+                .imePadding(),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {

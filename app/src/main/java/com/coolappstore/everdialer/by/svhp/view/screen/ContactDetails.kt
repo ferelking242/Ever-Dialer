@@ -287,6 +287,9 @@ fun ContactDetailsScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Transparent)) {
         Box(modifier = Modifier.fillMaxSize().alpha(screenAlpha).offset(y = screenOffsetY)) {
+
+            // Background image layer sits behind the whole column so it shows through
+            // the transparent header instead of a solid banner.
             Box(modifier = Modifier.fillMaxWidth().height(340.dp)) {
                 AsyncImage(model = contact?.photoUri, contentDescription = null, modifier = Modifier.fillMaxSize().blur(50.dp), contentScale = ContentScale.Crop)
                 Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(colors = listOf(Color.Transparent, MaterialTheme.colorScheme.surface))))
@@ -300,6 +303,50 @@ fun ContactDetailsScreen(
                 verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
                 item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            IconButton(onClick = { navigateBack() }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = { showQrDialog = true }) { Icon(Icons.Outlined.QrCode2, "QR Code") }
+                            if (contact != null) {
+                                IconButton(onClick = { contactsViewModel.toggleFavorite(contact) }) {
+                                    Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite", tint = if (isFavorite) Color.Red else LocalContentColor.current)
+                                }
+                                IconButton(onClick = {
+                                    val intent = Intent(Intent.ACTION_EDIT).apply { data = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contact.id.toLong()) }
+                                    context.startActivity(intent)
+                                }) { Icon(Icons.Default.Edit, "Edit") }
+                            } else if (phoneNumber != null && phoneNumber != "Unknown") {
+                                IconButton(onClick = {
+                                    val intent = Intent(Intent.ACTION_INSERT).apply { type = ContactsContract.RawContacts.CONTENT_TYPE; putExtra(ContactsContract.Intents.Insert.PHONE, phoneNumber) }
+                                    context.startActivity(intent)
+                                }) { Icon(Icons.Default.PersonAdd, "Add Contact") }
+                            }
+                        }
+                    }
+                }
+                item {
                     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Box(modifier = Modifier.size(300.dp), contentAlignment = Alignment.Center) {
                             Box(modifier = Modifier.size(240.dp).background(brush = Brush.radialGradient(colors = listOf(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f), Color.Transparent))).blur(60.dp))
@@ -311,14 +358,51 @@ fun ContactDetailsScreen(
                 }
 
                 item {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        RivoExpressiveButton(icon = Icons.Default.Call, label = "Call", containerColor = MaterialTheme.colorScheme.primaryContainer, onClick = {
-                            if (contact != null && contact.phoneNumbers.size > 1) showNumberPicker = true
-                            else if (displayPhone != "Unknown") initiateCall(displayPhone)
-                        })
-                        RivoExpressiveButton(icon = Icons.AutoMirrored.Filled.Message, label = "Text", containerColor = MaterialTheme.colorScheme.secondaryContainer, onClick = {
-                            if (displayPhone != "Unknown") context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("sms:$displayPhone")))
-                        })
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Surface(
+                            onClick = {
+                                if (contact != null && contact.phoneNumbers.size > 1) showNumberPicker = true
+                                else if (displayPhone != "Unknown") initiateCall(displayPhone)
+                            },
+                            modifier = Modifier.weight(1f).height(64.dp),
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Call, contentDescription = "Call", modifier = Modifier.size(26.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Call", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                        Surface(
+                            onClick = {
+                                if (displayPhone != "Unknown") context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("sms:$displayPhone")))
+                            },
+                            modifier = Modifier.weight(1f).height(64.dp),
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.Message, contentDescription = "Text", modifier = Modifier.size(26.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text("Text", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+                            }
+                        }
                     }
                 }
 
@@ -338,7 +422,7 @@ fun ContactDetailsScreen(
                                         android.widget.Toast.makeText(context, "Number copied", android.widget.Toast.LENGTH_SHORT).show()
                                     }
                                 )
-                                if (index < contact.phoneNumbers.size - 1 || contact.emails.isNotEmpty()) {
+                                if (index < contact.phoneNumbers.size - 1 || contact.emails.isNotEmpty() || contact.addresses.isNotEmpty()) {
                                     HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                                 }
                             }
@@ -346,7 +430,15 @@ fun ContactDetailsScreen(
                                 RivoListItem(headline = email, supporting = "Email", leadingIcon = Icons.Default.Email, onClick = {
                                     context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:$email")))
                                 })
-                                if (index < contact.emails.size - 1) {
+                                if (index < contact.emails.size - 1 || contact.addresses.isNotEmpty()) {
+                                    HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                }
+                            }
+                            contact.addresses.forEachIndexed { index, address ->
+                                RivoListItem(headline = address, supporting = "Address", leadingIcon = Icons.Default.LocationOn, onClick = {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$address")))
+                                })
+                                if (index < contact.addresses.size - 1) {
                                     HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                                 }
                             }
@@ -609,52 +701,6 @@ fun ContactDetailsScreen(
                 }
 
                 item { Spacer(modifier = Modifier.height(100.dp)) }
-            }
-        }
-
-        // Floating header — no solid bar; just a circular back button and a pill of
-        // actions floating over the content, sitting in the transparent status bar area.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                contentAlignment = Alignment.Center
-            ) {
-                IconButton(onClick = { navigateBack() }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                }
-            }
-
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { showQrDialog = true }) { Icon(Icons.Outlined.QrCode2, "QR Code") }
-                if (contact != null) {
-                    IconButton(onClick = { contactsViewModel.toggleFavorite(contact) }) {
-                        Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite", tint = if (isFavorite) Color.Red else LocalContentColor.current)
-                    }
-                    IconButton(onClick = {
-                        val intent = Intent(Intent.ACTION_EDIT).apply { data = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contact.id.toLong()) }
-                        context.startActivity(intent)
-                    }) { Icon(Icons.Default.Edit, "Edit") }
-                } else if (phoneNumber != null && phoneNumber != "Unknown") {
-                    IconButton(onClick = {
-                        val intent = Intent(Intent.ACTION_INSERT).apply { type = ContactsContract.RawContacts.CONTENT_TYPE; putExtra(ContactsContract.Intents.Insert.PHONE, phoneNumber) }
-                        context.startActivity(intent)
-                    }) { Icon(Icons.Default.PersonAdd, "Add Contact") }
-                }
             }
         }
     }
