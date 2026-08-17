@@ -58,6 +58,13 @@ class AppNavigationViewModel(application: Application) : AndroidViewModel(applic
      */
     val onboardingStatus: StateFlow<OnboardingStatus.Status> = _onboardingStatus.asStateFlow()
 
+    // ------ Session-only onboarding skip
+    //
+    // True once the user taps "Skip" on the permissions screen. Kept purely in memory (this
+    // ViewModel is recreated on every fresh app process), so a real app restart forgets the
+    // skip and re-shows the permissions screen if requirements still aren't met.
+    private var sessionSkipped = false
+
     // ------ Refresh
 
     /**
@@ -68,6 +75,15 @@ class AppNavigationViewModel(application: Application) : AndroidViewModel(applic
      * in-app, so the router advances to the next screen without delay.
      */
     fun refresh() {
-        _onboardingStatus.update { OnboardingStatus.getStatus(appContext, preferences) }
+        _onboardingStatus.update { OnboardingStatus.getStatus(appContext, preferences).copy(skipped = sessionSkipped) }
+    }
+
+    /**
+     * Called when the user taps "Skip" on the permissions screen. Lets the app proceed for the
+     * rest of this session even though not every requirement is satisfied; forgotten on restart.
+     */
+    fun skipOnboarding() {
+        sessionSkipped = true
+        refresh()
     }
 }

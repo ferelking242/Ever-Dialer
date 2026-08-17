@@ -44,12 +44,15 @@ object OnboardingStatus {
         val batteryExempted: Boolean,
         val storageSelected: Boolean,
         val shizukuRunning: Boolean,
-        val shizukuPermissionGranted: Boolean
+        val shizukuPermissionGranted: Boolean,
+        val skipped: Boolean = false
     ) {
         /**
          * Returns true only when every prerequisite is satisfied, including the disclaimer.
+         * If the user has explicitly skipped the permissions step, this returns true as well.
          */
         fun isComplete(): Boolean {
+            if (skipped) return disclaimerAccepted
             return disclaimerAccepted &&
                 notificationsGranted &&
                 contactsGranted &&

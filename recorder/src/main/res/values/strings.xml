@@ -73,6 +73,7 @@
     <string name="permissions_title">Permissions Setup</string>
     <string name="permissions_intro">We need a few permissions to start recoding. Tap "Grant Access" and approve each item.</string>
     <string name="permissions_grant_access">Grant Access</string>
+    <string name="permissions_skip">Skip</string>
     <string name="permissions_status_granted">Granted</string>
     <string name="permissions_status_required">Required</string>
 

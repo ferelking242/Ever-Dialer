@@ -408,7 +408,8 @@ fun AppNavigationScreen(openSettingsDirectly: Boolean = false) {
                 )
                 AppScreen.Permissions -> PermissionsScreen(
                     status = onboardingStatus,
-                    onPermissionGranted = { appNavViewModel.refresh() }
+                    onPermissionGranted = { appNavViewModel.refresh() },
+                    onSkip = { appNavViewModel.skipOnboarding() }
                 )
                 AppScreen.Home -> {
                     if (isAppLocked) {

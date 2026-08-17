@@ -31,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -38,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.coolappstore.evercallrecorder.by.svhp.R
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
@@ -53,6 +55,7 @@ import kotlin.system.exitProcess
 fun PermissionsScreen(
     status: OnboardingStatus.Status,
     onPermissionGranted: () -> Unit,
+    onSkip: () -> Unit = onPermissionGranted,
     modifier: Modifier = Modifier,
     viewModel: PermissionsViewModel = viewModel()
 ) {
@@ -119,6 +122,7 @@ fun PermissionsScreen(
     PermissionsContent(
         status = status,
         onGrantAccessButtonClick = grantAccess,
+        onSkipButtonClick = onSkip,
         modifier = modifier
     )
 
@@ -142,6 +146,7 @@ fun PermissionsScreen(
 fun PermissionsContent(
     status: OnboardingStatus.Status,
     onGrantAccessButtonClick: () -> Unit,
+    onSkipButtonClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val primary       = MaterialTheme.colorScheme.primary
@@ -238,6 +243,27 @@ fun PermissionsContent(
                         .clip(CircleShape)
                         .background(onPrimaryCont.copy(alpha = 0.18f))
                 )
+
+                if (onSkipButtonClick != null) {
+                    Surface(
+                        onClick = onSkipButtonClick,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .statusBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 16.dp)
+                            .zIndex(2f),
+                        shape = RoundedCornerShape(50),
+                        color = Color.White.copy(alpha = 0.18f),
+                        contentColor = onPrimaryCont
+                    ) {
+                        Text(
+                            text = stringResource(R.string.permissions_skip),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                }
 
                 Column(
                     modifier = Modifier

@@ -943,6 +943,7 @@ fun DialPadContent(
                                     onClick = { digit ->
                                         insertAtCursor(digit)
                                     },
+                                    onLongClick = if (key == "0") ({ insertAtCursor("+") }) else null,
                                     compact = true
                                 )
                             }
@@ -1394,6 +1395,7 @@ fun DialPadContent(
                                 onClick = { digit ->
                                     insertAtCursor(digit)
                                 },
+                                onLongClick = if (key == "0") ({ insertAtCursor("+") }) else null,
                                 overrideWidth = keyWidth,
                                 overrideHeight = keyHeight,
                                 scaleFactor = scaleFactor
@@ -1586,8 +1588,9 @@ fun DialerActionExpressive(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun DialPadKey(number: String, letters: String, soundPool: SoundPool, context: Context, onClick: (String) -> Unit, compact: Boolean = false, overrideWidth: Dp? = null, overrideHeight: Dp? = null, scaleFactor: Float = 1f) {
+fun DialPadKey(number: String, letters: String, soundPool: SoundPool, context: Context, onClick: (String) -> Unit, onLongClick: (() -> Unit)? = null, compact: Boolean = false, overrideWidth: Dp? = null, overrideHeight: Dp? = null, scaleFactor: Float = 1f) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val prefs = koinInject<PreferenceManager>()
@@ -1603,15 +1606,24 @@ fun DialPadKey(number: String, letters: String, soundPool: SoundPool, context: C
     val mainFontSize = (if (compact) 18f else 22f) * scaleFactor.coerceIn(0.6f, 1.4f)
     val subFontSize = (10f * scaleFactor.coerceIn(0.6f, 1.4f))
     Surface(
-        onClick = {
-            if (prefs.getBoolean(PreferenceManager.KEY_APP_HAPTICS, true)) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            if (prefs.getBoolean(PreferenceManager.KEY_DTMF_TONE, false)) playDtmf(context, number, soundPool, prefs)
-            onClick(number)
-        },
-        modifier = Modifier.size(width = keyWidth, height = keyHeight).scale(scale),
+        modifier = Modifier
+            .size(width = keyWidth, height = keyHeight)
+            .scale(scale)
+            .combinedClickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = {
+                    if (prefs.getBoolean(PreferenceManager.KEY_APP_HAPTICS, true)) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    if (prefs.getBoolean(PreferenceManager.KEY_DTMF_TONE, false)) playDtmf(context, number, soundPool, prefs)
+                    onClick(number)
+                },
+                onLongClick = if (onLongClick != null) ({
+                    if (prefs.getBoolean(PreferenceManager.KEY_APP_HAPTICS, true)) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLongClick()
+                }) else null
+            ),
         shape = RoundedCornerShape(cornerRadius),
-        color = bgColor,
-        interactionSource = interactionSource
+        color = bgColor
     ) {
         Column(verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
             Text(text = number, style = MaterialTheme.typography.headlineMedium.copy(fontSize = mainFontSize.sp), fontWeight = FontWeight.Medium)
