@@ -19,6 +19,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.*
@@ -283,33 +285,8 @@ fun ContactDetailsScreen(
         )
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {},
-                navigationIcon = { IconButton(onClick = { navigateBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null) } },
-                actions = {
-                    IconButton(onClick = { showQrDialog = true }) { Icon(Icons.Outlined.QrCode2, "QR Code") }
-                    if (contact != null) {
-                        IconButton(onClick = { contactsViewModel.toggleFavorite(contact) }) {
-                            Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite", tint = if (isFavorite) Color.Red else LocalContentColor.current)
-                        }
-                        IconButton(onClick = {
-                            val intent = Intent(Intent.ACTION_EDIT).apply { data = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contact.id.toLong()) }
-                            context.startActivity(intent)
-                        }) { Icon(Icons.Default.Edit, "Edit") }
-                    } else if (phoneNumber != null && phoneNumber != "Unknown") {
-                        IconButton(onClick = {
-                            val intent = Intent(Intent.ACTION_INSERT).apply { type = ContactsContract.RawContacts.CONTENT_TYPE; putExtra(ContactsContract.Intents.Insert.PHONE, phoneNumber) }
-                            context.startActivity(intent)
-                        }) { Icon(Icons.Default.PersonAdd, "Add Contact") }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
-            )
-        }
-    ) { innerPadding ->
-        Box(modifier = Modifier.padding(innerPadding).fillMaxSize().alpha(screenAlpha).offset(y = screenOffsetY)) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Transparent)) {
+        Box(modifier = Modifier.fillMaxSize().alpha(screenAlpha).offset(y = screenOffsetY)) {
             Box(modifier = Modifier.fillMaxWidth().height(340.dp)) {
                 AsyncImage(model = contact?.photoUri, contentDescription = null, modifier = Modifier.fillMaxSize().blur(50.dp), contentScale = ContentScale.Crop)
                 Box(modifier = Modifier.fillMaxSize().background(Brush.verticalGradient(colors = listOf(Color.Transparent, MaterialTheme.colorScheme.surface))))
@@ -632,6 +609,52 @@ fun ContactDetailsScreen(
                 }
 
                 item { Spacer(modifier = Modifier.height(100.dp)) }
+            }
+        }
+
+        // Floating header — no solid bar; just a circular back button and a pill of
+        // actions floating over the content, sitting in the transparent status bar area.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center
+            ) {
+                IconButton(onClick = { navigateBack() }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { showQrDialog = true }) { Icon(Icons.Outlined.QrCode2, "QR Code") }
+                if (contact != null) {
+                    IconButton(onClick = { contactsViewModel.toggleFavorite(contact) }) {
+                        Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite", tint = if (isFavorite) Color.Red else LocalContentColor.current)
+                    }
+                    IconButton(onClick = {
+                        val intent = Intent(Intent.ACTION_EDIT).apply { data = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contact.id.toLong()) }
+                        context.startActivity(intent)
+                    }) { Icon(Icons.Default.Edit, "Edit") }
+                } else if (phoneNumber != null && phoneNumber != "Unknown") {
+                    IconButton(onClick = {
+                        val intent = Intent(Intent.ACTION_INSERT).apply { type = ContactsContract.RawContacts.CONTENT_TYPE; putExtra(ContactsContract.Intents.Insert.PHONE, phoneNumber) }
+                        context.startActivity(intent)
+                    }) { Icon(Icons.Default.PersonAdd, "Add Contact") }
+                }
             }
         }
     }
