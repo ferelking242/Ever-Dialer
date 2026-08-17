@@ -203,6 +203,19 @@ class CallLogRepository(
             return Triple(null, null, null)
         }
 
+        // PhoneLookup first (fast, indexed) -- but it's not authoritative. Its own internal
+        // fuzzy-matching algorithm can fail to surface a contact's non-primary saved number at
+        // all (returning zero rows for it), even though that number is a perfectly genuine match
+        // by numbersLikelyMatch -- e.g. a contact's home/work number saved in a different digit
+        // grouping/format than PhoneLookup's normalization expects. When that happens we fall
+        // back to an exhaustive scan of every saved number across every contact, so a call from
+        // ANY of a contact's multiple saved numbers still resolves to that contact's real
+        // name/photo/id instead of being shown as an unsaved/unknown number.
+        return lookupViaPhoneLookup(number) ?: lookupViaAllContactsPhoneNumbers(number)
+            ?: Triple(null, null, null)
+    }
+
+    private fun lookupViaPhoneLookup(number: String): Triple<String?, String?, Long?>? {
         val uri = Uri.withAppendedPath(
             ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
             Uri.encode(number)
@@ -222,7 +235,7 @@ class CallLogRepository(
         // entry. Re-verify with numbersLikelyMatch: exact match always passes, and a suffix
         // match (needed so a contact saved with a country code still matches a plain call-log
         // number, e.g. across a contact's multiple saved numbers) is only trusted when both
-        // numbers are long enough to be real phone numbers — never for short codes.
+        // numbers are long enough to be real phone numbers -- never for short codes.
         val queriedDigits = number.filter { it.isDigit() }
 
         return try {
@@ -241,12 +254,12 @@ class CallLogRepository(
                     // multiple rows here, one per raw number PhoneLookup fuzzy-matched
                     // against. Checking only the first row meant that if that particular
                     // row's number wasn't an exact/suffix match to the number actually
-                    // dialed/received, the lookup bailed out entirely — even though a
+                    // dialed/received, the lookup bailed out entirely -- even though a
                     // later row for the very same contact was a perfect match. This is why
                     // calling from a contact's 2nd or 3rd saved number could show up as
                     // "Unknown" in the call log. Walk every row and accept the first
                     // genuine match instead.
-                    var result: Triple<String?, String?, Long?> = Triple(null, null, null)
+                    var result: Triple<String?, String?, Long?>? = null
                     while (cursor.moveToNext()) {
                         val matchedRaw = cursor.getString(numberIdx) ?: ""
                         val isMatch = numbersLikelyMatch(queriedDigits, matchedRaw)
@@ -261,9 +274,62 @@ class CallLogRepository(
                         break
                     }
                     result
-                } ?: Triple(null, null, null)
+                }
         } catch (e: Exception) {
-            Triple(null, null, null)
+            null
+        }
+    }
+
+    /**
+     * Exhaustive fallback used when PhoneLookup itself doesn't surface a matching row for
+     * [number]. Scans every saved phone number belonging to every contact (via the raw
+     * CommonDataKinds.Phone table, not the fuzzy-matching PhoneLookup provider) and returns the
+     * first contact whose saved number genuinely matches [number] per numbersLikelyMatch -- the
+     * same rule used for a contact's *other* saved numbers everywhere else in the app (e.g.
+     * ContactDetailsScreen's own phoneNumber lookup). This guarantees that calling from any one
+     * of a multi-number contact's saved numbers still shows that contact's name and photo in the
+     * call log, rather than falling through to "Unknown".
+     */
+    private fun lookupViaAllContactsPhoneNumbers(number: String): Triple<String?, String?, Long?>? {
+        val queriedDigits = number.filter { it.isDigit() }
+        if (queriedDigits.isBlank()) return null
+
+        val projection = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+            ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI,
+            ContactsContract.CommonDataKinds.Phone.NUMBER
+        )
+
+        return try {
+            contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                projection,
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                val idIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
+                val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+                val photoIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI)
+                val numberIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+
+                var result: Triple<String?, String?, Long?>? = null
+                while (cursor.moveToNext()) {
+                    val rawNumber = cursor.getString(numberIdx) ?: continue
+                    if (!numbersLikelyMatch(queriedDigits, rawNumber)) continue
+
+                    val contactId = cursor.getLong(idIdx)
+                    val name = cursor.getString(nameIdx)
+                    val photoUri = cursor.getString(photoIdx)
+
+                    result = Triple(name, photoUri, contactId)
+                    break
+                }
+                result
+            }
+        } catch (e: Exception) {
+            null
         }
     }
 }
