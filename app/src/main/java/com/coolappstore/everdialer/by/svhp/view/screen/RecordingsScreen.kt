@@ -176,7 +176,8 @@ fun RecordingsScreen(
             !onboardingStatus.isComplete() -> {
                 PermissionsScreen(
                     status = onboardingStatus,
-                    onPermissionGranted = { appNavViewModel.refresh() }
+                    onPermissionGranted = { appNavViewModel.refresh() },
+                    onSkip = { appNavViewModel.skipOnboarding() }
                 )
             }
             isAppLocked -> {

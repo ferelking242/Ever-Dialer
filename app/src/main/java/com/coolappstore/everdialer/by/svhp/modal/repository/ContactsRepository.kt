@@ -646,11 +646,16 @@ class ContactsRepository(private val contentResolver: ContentResolver, private v
         val queriedDigits = number.filter { it.isDigit() }
 
         contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
+            // A contact with 2+ saved numbers can produce multiple rows here (one per raw
+            // number PhoneLookup fuzzy-matched against). Checking only the first row meant that
+            // if that particular row's number wasn't an exact/suffix match, the lookup bailed
+            // out entirely — even when a later row for the same contact was a perfect match.
+            // Walk every row and accept the first genuine match.
+            while (cursor.moveToNext()) {
                 val matchedRaw = cursor.getString(4) ?: ""
                 val isMatch = numbersLikelyMatch(queriedDigits, matchedRaw)
 
-                if (!isMatch) return null
+                if (!isMatch) continue
 
                 val id = cursor.getString(0)
                 val name = cursor.getString(1)

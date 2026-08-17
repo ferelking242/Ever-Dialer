@@ -8,6 +8,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.ContactsContract
+import android.telephony.PhoneNumberUtils
+import android.telephony.TelephonyManager
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
@@ -88,10 +90,46 @@ fun getGoogleMeetIcon(context: Context): ImageBitmap? {
     } catch (_: Exception) { null }
 }
 
+/** Best-effort device region (e.g. "IN", "US"), preferring the live network over the SIM's home
+ *  country and finally the locale, so numbers typed without a country code can still be resolved
+ *  to a full international number. */
+private fun getDeviceCountryIso(context: Context): String? {
+    return try {
+        val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+        tm?.networkCountryIso?.takeIf { it.isNotBlank() }
+            ?: tm?.simCountryIso?.takeIf { it.isNotBlank() }
+            ?: context.resources.configuration.locales[0]?.country?.takeIf { it.isNotBlank() }
+    } catch (_: Exception) {
+        null
+    }?.uppercase()
+}
+
+/** Turns a locally-typed number (no leading "+") into a full E.164 international number using
+ *  the device's region, e.g. "9807654321" -> "+919807654321" for a device in India. This must
+ *  run through Android's own formatter rather than any manual digit-stripping: naive "drop a
+ *  leading 0" heuristics corrupt numbers where a 0 legitimately appears elsewhere (e.g.
+ *  "9807654321"), and WhatsApp's own web-link handler rejects/mangles numbers that aren't
+ *  already in full international form. Falls back to the plain digits (old behavior) if E.164
+ *  conversion isn't possible, so a number is still passed through rather than blocked entirely. */
+private fun toInternationalNumber(context: Context, phoneNumber: String): String {
+    val trimmed = phoneNumber.trim()
+    if (trimmed.startsWith("+")) return trimmed.filter { it.isDigit() || it == '+' }
+
+    val digitsOnly = trimmed.filter { it.isDigit() }
+    if (digitsOnly.isEmpty()) return digitsOnly
+
+    val countryIso = getDeviceCountryIso(context)
+    if (countryIso != null) {
+        val e164 = try { PhoneNumberUtils.formatNumberToE164(digitsOnly, countryIso) } catch (_: Exception) { null }
+        if (!e164.isNullOrBlank()) return e164
+    }
+    return digitsOnly
+}
+
 /** Opens a WhatsApp chat with [phoneNumber]. Returns false (does nothing) if WhatsApp isn't installed. */
 fun openWhatsAppChat(context: Context, phoneNumber: String): Boolean {
     if (!isAnyPackageInstalled(context, WHATSAPP_PACKAGES)) return false
-    val clean = phoneNumber.filter { it.isDigit() || it == '+' }
+    val clean = toInternationalNumber(context, phoneNumber)
     if (clean.isEmpty()) return false
     return try {
         context.startActivity(

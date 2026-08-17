@@ -11,6 +11,7 @@ package com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
+import com.coolappstore.evercallrecorder.by.svhp.onboarding.OnboardingSession
 import com.coolappstore.evercallrecorder.by.svhp.onboarding.OnboardingStatus
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -60,10 +61,9 @@ class AppNavigationViewModel(application: Application) : AndroidViewModel(applic
 
     // ------ Session-only onboarding skip
     //
-    // True once the user taps "Skip" on the permissions screen. Kept purely in memory (this
-    // ViewModel is recreated on every fresh app process), so a real app restart forgets the
-    // skip and re-shows the permissions screen if requirements still aren't met.
-    private var sessionSkipped = false
+    // Backed by OnboardingSession, a plain in-memory object that lives exactly as long as the
+    // app process. Surviving Activity/ViewModel recreation but always reset on a real app
+    // restart, so a fresh launch re-shows the permissions screen if requirements still aren't met.
 
     // ------ Refresh
 
@@ -75,7 +75,7 @@ class AppNavigationViewModel(application: Application) : AndroidViewModel(applic
      * in-app, so the router advances to the next screen without delay.
      */
     fun refresh() {
-        _onboardingStatus.update { OnboardingStatus.getStatus(appContext, preferences).copy(skipped = sessionSkipped) }
+        _onboardingStatus.update { OnboardingStatus.getStatus(appContext, preferences).copy(skipped = OnboardingSession.skipped) }
     }
 
     /**
@@ -83,7 +83,7 @@ class AppNavigationViewModel(application: Application) : AndroidViewModel(applic
      * rest of this session even though not every requirement is satisfied; forgotten on restart.
      */
     fun skipOnboarding() {
-        sessionSkipped = true
+        OnboardingSession.skipped = true
         refresh()
     }
 }

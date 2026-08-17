@@ -406,13 +406,19 @@ fun DialPadContent(
     // search-result row (saved contact or non-contact) should open Contact Info instead of
     // placing a call directly — same behaviour Recents/Favorites already apply.
     val directCallOnTap = remember(settingsState) { prefs.getBoolean(PreferenceManager.KEY_DIRECT_CALL_ON_TAP, true) }
+    // Settings → App Settings → Appearance → "Dialpad Memory". When on (default), the typed
+    // number survives the Dialpad being closed or a call being placed. When off, the Dialpad is
+    // wiped clean in both of those cases.
+    val dialpadMemoryEnabled = remember(settingsState) { prefs.getBoolean(PreferenceManager.KEY_DIALPAD_MEMORY, true) }
 
     val allContacts by contactsVM.allContacts.collectAsState()
     fun navigateToContact(contactId: String? = null, phoneNumber: String? = null) {
         if (onNavigateToContact != null) onNavigateToContact(contactId, phoneNumber)
         else navigator?.navigate(ContactDetailsScreenDestination(contactId = contactId, phoneNumber = phoneNumber))
     }
-    var number by remember { mutableStateOf(initialNumber ?: DialpadDraftHolder.pendingNumber) }
+    var number by remember {
+        mutableStateOf(initialNumber ?: if (dialpadMemoryEnabled) DialpadDraftHolder.pendingNumber else "")
+    }
     // Where new digits get inserted / backspace deletes from. Defaults to the end of the number
     // (normal typing behaviour), but the user can tap anywhere in the number to move it, so they
     // can fill in a missing digit in the middle without having to delete and retype everything.
@@ -438,8 +444,25 @@ fun DialPadContent(
         cursorPosition = text.length
     }
     // Keep the draft holder in sync so dismissing the sheet (including swipe-down-to-dismiss)
-    // and reopening it restores whatever digits were typed, instead of clearing them.
-    LaunchedEffect(number) { DialpadDraftHolder.pendingNumber = number }
+    // and reopening it restores whatever digits were typed, instead of clearing them — but only
+    // when Dialpad Memory is on. When it's off, never let anything typed reach the holder, so a
+    // stale number can't leak back in the next time the Dialpad opens.
+    LaunchedEffect(number, dialpadMemoryEnabled) {
+        DialpadDraftHolder.pendingNumber = if (dialpadMemoryEnabled) number else ""
+    }
+    // Dialpad Memory off: wipe the typed number the moment the hosting sheet starts closing
+    // (X button, swipe, scrim tap, or back), for any dismiss path.
+    LaunchedEffect(closing, dialpadMemoryEnabled) {
+        if (closing && !dialpadMemoryEnabled) {
+            replaceNumber("")
+        }
+    }
+    // Dialpad Memory off: wipe the typed number once a call has actually been dispatched, so
+    // reopening the Dialpad (without the sheet ever fully closing, e.g. from Recents) also
+    // starts blank.
+    fun forgetNumberIfMemoryDisabled() {
+        if (!dialpadMemoryEnabled) replaceNumber("")
+    }
 
     // Collect USSD / MMI responses from CallService and show inline dialog
     val ussdResult by UssdRepository.response.collectAsState()
@@ -529,8 +552,8 @@ fun DialPadContent(
         if (accounts.size > 1) {
             val simPref = prefs.getInt(PreferenceManager.KEY_DEFAULT_SIM, prefs.getDefaultSimIndexDefault())
             when {
-                simPref == 1 && accounts.size >= 1 -> makeCall(context, num, accounts[0])
-                simPref == 2 && accounts.size >= 2 -> makeCall(context, num, accounts[1])
+                simPref == 1 && accounts.size >= 1 -> { makeCall(context, num, accounts[0]); forgetNumberIfMemoryDisabled() }
+                simPref == 2 && accounts.size >= 2 -> { makeCall(context, num, accounts[1]); forgetNumberIfMemoryDisabled() }
                 else -> {
                     pendingSearchCallNumber = num
                     showSimPicker = true
@@ -538,6 +561,7 @@ fun DialPadContent(
             }
         } else {
             makeCall(context, num)
+            forgetNumberIfMemoryDisabled()
         }
     }
 
@@ -599,7 +623,10 @@ fun DialPadContent(
             val hasPhoneState = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
             if (hasPhoneState) {
                 placeCallWithSimPreference(numToCall)
-            } else makeCall(context, numToCall)
+            } else {
+                makeCall(context, numToCall)
+                forgetNumberIfMemoryDisabled()
+            }
         } else {
             pendingSearchCallNumber = null
         }
@@ -736,7 +763,10 @@ fun DialPadContent(
             val hasPhoneState = ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
             if (hasPhoneState) {
                 placeCallWithSimPreference(cleanNum)
-            } else makeCall(context, cleanNum)
+            } else {
+                makeCall(context, cleanNum)
+                forgetNumberIfMemoryDisabled()
+            }
         } else {
             pendingSearchCallNumber = cleanNum
             callPermissionLauncher.launch(arrayOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_PHONE_STATE))
@@ -750,6 +780,7 @@ fun DialPadContent(
                 makeCall(context, pendingSearchCallNumber ?: number, handle)
                 pendingSearchCallNumber = null
                 showSimPicker = false
+                forgetNumberIfMemoryDisabled()
             }
         )
     }

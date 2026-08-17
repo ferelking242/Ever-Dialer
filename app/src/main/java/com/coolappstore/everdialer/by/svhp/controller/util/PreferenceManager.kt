@@ -188,6 +188,10 @@ class PreferenceManager(context: Context) {
         const val KEY_AUTO_UPDATE_CHECK     = "auto_update_check"
         const val KEY_PILL_NAV              = "pill_style_nav"
         const val KEY_SHOW_SIMS_IN_CALL_LOGS = "show_sims_in_call_logs"
+        // Dialpad Memory — on by default. When on, whatever digits are typed into the Dialpad
+        // stay there after the sheet is closed or a call is placed, so reopening the Dialpad
+        // shows the same number again. When off, the Dialpad is wiped in both of those cases.
+        const val KEY_DIALPAD_MEMORY        = "dialpad_memory"
         // Auto Delete Unknown No in call log — off by default. When on, call log entries from
         // numbers that aren't saved contacts get auto-deleted once older than the configured
         // threshold. Only applies going forward from the moment it's turned on (see

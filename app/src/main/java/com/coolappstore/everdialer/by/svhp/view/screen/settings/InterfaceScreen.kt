@@ -114,6 +114,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
     var iconOnlyNav         by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_ICON_ONLY_NAV, false)) }
     var pillNav             by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_PILL_NAV, true)) }
     var showSimsInCallLogs  by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_SHOW_SIMS_IN_CALL_LOGS, prefs.getShowSimsInCallLogsDefault())) }
+    var dialpadMemory  by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_DIALPAD_MEMORY, true)) }
     var autoDeleteUnknownEnabled by remember { mutableStateOf(prefs.getBoolean(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_ENABLED, false)) }
     var autoDeleteUnknownValue   by remember { mutableStateOf(prefs.getInt(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_VALUE, 1).toString()) }
     var autoDeleteUnknownUnit    by remember { mutableStateOf(prefs.getString(PreferenceManager.KEY_AUTO_DELETE_UNKNOWN_CALLS_UNIT, "days") ?: "days") }
@@ -1227,6 +1228,20 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                                     onCheckedChange = {
                                         showSimsInCallLogs = it
                                         prefs.setBoolean(PreferenceManager.KEY_SHOW_SIMS_IN_CALL_LOGS, it)
+                                    }
+                                )
+                                HorizontalDivider(Modifier.padding(horizontal = 16.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                RivoSwitchListItem(
+                                    headline = "Dialpad Memory",
+                                    supporting = "Keep the typed number in the Dialpad after closing it or calling",
+                                    leadingIcon = Icons.Outlined.Dialpad,
+                                    iconContainerColor = ColorBlue,
+                                    checked = dialpadMemory,
+                                    modifier = Modifier.settingsSearchHighlight("dialpad_memory", highlightedKey) { highlightedKey = null },
+                                    onCheckedChange = {
+                                        dialpadMemory = it
+                                        prefs.setBoolean(PreferenceManager.KEY_DIALPAD_MEMORY, it)
                                     }
                                 )
                                 HorizontalDivider(Modifier.padding(horizontal = 16.dp),
