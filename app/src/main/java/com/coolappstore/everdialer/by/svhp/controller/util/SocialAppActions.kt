@@ -82,6 +82,9 @@ fun isTelegramInstalled(context: Context): Boolean {
     return handlers.isNotEmpty()
 }
 
+/** True if Google Meet is installed on the device. */
+fun isGoogleMeetInstalled(context: Context): Boolean = isPackageInstalled(context, GOOGLE_MEET_PACKAGE)
+
 /** Loads Google Meet's real launcher icon if it's installed. */
 fun getGoogleMeetIcon(context: Context): ImageBitmap? {
     return try {
@@ -186,6 +189,72 @@ fun startGoogleMeetCall(context: Context, phoneNumber: String): Boolean {
     } catch (_: Exception) {
         openGoogleMeetApp(context)
     }
+}
+
+private const val MIME_MEET_VIDEO_CALL = "vnd.android.cursor.item/com.google.android.apps.tachyon.phone"
+private const val MIME_MEET_AUDIO_CALL = "vnd.android.cursor.item/com.google.android.apps.tachyon.phone.audio"
+
+/**
+ * Looks up the ContactsContract.Data row Google Meet itself registers for a synced contact —
+ * the same mechanism the stock Contacts app uses to show "Voice call" / "Video call" through Meet
+ * as native quick actions, so firing ACTION_VIEW on it starts a real Meet call directly instead of
+ * only opening the app. Mirrors [findWhatsAppCallDataUri].
+ */
+private fun findGoogleMeetCallDataUri(context: Context, phoneNumber: String, mimeType: String): Uri? {
+    if (!isGoogleMeetInstalled(context)) return null
+    if (!hasReadContactsPermission(context)) return null
+    val digits = phoneNumber.filter { it.isDigit() }
+    if (digits.isEmpty()) return null
+    return try {
+        val cr = context.contentResolver
+        cr.query(
+            ContactsContract.Data.CONTENT_URI,
+            arrayOf(ContactsContract.Data._ID, ContactsContract.Data.CONTACT_ID),
+            "${ContactsContract.Data.MIMETYPE} = ?",
+            arrayOf(mimeType),
+            null
+        )?.use { cursor ->
+            while (cursor.moveToNext()) {
+                val dataId = cursor.getLong(0)
+                val contactId = cursor.getLong(1)
+                if (contactHasMatchingNumber(cr, contactId, digits)) {
+                    return ContentUris.withAppendedId(ContactsContract.Data.CONTENT_URI, dataId)
+                }
+            }
+            null
+        }
+    } catch (_: Exception) { null }
+}
+
+/** Starts a real Google Meet voice call to [phoneNumber] if this contact is Meet-synced on the
+ *  device. Falls back to [startGoogleMeetCall] (which still places a real Meet call, just not
+ *  necessarily voice-only) when no direct-call shortcut is registered for this contact. Returns
+ *  false only if Google Meet isn't installed at all. */
+fun startGoogleMeetVoiceCall(context: Context, phoneNumber: String): Boolean {
+    if (!isGoogleMeetInstalled(context)) return false
+    val uri = findGoogleMeetCallDataUri(context, phoneNumber, MIME_MEET_AUDIO_CALL)
+    if (uri != null) {
+        return try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (_: Exception) { startGoogleMeetCall(context, phoneNumber) }
+    }
+    return startGoogleMeetCall(context, phoneNumber)
+}
+
+/** Starts a real Google Meet video call to [phoneNumber] if this contact is Meet-synced on the
+ *  device. Falls back to [startGoogleMeetCall] when no direct-call shortcut is registered for this
+ *  contact. Returns false only if Google Meet isn't installed at all. */
+fun startGoogleMeetVideoCall(context: Context, phoneNumber: String): Boolean {
+    if (!isGoogleMeetInstalled(context)) return false
+    val uri = findGoogleMeetCallDataUri(context, phoneNumber, MIME_MEET_VIDEO_CALL)
+    if (uri != null) {
+        return try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            true
+        } catch (_: Exception) { startGoogleMeetCall(context, phoneNumber) }
+    }
+    return startGoogleMeetCall(context, phoneNumber)
 }
 
 private fun hasReadContactsPermission(context: Context) =

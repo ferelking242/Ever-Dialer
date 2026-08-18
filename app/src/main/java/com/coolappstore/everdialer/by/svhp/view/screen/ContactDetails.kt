@@ -67,7 +67,8 @@ import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVoiceCal
 import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVideoCall
 import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVoiceCall
 import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVideoCall
-import com.coolappstore.everdialer.by.svhp.controller.util.startGoogleMeetCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startGoogleMeetVoiceCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startGoogleMeetVideoCall
 import com.coolappstore.everdialer.by.svhp.view.components.*
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
@@ -224,22 +225,37 @@ fun ContactDetailsScreen(
     }
     if (showAppQuickActions != null && displayPhone != "Unknown") {
         val app = showAppQuickActions!!
+        val appLabel = when (app) {
+            "whatsapp" -> "WhatsApp"
+            "telegram" -> "Telegram"
+            else -> "Google Meet"
+        }
         AppQuickActionsDialog(
-            appName = if (app == "whatsapp") "WhatsApp" else "Telegram",
-            onChat = {
-                showAppQuickActions = null
-                val opened = if (app == "whatsapp") openWhatsAppChat(context, displayPhone) else openTelegramChat(context, displayPhone)
-                if (!opened) android.widget.Toast.makeText(context, "${if (app == "whatsapp") "WhatsApp" else "Telegram"} isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+            appName = appLabel,
+            onChat = if (app == "googlemeet") null else {
+                {
+                    showAppQuickActions = null
+                    val opened = if (app == "whatsapp") openWhatsAppChat(context, displayPhone) else openTelegramChat(context, displayPhone)
+                    if (!opened) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+                }
             },
             onVoiceCall = {
                 showAppQuickActions = null
-                val started = if (app == "whatsapp") startWhatsAppVoiceCall(context, displayPhone) else startTelegramVoiceCall(context, displayPhone)
-                if (!started) android.widget.Toast.makeText(context, "${if (app == "whatsapp") "WhatsApp" else "Telegram"} isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+                val started = when (app) {
+                    "whatsapp" -> startWhatsAppVoiceCall(context, displayPhone)
+                    "telegram" -> startTelegramVoiceCall(context, displayPhone)
+                    else -> startGoogleMeetVoiceCall(context, displayPhone)
+                }
+                if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
             },
             onVideoCall = {
                 showAppQuickActions = null
-                val started = if (app == "whatsapp") startWhatsAppVideoCall(context, displayPhone) else startTelegramVideoCall(context, displayPhone)
-                if (!started) android.widget.Toast.makeText(context, "${if (app == "whatsapp") "WhatsApp" else "Telegram"} isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+                val started = when (app) {
+                    "whatsapp" -> startWhatsAppVideoCall(context, displayPhone)
+                    "telegram" -> startTelegramVideoCall(context, displayPhone)
+                    else -> startGoogleMeetVideoCall(context, displayPhone)
+                }
+                if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
             },
             onDismiss = { showAppQuickActions = null }
         )
@@ -610,9 +626,8 @@ fun ContactDetailsScreen(
                                 showAppQuickActions = "telegram"
                             })
                             RivoExpressiveButton(icon = Icons.Default.VideoCall, iconBitmap = meetIcon, label = "Meet", containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface, onClick = {
-                                if (!startGoogleMeetCall(context, displayPhone)) {
-                                    android.widget.Toast.makeText(context, "Google Meet isn't installed", android.widget.Toast.LENGTH_SHORT).show()
-                                }
+                                if (displayPhone == "Unknown") return@RivoExpressiveButton
+                                showAppQuickActions = "googlemeet"
                             })
                         }
                     }

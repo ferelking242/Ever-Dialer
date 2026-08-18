@@ -7,7 +7,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.VideoCall
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.outlined.PhoneCallback
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -21,25 +23,31 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.coolappstore.everdialer.by.svhp.controller.util.WHATSAPP_PACKAGES
+import com.coolappstore.everdialer.by.svhp.controller.util.getGoogleMeetIcon
 import com.coolappstore.everdialer.by.svhp.controller.util.getTelegramIcon
 import com.coolappstore.everdialer.by.svhp.controller.util.getWhatsAppIcon
 import com.coolappstore.everdialer.by.svhp.controller.util.isAnyPackageInstalled
+import com.coolappstore.everdialer.by.svhp.controller.util.isGoogleMeetInstalled
 import com.coolappstore.everdialer.by.svhp.controller.util.isTelegramInstalled
 import com.coolappstore.everdialer.by.svhp.controller.util.openTelegramChat
 import com.coolappstore.everdialer.by.svhp.controller.util.openWhatsAppChat
+import com.coolappstore.everdialer.by.svhp.controller.util.startGoogleMeetVideoCall
+import com.coolappstore.everdialer.by.svhp.controller.util.startGoogleMeetVoiceCall
 import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVideoCall
 import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVoiceCall
 import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVideoCall
 import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVoiceCall
 
 /**
- * Floating popup shown after tapping WhatsApp/Telegram (Contact Info → Social, or the Dialpad's
- * long-press menu), offering the three ways to reach the person through that app.
+ * Floating popup shown after tapping WhatsApp/Telegram/Google Meet (Contact Info → Social, or the
+ * Dialpad's long-press menu), offering the ways to reach the person through that app. [onChat] is
+ * null for apps that don't have a chat concept (Google Meet), which hides that row — matching how
+ * Google's own Contacts app only offers "Voice call" / "Video call" for Meet.
  */
 @Composable
 fun AppQuickActionsDialog(
     appName: String,
-    onChat: () -> Unit,
+    onChat: (() -> Unit)? = null,
     onVoiceCall: () -> Unit,
     onVideoCall: () -> Unit,
     onDismiss: () -> Unit
@@ -58,7 +66,9 @@ fun AppQuickActionsDialog(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
                 )
-                AppQuickActionRow(icon = Icons.AutoMirrored.Filled.Chat, label = "Chat", onClick = onChat)
+                if (onChat != null) {
+                    AppQuickActionRow(icon = Icons.AutoMirrored.Filled.Chat, label = "Chat", onClick = onChat)
+                }
                 AppQuickActionRow(icon = Icons.Default.Call, label = "Voice Call", onClick = onVoiceCall)
                 AppQuickActionRow(icon = Icons.Default.Videocam, label = "Video Call", onClick = onVideoCall)
                 Spacer(Modifier.height(8.dp))
@@ -96,12 +106,21 @@ private fun AppQuickActionRow(icon: androidx.compose.ui.graphics.vector.ImageVec
  * [showPicker] is owned by the caller (typically toggled true from a menu item's onClick, right
  * after that menu closes itself). Once an app is chosen here, the Chat/Voice Call/Video Call
  * dialog is tracked internally and needs no further involvement from the caller.
+ *
+ * [showGoogleMeet] additionally lists a "Google Meet" entry below Telegram; tapping it opens the
+ * same Voice Call / Video Call popup as WhatsApp/Telegram (no Chat row, since Meet has none) and
+ * places a real Meet call the same way Google's own Contacts app does. [showFakeCall] additionally
+ * lists a "Fake Call" entry below Google Meet, invoking [onFakeCall] on tap — off by default since
+ * only the Dialpad's call button long-press opts into it.
  */
 @Composable
 fun CallChatViaOverlay(
     phoneNumber: String?,
     showPicker: Boolean,
-    onPickerDismiss: () -> Unit
+    onPickerDismiss: () -> Unit,
+    showGoogleMeet: Boolean = false,
+    showFakeCall: Boolean = false,
+    onFakeCall: (() -> Unit)? = null
 ) {
     if (phoneNumber.isNullOrBlank()) return
     val context = LocalContext.current
@@ -110,6 +129,7 @@ fun CallChatViaOverlay(
     if (showPicker) {
         val hasWhatsApp = remember(context) { isAnyPackageInstalled(context, WHATSAPP_PACKAGES) }
         val hasTelegram = remember(context) { isTelegramInstalled(context) }
+        val hasGoogleMeet = remember(context, showGoogleMeet) { showGoogleMeet && isGoogleMeetInstalled(context) }
         RivoDropdownMenu(expanded = showPicker, onDismissRequest = onPickerDismiss) {
             if (hasWhatsApp) {
                 RivoDropdownMenuItem(
@@ -125,7 +145,22 @@ fun CallChatViaOverlay(
                     onClick = { onPickerDismiss(); showAppQuickActions = "telegram" }
                 )
             }
-            if (!hasWhatsApp && !hasTelegram) {
+            if (hasGoogleMeet) {
+                RivoDropdownMenuItem(
+                    text = "Google Meet",
+                    icon = Icons.Default.VideoCall,
+                    iconBitmap = remember(context) { getGoogleMeetIcon(context) },
+                    onClick = { onPickerDismiss(); showAppQuickActions = "googlemeet" }
+                )
+            }
+            if (showFakeCall && onFakeCall != null) {
+                RivoDropdownMenuItem(
+                    text = "Fake Call",
+                    icon = Icons.Outlined.PhoneCallback,
+                    onClick = { onPickerDismiss(); onFakeCall() }
+                )
+            }
+            if (!hasWhatsApp && !hasTelegram && !hasGoogleMeet && !(showFakeCall && onFakeCall != null)) {
                 RivoDropdownMenuItem(
                     text = "No apps installed",
                     icon = Icons.Default.Info,
@@ -137,22 +172,36 @@ fun CallChatViaOverlay(
 
     if (showAppQuickActions != null) {
         val app = showAppQuickActions!!
-        val appLabel = if (app == "whatsapp") "WhatsApp" else "Telegram"
+        val appLabel = when (app) {
+            "whatsapp" -> "WhatsApp"
+            "telegram" -> "Telegram"
+            else -> "Google Meet"
+        }
         AppQuickActionsDialog(
             appName = appLabel,
-            onChat = {
-                showAppQuickActions = null
-                val opened = if (app == "whatsapp") openWhatsAppChat(context, phoneNumber) else openTelegramChat(context, phoneNumber)
-                if (!opened) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+            onChat = if (app == "googlemeet") null else {
+                {
+                    showAppQuickActions = null
+                    val opened = if (app == "whatsapp") openWhatsAppChat(context, phoneNumber) else openTelegramChat(context, phoneNumber)
+                    if (!opened) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
+                }
             },
             onVoiceCall = {
                 showAppQuickActions = null
-                val started = if (app == "whatsapp") startWhatsAppVoiceCall(context, phoneNumber) else startTelegramVoiceCall(context, phoneNumber)
+                val started = when (app) {
+                    "whatsapp" -> startWhatsAppVoiceCall(context, phoneNumber)
+                    "telegram" -> startTelegramVoiceCall(context, phoneNumber)
+                    else -> startGoogleMeetVoiceCall(context, phoneNumber)
+                }
                 if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
             },
             onVideoCall = {
                 showAppQuickActions = null
-                val started = if (app == "whatsapp") startWhatsAppVideoCall(context, phoneNumber) else startTelegramVideoCall(context, phoneNumber)
+                val started = when (app) {
+                    "whatsapp" -> startWhatsAppVideoCall(context, phoneNumber)
+                    "telegram" -> startTelegramVideoCall(context, phoneNumber)
+                    else -> startGoogleMeetVideoCall(context, phoneNumber)
+                }
                 if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
             },
             onDismiss = { showAppQuickActions = null }

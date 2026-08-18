@@ -800,10 +800,15 @@ fun DialPadContent(
     // "Call/Chat Via" — WhatsApp/Telegram app picker followed by the Chat/Voice Call/Video Call
     // popup, shared with every other long-press context menu in the app (see CallChatViaOverlay).
     // Triggered from the call button's long-press and from the "Call/Chat Via" overflow menu item.
+    // The Dialpad additionally opts into Google Meet (below Telegram) and Fake Call (below Google
+    // Meet), since the call button's long-press is the one place those two also make sense.
     CallChatViaOverlay(
         phoneNumber = number.takeIf { it.isNotEmpty() },
         showPicker = showAppPicker,
-        onPickerDismiss = { showAppPicker = false }
+        onPickerDismiss = { showAppPicker = false },
+        showGoogleMeet = true,
+        showFakeCall = fakeCallInContextMenu,
+        onFakeCall = { showFakeCallSheet = true }
     )
 
     val configuration = LocalConfiguration.current

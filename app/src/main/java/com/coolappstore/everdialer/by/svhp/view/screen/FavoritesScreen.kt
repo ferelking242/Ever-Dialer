@@ -781,6 +781,7 @@ private fun FavoriteContactCard(
     com.coolappstore.everdialer.by.svhp.view.components.CallChatViaOverlay(
         phoneNumber = phoneNumber?.takeIf { it.isNotBlank() },
         showPicker = showCallChatViaPicker,
-        onPickerDismiss = { showCallChatViaPicker = false }
+        onPickerDismiss = { showCallChatViaPicker = false },
+        showGoogleMeet = true
     )
 }

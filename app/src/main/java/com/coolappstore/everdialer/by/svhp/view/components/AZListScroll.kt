@@ -626,7 +626,8 @@ fun ContactListItem(
     CallChatViaOverlay(
         phoneNumber = contact.phoneNumbers.firstOrNull()?.takeIf { it.isNotBlank() },
         showPicker = showCallChatViaPicker,
-        onPickerDismiss = { showCallChatViaPicker = false }
+        onPickerDismiss = { showCallChatViaPicker = false },
+        showGoogleMeet = true
     )
 } // end AZListContent
 

@@ -378,6 +378,7 @@ fun CallLogTile(
     CallChatViaOverlay(
         phoneNumber = log.number.takeIf { it.isNotBlank() },
         showPicker = showCallChatViaPicker,
-        onPickerDismiss = { showCallChatViaPicker = false }
+        onPickerDismiss = { showCallChatViaPicker = false },
+        showGoogleMeet = true
     )
 }

@@ -1,14 +1,6 @@
 package com.coolappstore.evercallrecorder.by.svhp.ui.screens
 
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
-import android.os.Environment
-import android.provider.Settings
-import androidx.core.content.ContextCompat
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -55,7 +47,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.*
-import com.coolappstore.evercallrecorder.by.svhp.ui.common.FileSavePickerDialog
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -114,38 +105,6 @@ fun HomeScreen(
     }
 
     var showBulkDeleteConfirm by remember { mutableStateOf(false) }
-    var showFileSavePicker    by remember { mutableStateOf(false) }
-
-    // Storage permission flow
-    val writePermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) showFileSavePicker = true
-        else android.widget.Toast.makeText(context, "Storage permission required to save files", android.widget.Toast.LENGTH_SHORT).show()
-    }
-    val manageStorageLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()) {
-            showFileSavePicker = true
-        } else {
-            android.widget.Toast.makeText(context, "Storage access required to save files", android.widget.Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    fun requestStorageThenPick() {
-        when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
-                if (Environment.isExternalStorageManager()) showFileSavePicker = true
-                else manageStorageLauncher.launch(
-                    android.content.Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                        data = android.net.Uri.fromParts("package", context.packageName, null)
-                    }
-                )
-            }
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED -> {
-                writePermLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
-            else -> showFileSavePicker = true
-        }
-    }
 
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -296,7 +255,6 @@ fun HomeScreen(
                             }
                             context.startActivity(Intent.createChooser(intent, "Share Recordings"))
                         },
-                        onSave      = { requestStorageThenPick() },
                         onDelete    = { showBulkDeleteConfirm = true }
                     )
                 }
@@ -321,17 +279,6 @@ fun HomeScreen(
         )
     }
 
-    if (showFileSavePicker) {
-        FileSavePickerDialog(
-            count     = selectedUris.size,
-            onDismiss = { showFileSavePicker = false },
-            onSave    = { directory ->
-                showFileSavePicker = false
-                vm.saveSelectedToDirectory(context, directory)
-                vm.clearSelection()
-            }
-        )
-    }
 }
 
 // ── Floating selection action bar ─────────────────────────────────────────────
@@ -343,7 +290,6 @@ private fun SelectionBar(
     onCancel: () -> Unit,
     onSelectAll: () -> Unit,
     onShare: () -> Unit,
-    onSave: () -> Unit,
     onDelete: () -> Unit
 ) {
     Surface(
@@ -387,9 +333,6 @@ private fun SelectionBar(
                         Text("Select All", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
                     }
                 }
-            }
-            IconButton(onClick = onSave, enabled = count > 0) {
-                Icon(Icons.Outlined.Download, contentDescription = "Save selected", tint = MaterialTheme.colorScheme.onSurface)
             }
             IconButton(onClick = onShare, enabled = count > 0) {
                 Icon(Icons.Outlined.Share, contentDescription = "Share selected", tint = MaterialTheme.colorScheme.onSurface)
