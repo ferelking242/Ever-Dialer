@@ -94,6 +94,7 @@ import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVideoCal
 import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVoiceCall
 import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVideoCall
 import com.coolappstore.everdialer.by.svhp.controller.util.numbersLikelyMatch
+import com.coolappstore.everdialer.by.svhp.controller.util.placeCallHonoringContactSim
 import com.coolappstore.everdialer.by.svhp.view.components.AppQuickActionsDialog
 import com.coolappstore.everdialer.by.svhp.view.components.CallChatViaOverlay
 import com.coolappstore.everdialer.by.svhp.modal.data.CallLogEntry
@@ -547,23 +548,17 @@ fun DialPadContent(
     }
     var showFakeCallSheet by remember { mutableStateOf(false) }
 
-    // Helper: place a call respecting the default SIM preference
-    fun placeCallWithSimPreference(num: String) {
-        val accounts = try { telecomManager.callCapablePhoneAccounts } catch (_: SecurityException) { emptyList() }
-        if (accounts.size > 1) {
-            val simPref = prefs.getInt(PreferenceManager.KEY_DEFAULT_SIM, prefs.getDefaultSimIndexDefault())
-            when {
-                simPref == 1 && accounts.size >= 1 -> { makeCall(context, num, accounts[0]); forgetNumberIfMemoryDisabled() }
-                simPref == 2 && accounts.size >= 2 -> { makeCall(context, num, accounts[1]); forgetNumberIfMemoryDisabled() }
-                else -> {
-                    pendingSearchCallNumber = num
-                    showSimPicker = true
-                }
-            }
-        } else {
-            makeCall(context, num)
-            forgetNumberIfMemoryDisabled()
+    // Helper: place a call respecting the contact's own "Choose Sim" preference (falling back to
+    // the app-wide default SIM setting), same resolution as Contact Info → Choose Sim. contactKey
+    // defaults to a saved contact matching [num], or the raw number itself when there's no match.
+    fun placeCallWithSimPreference(num: String, contactKey: String = allContacts.firstOrNull { c -> c.phoneNumbers.any { numbersLikelyMatch(it, num) } }?.id ?: num) {
+        var placed = true
+        placeCallHonoringContactSim(context, prefs, contactKey, num) {
+            placed = false
+            pendingSearchCallNumber = num
+            showSimPicker = true
         }
+        if (placed) forgetNumberIfMemoryDisabled()
     }
 
     val clipText = remember {

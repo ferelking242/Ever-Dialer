@@ -187,6 +187,29 @@ fun placeCallWithContactSimPreference(
 }
 
 /**
+ * Resolves and places a call honoring a specific contact's "Choose Sim" preference (Contact
+ * Info → Choose Sim), falling back to the app-wide default SIM setting when the contact has no
+ * override — the same resolution Contact Info itself uses, but reusable from any screen that
+ * places calls (Favorites, Recents/Call Log, Dialpad, etc.) so the per-contact choice actually
+ * applies everywhere a call to that contact can be started, not just from Contact Info.
+ *
+ * [contactKey] must match the keying used elsewhere (contact id for a saved contact, or the raw
+ * phone number for an unsaved/unknown one) so the correct stored preference is looked up.
+ */
+fun placeCallHonoringContactSim(
+    context: Context,
+    prefs: PreferenceManager,
+    contactKey: String,
+    number: String,
+    recentSimSlotForContact: Int? = null,
+    onShowSimPicker: () -> Unit
+) {
+    val globalSimPref = prefs.getInt(PreferenceManager.KEY_DEFAULT_SIM, prefs.getDefaultSimIndexDefault())
+    val contactSimChoice = prefs.getContactSimChoice(contactKey)
+    placeCallWithContactSimPreference(context, number, contactSimChoice, globalSimPref, recentSimSlotForContact, onShowSimPicker)
+}
+
+/**
  * Strips everything except digits and a leading '+' so two differently-formatted
  * representations of the same number ("+1 (555) 123-4567" vs "5551234567") can be compared.
  */

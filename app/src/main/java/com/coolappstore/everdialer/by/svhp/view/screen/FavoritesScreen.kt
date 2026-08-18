@@ -51,7 +51,7 @@ import com.coolappstore.everdialer.by.svhp.controller.ContactsViewModel
 import com.coolappstore.everdialer.by.svhp.controller.util.FakeCallManager
 import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
 import com.coolappstore.everdialer.by.svhp.controller.util.makeCall
-import com.coolappstore.everdialer.by.svhp.controller.util.placeCallWithSimPreference
+import com.coolappstore.everdialer.by.svhp.controller.util.placeCallHonoringContactSim
 import com.coolappstore.everdialer.by.svhp.modal.data.Contact
 import com.coolappstore.everdialer.by.svhp.view.components.RivoAvatar
 import com.coolappstore.everdialer.by.svhp.view.components.RivoDropdownMenu
@@ -152,7 +152,7 @@ fun FavoritesScreen(navController: NavController, navigator: DestinationsNavigat
 
     var showSimPicker by remember { mutableStateOf(false) }
     var pendingCallNumber by remember { mutableStateOf<String?>(null) }
-    val simPref = remember { prefs.getInt(PreferenceManager.KEY_DEFAULT_SIM, prefs.getDefaultSimIndexDefault()) }
+    var pendingCallContactKey by remember { mutableStateOf<String?>(null) }
 
     var selectionMode by remember { mutableStateOf(false) }
     var selectedFavorites by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -187,7 +187,7 @@ fun FavoritesScreen(navController: NavController, navigator: DestinationsNavigat
     ) { permissions ->
         if (permissions[Manifest.permission.CALL_PHONE] == true) {
             pendingCallNumber?.let { num ->
-                placeCallWithSimPreference(context, num, simPref) {
+                placeCallHonoringContactSim(context, prefs, pendingCallContactKey ?: num, num) {
                     showSimPicker = true
                 }
             }
@@ -378,12 +378,14 @@ fun FavoritesScreen(navController: NavController, navigator: DestinationsNavigat
                                     val phoneNumber = contact.phoneNumbers.firstOrNull()
                                     if (directCall && phoneNumber != null) {
                                         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
-                                            placeCallWithSimPreference(context, phoneNumber, simPref) {
+                                            placeCallHonoringContactSim(context, prefs, contact.id, phoneNumber) {
                                                 pendingCallNumber = phoneNumber
+                                                pendingCallContactKey = contact.id
                                                 showSimPicker = true
                                             }
                                         } else {
                                             pendingCallNumber = phoneNumber
+                                            pendingCallContactKey = contact.id
                                             callPermissionLauncher.launch(arrayOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_PHONE_STATE))
                                         }
                                     } else {

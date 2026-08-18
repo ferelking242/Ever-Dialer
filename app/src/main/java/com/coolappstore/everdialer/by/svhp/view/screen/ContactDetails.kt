@@ -127,6 +127,7 @@ fun ContactDetailsScreen(
     var showMoveDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showChooseSimDialog by remember { mutableStateOf(false) }
+    var showChooseDefaultNumberDialog by remember { mutableStateOf(false) }
     // "chat_app" for the Social card's WhatsApp/Telegram quick-action popup: null when hidden,
     // otherwise "whatsapp" or "telegram" to say which app's Chat/Voice Call/Video Call sheet to show.
     var showAppQuickActions by remember { mutableStateOf<String?>(null) }
@@ -141,16 +142,6 @@ fun ContactDetailsScreen(
     // has 2+ numbers); null once a number has been picked (or there was only one to begin with).
     var pendingSocialApp by remember { mutableStateOf<String?>(null) }
     var socialSelectedNumber by remember { mutableStateOf<String?>(null) }
-
-    fun chooseSocialApp(app: String) {
-        if (socialNumbers.isEmpty()) return
-        if (socialNumbers.size > 1) {
-            pendingSocialApp = app
-        } else {
-            socialSelectedNumber = socialNumbers.first()
-            showAppQuickActions = app
-        }
-    }
 
     // Respect Settings → Appearance → "Context Menu Elements" (Contacts section) customization
     // so the actions shown here always match what's configured for the contact's context menu.
@@ -184,6 +175,26 @@ fun ContactDetailsScreen(
     // settings" (falls back to the app-wide default SIM setting).
     val contactSimKey = contact?.id ?: phoneNumber ?: displayPhone
     val contactSimChoice = remember(settingsVer, contactSimKey) { prefs.getContactSimChoice(contactSimKey) }
+    // Contact Info → "Choose Default Number" — per-contact override of which saved number the
+    // header call button dials directly, for contacts saved with 2+ numbers (skips the number
+    // picker once set). Same keying as contactSimKey, so it travels with the same contact.
+    val contactDefaultNumber = remember(settingsVer, contactSimKey) { prefs.getContactDefaultNumber(contactSimKey) }
+        .takeIf { number -> contact != null && number != null && contact.phoneNumbers.contains(number) }
+
+    fun chooseSocialApp(app: String) {
+        if (socialNumbers.isEmpty()) return
+        val default = contactDefaultNumber?.takeIf { it in socialNumbers }
+        if (default != null) {
+            socialSelectedNumber = default
+            showAppQuickActions = app
+        } else if (socialNumbers.size > 1) {
+            pendingSocialApp = app
+        } else {
+            socialSelectedNumber = socialNumbers.first()
+            showAppQuickActions = app
+        }
+    }
+
     // Most recent SIM slot used on a call with this contact, for the "last used SIM for this
     // contact" option — derived straight from this contact's call log history.
     val recentSimSlotForContact = remember(contactLogs) {
@@ -242,6 +253,17 @@ fun ContactDetailsScreen(
                 showChooseSimDialog = false
             },
             onDismiss = { showChooseSimDialog = false }
+        )
+    }
+    if (showChooseDefaultNumberDialog && contact != null) {
+        ChooseDefaultNumberDialog(
+            numbers = contact.phoneNumbers,
+            currentChoice = contactDefaultNumber,
+            onSelect = { number ->
+                prefs.setContactDefaultNumber(contactSimKey, number)
+                showChooseDefaultNumberDialog = false
+            },
+            onDismiss = { showChooseDefaultNumberDialog = false }
         )
     }
     if (pendingSocialApp != null) {
@@ -353,57 +375,58 @@ fun ContactDetailsScreen(
                 verticalArrangement = Arrangement.spacedBy(24.dp)
             ) {
                 item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .statusBarsPadding(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
                             modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                            contentAlignment = Alignment.Center
+                                .fillMaxWidth()
+                                .statusBarsPadding(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(onClick = { navigateBack() }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            Box(
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                IconButton(onClick = { navigateBack() }) {
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                IconButton(onClick = { showQrDialog = true }) { Icon(Icons.Outlined.QrCode2, "QR Code") }
+                                if (contact != null) {
+                                    IconButton(onClick = { contactsViewModel.toggleFavorite(contact) }) {
+                                        Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite", tint = if (isFavorite) Color.Red else LocalContentColor.current)
+                                    }
+                                    IconButton(onClick = {
+                                        val intent = Intent(Intent.ACTION_EDIT).apply { data = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contact.id.toLong()) }
+                                        context.startActivity(intent)
+                                    }) { Icon(Icons.Default.Edit, "Edit") }
+                                } else if (phoneNumber != null && phoneNumber != "Unknown") {
+                                    IconButton(onClick = {
+                                        val intent = Intent(Intent.ACTION_INSERT).apply { type = ContactsContract.RawContacts.CONTENT_TYPE; putExtra(ContactsContract.Intents.Insert.PHONE, phoneNumber) }
+                                        context.startActivity(intent)
+                                    }) { Icon(Icons.Default.PersonAdd, "Add Contact") }
+                                }
                             }
                         }
 
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(onClick = { showQrDialog = true }) { Icon(Icons.Outlined.QrCode2, "QR Code") }
-                            if (contact != null) {
-                                IconButton(onClick = { contactsViewModel.toggleFavorite(contact) }) {
-                                    Icon(if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder, "Favorite", tint = if (isFavorite) Color.Red else LocalContentColor.current)
-                                }
-                                IconButton(onClick = {
-                                    val intent = Intent(Intent.ACTION_EDIT).apply { data = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contact.id.toLong()) }
-                                    context.startActivity(intent)
-                                }) { Icon(Icons.Default.Edit, "Edit") }
-                            } else if (phoneNumber != null && phoneNumber != "Unknown") {
-                                IconButton(onClick = {
-                                    val intent = Intent(Intent.ACTION_INSERT).apply { type = ContactsContract.RawContacts.CONTENT_TYPE; putExtra(ContactsContract.Intents.Insert.PHONE, phoneNumber) }
-                                    context.startActivity(intent)
-                                }) { Icon(Icons.Default.PersonAdd, "Add Contact") }
+                        Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(modifier = Modifier.size(340.dp), contentAlignment = Alignment.Center) {
+                                Box(modifier = Modifier.size(280.dp).background(brush = Brush.radialGradient(colors = listOf(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f), Color.Transparent))).blur(60.dp))
+                                RivoAvatar(name = displayName, photoUri = contact?.photoUri, modifier = Modifier.size(180.dp), shape = CircleShape)
                             }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(text = displayName, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                         }
-                    }
-                }
-                item {
-                    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(modifier = Modifier.size(300.dp), contentAlignment = Alignment.Center) {
-                            Box(modifier = Modifier.size(240.dp).background(brush = Brush.radialGradient(colors = listOf(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f), Color.Transparent))).blur(60.dp))
-                            RivoAvatar(name = displayName, photoUri = contact?.photoUri, modifier = Modifier.size(140.dp), shape = CircleShape)
-                        }
-                        Spacer(modifier = Modifier.height(20.dp))
-                        Text(text = displayName, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -416,7 +439,10 @@ fun ContactDetailsScreen(
                     ) {
                         Surface(
                             onClick = {
-                                if (contact != null && contact.phoneNumbers.size > 1) showNumberPicker = true
+                                if (contact != null && contact.phoneNumbers.size > 1) {
+                                    if (contactDefaultNumber != null) initiateCall(contactDefaultNumber)
+                                    else showNumberPicker = true
+                                }
                                 else if (displayPhone != "Unknown") initiateCall(displayPhone)
                             },
                             modifier = Modifier.weight(1f).height(64.dp),
@@ -724,6 +750,22 @@ fun ContactDetailsScreen(
                             trailingIcon = Icons.Default.ChevronRight,
                             onClick = { showChooseSimDialog = true }
                         )
+                    }
+                }
+
+                // Choose Default Number — only meaningful (and only shown) when the contact has
+                // 2+ saved numbers, e.g. one saved with a country code and one without.
+                if (contact != null && contact.phoneNumbers.size > 1) {
+                    item {
+                        RivoExpressiveCard(title = "Choose Default Number", icon = Icons.Default.Numbers) {
+                            RivoListItem(
+                                headline = contactDefaultNumber ?: "Ask Every Time",
+                                supporting = "Number used when calling this contact",
+                                leadingIcon = Icons.Default.Numbers,
+                                trailingIcon = Icons.Default.ChevronRight,
+                                onClick = { showChooseDefaultNumberDialog = true }
+                            )
+                        }
                     }
                 }
 

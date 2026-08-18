@@ -93,6 +93,18 @@ class PreferenceManager(context: Context) {
     fun setContactSimChoice(contactKey: String, choice: String) =
         setString(KEY_CONTACT_SIM_CHOICE_PREFIX + contactKey, choice)
 
+    /** Per-contact "Choose Default Number" preference (Contact Info, just below "Choose Sim") for
+     *  contacts saved with 2+ phone numbers. When set to one of the contact's numbers, the header
+     *  call button calls that number directly instead of prompting with the number picker every
+     *  time; also used to resolve which number to use for WhatsApp/Telegram/Google Meet quick
+     *  actions when the contact has multiple numbers. [contactKey] matches [getContactSimChoice]'s
+     *  keying. Returns null when unset (meaning "ask every time", the previous behavior). */
+    fun getContactDefaultNumber(contactKey: String): String? =
+        getString(KEY_CONTACT_DEFAULT_NUMBER_PREFIX + contactKey, null)
+
+    fun setContactDefaultNumber(contactKey: String, number: String?) =
+        setString(KEY_CONTACT_DEFAULT_NUMBER_PREFIX + contactKey, number)
+
     /** Returns the user-configured tab order (Settings > Appearance > Tab Sections) as an
      *  ordered list of tab keys (e.g. "favorites", "calls", "contacts", "recordings", "notes").
      *  This is the single source of truth for tab ordering — both the bottom nav bar and the
@@ -118,6 +130,10 @@ class PreferenceManager(context: Context) {
         // specific contact. Key is prefixed per contact (id for saved contacts, raw phone number
         // for unsaved ones) so every contact can remember its own choice independently.
         const val KEY_CONTACT_SIM_CHOICE_PREFIX = "contact_sim_choice_"
+        // Contact Info → "Choose Default Number" — per-contact override of which saved number is
+        // used by default when the contact has 2+ numbers. Same per-contact keying as
+        // KEY_CONTACT_SIM_CHOICE_PREFIX. Unset (null) means "ask every time".
+        const val KEY_CONTACT_DEFAULT_NUMBER_PREFIX = "contact_default_number_"
         // Global "SIM used in the last call placed from the app" (1 = SIM 1, 2 = SIM 2, 0 = none
         // yet), written every time a call is placed on a specific SIM. Backs the "Choose the last
         // used SIM in previous call" per-contact option.

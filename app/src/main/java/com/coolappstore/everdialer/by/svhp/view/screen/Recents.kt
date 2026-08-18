@@ -49,7 +49,7 @@ import com.google.accompanist.permissions.rememberPermissionState
 import com.coolappstore.everdialer.by.svhp.controller.CallLogViewModel
 import com.coolappstore.everdialer.by.svhp.controller.util.formatDateHeader
 import com.coolappstore.everdialer.by.svhp.controller.util.makeCall
-import com.coolappstore.everdialer.by.svhp.controller.util.placeCallWithSimPreference
+import com.coolappstore.everdialer.by.svhp.controller.util.placeCallHonoringContactSim
 import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
 import com.coolappstore.everdialer.by.svhp.modal.data.CallLogFilter
 import com.coolappstore.everdialer.by.svhp.view.components.*
@@ -525,7 +525,6 @@ fun CallLogFullContent(
 
         var showSimPicker by remember { mutableStateOf(false) }
         var pendingNumber by remember { mutableStateOf<String?>(null) }
-        val simPref = remember(settingsVersion) { prefs.getInt(PreferenceManager.KEY_DEFAULT_SIM, prefs.getDefaultSimIndexDefault()) }
 
         // Selection mode state - hoisted to parent
 
@@ -885,7 +884,7 @@ fun CallLogFullContent(
                                                                 val key = "${log.number}|${log.date}"
                                                                 onSelectedLogsChange(if (selectedLogs.contains(key)) selectedLogs - key else selectedLogs + key)
                                                             } else if (directCall) {
-                                                                placeCallWithSimPreference(context, log.number, simPref) {
+                                                                placeCallHonoringContactSim(context, prefs, log.contactId ?: log.number, log.number) {
                                                                     pendingNumber = log.number; showSimPicker = true
                                                                 }
                                                             } else {
@@ -896,7 +895,7 @@ fun CallLogFullContent(
                                                             navigator.navigate(ContactDetailsScreenDestination(contactId = log.contactId ?: "null", phoneNumber = log.number))
                                                         },
                                                         onButtonClick = { log ->
-                                                            placeCallWithSimPreference(context, log.number, simPref) {
+                                                            placeCallHonoringContactSim(context, prefs, log.contactId ?: log.number, log.number) {
                                                                 pendingNumber = log.number; showSimPicker = true
                                                             }
                                                         },
