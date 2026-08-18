@@ -130,6 +130,27 @@ fun ContactDetailsScreen(
     // "chat_app" for the Social card's WhatsApp/Telegram quick-action popup: null when hidden,
     // otherwise "whatsapp" or "telegram" to say which app's Chat/Voice Call/Video Call sheet to show.
     var showAppQuickActions by remember { mutableStateOf<String?>(null) }
+    // All this contact's saved numbers, so the Social card can offer a choice when there's more
+    // than one (e.g. one saved with a country code, one without) instead of always defaulting to
+    // the first saved number — which could be one that isn't actually registered on that app.
+    val socialNumbers = remember(contact, phoneNumber) {
+        contact?.phoneNumbers?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() }
+            ?: listOfNotNull(phoneNumber?.takeIf { it.isNotBlank() })
+    }
+    // App tapped in the Social card but still awaiting a number pick (only used when the contact
+    // has 2+ numbers); null once a number has been picked (or there was only one to begin with).
+    var pendingSocialApp by remember { mutableStateOf<String?>(null) }
+    var socialSelectedNumber by remember { mutableStateOf<String?>(null) }
+
+    fun chooseSocialApp(app: String) {
+        if (socialNumbers.isEmpty()) return
+        if (socialNumbers.size > 1) {
+            pendingSocialApp = app
+        } else {
+            socialSelectedNumber = socialNumbers.first()
+            showAppQuickActions = app
+        }
+    }
 
     // Respect Settings → Appearance → "Context Menu Elements" (Contacts section) customization
     // so the actions shown here always match what's configured for the contact's context menu.
@@ -223,8 +244,21 @@ fun ContactDetailsScreen(
             onDismiss = { showChooseSimDialog = false }
         )
     }
-    if (showAppQuickActions != null && displayPhone != "Unknown") {
+    if (pendingSocialApp != null) {
+        val app = pendingSocialApp!!
+        NumberPickerDialog(
+            numbers = socialNumbers,
+            onDismissRequest = { pendingSocialApp = null },
+            onNumberSelected = { number ->
+                pendingSocialApp = null
+                socialSelectedNumber = number
+                showAppQuickActions = app
+            }
+        )
+    }
+    if (showAppQuickActions != null && socialSelectedNumber != null) {
         val app = showAppQuickActions!!
+        val socialPhone = socialSelectedNumber!!
         val appLabel = when (app) {
             "whatsapp" -> "WhatsApp"
             "telegram" -> "Telegram"
@@ -235,25 +269,25 @@ fun ContactDetailsScreen(
             onChat = if (app == "googlemeet") null else {
                 {
                     showAppQuickActions = null
-                    val opened = if (app == "whatsapp") openWhatsAppChat(context, displayPhone) else openTelegramChat(context, displayPhone)
+                    val opened = if (app == "whatsapp") openWhatsAppChat(context, socialPhone) else openTelegramChat(context, socialPhone)
                     if (!opened) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
                 }
             },
             onVoiceCall = {
                 showAppQuickActions = null
                 val started = when (app) {
-                    "whatsapp" -> startWhatsAppVoiceCall(context, displayPhone)
-                    "telegram" -> startTelegramVoiceCall(context, displayPhone)
-                    else -> startGoogleMeetVoiceCall(context, displayPhone)
+                    "whatsapp" -> startWhatsAppVoiceCall(context, socialPhone)
+                    "telegram" -> startTelegramVoiceCall(context, socialPhone)
+                    else -> startGoogleMeetVoiceCall(context, socialPhone)
                 }
                 if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
             },
             onVideoCall = {
                 showAppQuickActions = null
                 val started = when (app) {
-                    "whatsapp" -> startWhatsAppVideoCall(context, displayPhone)
-                    "telegram" -> startTelegramVideoCall(context, displayPhone)
-                    else -> startGoogleMeetVideoCall(context, displayPhone)
+                    "whatsapp" -> startWhatsAppVideoCall(context, socialPhone)
+                    "telegram" -> startTelegramVideoCall(context, socialPhone)
+                    else -> startGoogleMeetVideoCall(context, socialPhone)
                 }
                 if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
             },
@@ -614,7 +648,7 @@ fun ContactDetailsScreen(
                         Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                             RivoExpressiveButton(icon = Icons.Default.Chat, iconBitmap = whatsAppIcon, label = "WhatsApp", containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface, onClick = {
                                 if (displayPhone == "Unknown") return@RivoExpressiveButton
-                                showAppQuickActions = "whatsapp"
+                                chooseSocialApp("whatsapp")
                             })
                             // Telegram has many third-party clients/forks, so rather than forcing
                             // one specific app this opens Android's own chooser sheet listing
@@ -623,11 +657,11 @@ fun ContactDetailsScreen(
                             // registers to handle tg:// links.
                             RivoExpressiveButton(icon = Icons.Default.Send, iconBitmap = telegramIcon, label = "Telegram", containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface, onClick = {
                                 if (displayPhone == "Unknown") return@RivoExpressiveButton
-                                showAppQuickActions = "telegram"
+                                chooseSocialApp("telegram")
                             })
                             RivoExpressiveButton(icon = Icons.Default.VideoCall, iconBitmap = meetIcon, label = "Meet", containerColor = MaterialTheme.colorScheme.surfaceContainerHigh, contentColor = MaterialTheme.colorScheme.onSurface, onClick = {
                                 if (displayPhone == "Unknown") return@RivoExpressiveButton
-                                showAppQuickActions = "googlemeet"
+                                chooseSocialApp("googlemeet")
                             })
                         }
                     }

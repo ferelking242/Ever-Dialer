@@ -93,6 +93,7 @@ import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVoiceCal
 import com.coolappstore.everdialer.by.svhp.controller.util.startWhatsAppVideoCall
 import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVoiceCall
 import com.coolappstore.everdialer.by.svhp.controller.util.startTelegramVideoCall
+import com.coolappstore.everdialer.by.svhp.controller.util.numbersLikelyMatch
 import com.coolappstore.everdialer.by.svhp.view.components.AppQuickActionsDialog
 import com.coolappstore.everdialer.by.svhp.view.components.CallChatViaOverlay
 import com.coolappstore.everdialer.by.svhp.modal.data.CallLogEntry
@@ -802,8 +803,15 @@ fun DialPadContent(
     // Triggered from the call button's long-press and from the "Call/Chat Via" overflow menu item.
     // The Dialpad additionally opts into Google Meet (below Telegram) and Fake Call (below Google
     // Meet), since the call button's long-press is the one place those two also make sense.
+    // If the dialed number matches a saved contact, offer every number saved on that contact
+    // (e.g. one with a country code, one without) instead of just the one currently typed.
+    val callChatViaContact = remember(number, allContacts) {
+        if (number.isBlank()) null else allContacts.find { c -> c.phoneNumbers.any { numbersLikelyMatch(number, it) } }
+    }
     CallChatViaOverlay(
         phoneNumber = number.takeIf { it.isNotEmpty() },
+        phoneNumbers = callChatViaContact?.phoneNumbers?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() }
+            ?: listOfNotNull(number.takeIf { it.isNotEmpty() }),
         showPicker = showAppPicker,
         onPickerDismiss = { showAppPicker = false },
         showGoogleMeet = true,

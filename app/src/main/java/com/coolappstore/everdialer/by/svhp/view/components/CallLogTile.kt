@@ -375,8 +375,17 @@ fun CallLogTile(
         )
     }
 
+    // Look up the saved contact (if any) so WhatsApp/Telegram/Google Meet can offer every number
+    // on the contact, not just this particular call log entry's number — e.g. a contact saved
+    // with both a country-coded and a plain number, where only one is actually registered on the
+    // target app.
+    val callChatViaNumbers = remember(log.number) {
+        try { contactsRepo.getContactByNumber(log.number)?.phoneNumbers } catch (_: Exception) { null }
+    }
     CallChatViaOverlay(
         phoneNumber = log.number.takeIf { it.isNotBlank() },
+        phoneNumbers = callChatViaNumbers?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() }
+            ?: listOfNotNull(log.number.takeIf { it.isNotBlank() }),
         showPicker = showCallChatViaPicker,
         onPickerDismiss = { showCallChatViaPicker = false },
         showGoogleMeet = true

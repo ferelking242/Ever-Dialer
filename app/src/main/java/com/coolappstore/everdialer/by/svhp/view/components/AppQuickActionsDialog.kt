@@ -120,11 +120,30 @@ fun CallChatViaOverlay(
     onPickerDismiss: () -> Unit,
     showGoogleMeet: Boolean = false,
     showFakeCall: Boolean = false,
-    onFakeCall: (() -> Unit)? = null
+    onFakeCall: (() -> Unit)? = null,
+    // All of this contact's saved numbers (e.g. one with a country code, one without). When there
+    // are 2+, picking WhatsApp/Telegram/Google Meet first asks which number to use instead of
+    // silently defaulting to [phoneNumber] — which fixed the app to whichever number happened to
+    // be saved first, even if that's not the one actually registered on WhatsApp/Meet/etc.
+    phoneNumbers: List<String> = phoneNumber?.let { listOf(it) } ?: emptyList()
 ) {
-    if (phoneNumber.isNullOrBlank()) return
+    val allNumbers = remember(phoneNumbers) { phoneNumbers.filter { it.isNotBlank() }.distinct() }
+    if (allNumbers.isEmpty()) return
     val context = LocalContext.current
+    // App chosen from the picker but still waiting on a number pick (only used when the contact
+    // has 2+ numbers); null once a number has been picked (or there was only one to begin with).
+    var pendingAppForNumberPick by remember { mutableStateOf<String?>(null) }
     var showAppQuickActions by remember { mutableStateOf<String?>(null) }
+    var selectedNumber by remember { mutableStateOf<String?>(null) }
+
+    fun chooseApp(app: String) {
+        if (allNumbers.size > 1) {
+            pendingAppForNumberPick = app
+        } else {
+            selectedNumber = allNumbers.first()
+            showAppQuickActions = app
+        }
+    }
 
     if (showPicker) {
         val hasWhatsApp = remember(context) { isAnyPackageInstalled(context, WHATSAPP_PACKAGES) }
@@ -135,14 +154,14 @@ fun CallChatViaOverlay(
                 RivoDropdownMenuItem(
                     text = "WhatsApp",
                     iconBitmap = remember(context) { getWhatsAppIcon(context) },
-                    onClick = { onPickerDismiss(); showAppQuickActions = "whatsapp" }
+                    onClick = { onPickerDismiss(); chooseApp("whatsapp") }
                 )
             }
             if (hasTelegram) {
                 RivoDropdownMenuItem(
                     text = "Telegram",
                     iconBitmap = remember(context) { getTelegramIcon(context) },
-                    onClick = { onPickerDismiss(); showAppQuickActions = "telegram" }
+                    onClick = { onPickerDismiss(); chooseApp("telegram") }
                 )
             }
             if (hasGoogleMeet) {
@@ -150,7 +169,7 @@ fun CallChatViaOverlay(
                     text = "Google Meet",
                     icon = Icons.Default.VideoCall,
                     iconBitmap = remember(context) { getGoogleMeetIcon(context) },
-                    onClick = { onPickerDismiss(); showAppQuickActions = "googlemeet" }
+                    onClick = { onPickerDismiss(); chooseApp("googlemeet") }
                 )
             }
             if (showFakeCall && onFakeCall != null) {
@@ -170,8 +189,22 @@ fun CallChatViaOverlay(
         }
     }
 
-    if (showAppQuickActions != null) {
+    if (pendingAppForNumberPick != null) {
+        val app = pendingAppForNumberPick!!
+        NumberPickerDialog(
+            numbers = allNumbers,
+            onDismissRequest = { pendingAppForNumberPick = null },
+            onNumberSelected = { number ->
+                pendingAppForNumberPick = null
+                selectedNumber = number
+                showAppQuickActions = app
+            }
+        )
+    }
+
+    if (showAppQuickActions != null && selectedNumber != null) {
         val app = showAppQuickActions!!
+        val number = selectedNumber!!
         val appLabel = when (app) {
             "whatsapp" -> "WhatsApp"
             "telegram" -> "Telegram"
@@ -182,25 +215,25 @@ fun CallChatViaOverlay(
             onChat = if (app == "googlemeet") null else {
                 {
                     showAppQuickActions = null
-                    val opened = if (app == "whatsapp") openWhatsAppChat(context, phoneNumber) else openTelegramChat(context, phoneNumber)
+                    val opened = if (app == "whatsapp") openWhatsAppChat(context, number) else openTelegramChat(context, number)
                     if (!opened) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
                 }
             },
             onVoiceCall = {
                 showAppQuickActions = null
                 val started = when (app) {
-                    "whatsapp" -> startWhatsAppVoiceCall(context, phoneNumber)
-                    "telegram" -> startTelegramVoiceCall(context, phoneNumber)
-                    else -> startGoogleMeetVoiceCall(context, phoneNumber)
+                    "whatsapp" -> startWhatsAppVoiceCall(context, number)
+                    "telegram" -> startTelegramVoiceCall(context, number)
+                    else -> startGoogleMeetVoiceCall(context, number)
                 }
                 if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
             },
             onVideoCall = {
                 showAppQuickActions = null
                 val started = when (app) {
-                    "whatsapp" -> startWhatsAppVideoCall(context, phoneNumber)
-                    "telegram" -> startTelegramVideoCall(context, phoneNumber)
-                    else -> startGoogleMeetVideoCall(context, phoneNumber)
+                    "whatsapp" -> startWhatsAppVideoCall(context, number)
+                    "telegram" -> startTelegramVideoCall(context, number)
+                    else -> startGoogleMeetVideoCall(context, number)
                 }
                 if (!started) android.widget.Toast.makeText(context, "$appLabel isn't installed", android.widget.Toast.LENGTH_SHORT).show()
             },

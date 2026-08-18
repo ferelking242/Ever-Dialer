@@ -166,6 +166,39 @@ fun openGoogleMeetApp(context: Context): Boolean {
     } catch (_: Exception) { false }
 }
 
+// The custom action + explicit-component pair the stock Contacts app fires at Meet's own
+// "Voice call" / "Video call" quick-action rows (visible as the ContactsAudioActionActivity /
+// ContactsVideoActionActivity activity-aliases in `adb shell dumpsys package` or Settings → App
+// info → Meet → "Set as default" style activity listings). Standard ACTION_CALL/ACTION_VIEW on a
+// tel: Uri does NOT resolve to Meet — Meet doesn't register for those — which is why calls need to
+// target this action and these exact components directly instead.
+private const val TACHYON_CALL_ACTION = "com.google.android.apps.tachyon.action.CALL"
+private const val TACHYON_VIDEO_ACTION_ACTIVITY = "com.google.android.apps.tachyon.ContactsVideoActionActivity"
+private const val TACHYON_AUDIO_ACTION_ACTIVITY = "com.google.android.apps.tachyon.ContactsAudioActionActivity"
+
+private fun hasCallPhonePermission(context: Context) =
+    ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
+
+/**
+ * Fires the exact intent (custom action + explicit component) that the stock Contacts app fires
+ * at Meet's own call-through-Meet activity aliases, for an arbitrary [phoneNumber] — this works
+ * regardless of whether the number belongs to a Google-synced contact, unlike the ContactsContract
+ * data-row lookup below. Requires CALL_PHONE, which these aliases are permission-protected by.
+ */
+private fun startTachyonCallActivity(context: Context, phoneNumber: String, activityClass: String): Boolean {
+    if (!hasCallPhonePermission(context)) return false
+    val clean = phoneNumber.filter { it.isDigit() || it == '+' }
+    if (clean.isEmpty()) return false
+    return try {
+        val intent = Intent(TACHYON_CALL_ACTION, Uri.parse("tel:$clean")).apply {
+            setClassName(GOOGLE_MEET_PACKAGE, activityClass)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+        true
+    } catch (_: Exception) { false }
+}
+
 /**
  * Actually places a Google Meet video call to [phoneNumber] (Meet, formerly Duo, natively
  * supports calling a phone number the same way a regular VoIP call app does). Falls back to just
@@ -175,20 +208,8 @@ fun openGoogleMeetApp(context: Context): Boolean {
  */
 fun startGoogleMeetCall(context: Context, phoneNumber: String): Boolean {
     if (!isPackageInstalled(context, GOOGLE_MEET_PACKAGE)) return false
-    val clean = phoneNumber.filter { it.isDigit() || it == '+' }
-    if (clean.isEmpty()) return openGoogleMeetApp(context)
-
-    val hasCallPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED
-    return try {
-        val intent = Intent(if (hasCallPermission) Intent.ACTION_CALL else Intent.ACTION_VIEW, Uri.parse("tel:$clean")).apply {
-            setPackage(GOOGLE_MEET_PACKAGE)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(intent)
-        true
-    } catch (_: Exception) {
-        openGoogleMeetApp(context)
-    }
+    if (startTachyonCallActivity(context, phoneNumber, TACHYON_VIDEO_ACTION_ACTIVITY)) return true
+    return openGoogleMeetApp(context)
 }
 
 private const val MIME_MEET_VIDEO_CALL = "vnd.android.cursor.item/com.google.android.apps.tachyon.phone"
@@ -198,7 +219,9 @@ private const val MIME_MEET_AUDIO_CALL = "vnd.android.cursor.item/com.google.and
  * Looks up the ContactsContract.Data row Google Meet itself registers for a synced contact —
  * the same mechanism the stock Contacts app uses to show "Voice call" / "Video call" through Meet
  * as native quick actions, so firing ACTION_VIEW on it starts a real Meet call directly instead of
- * only opening the app. Mirrors [findWhatsAppCallDataUri].
+ * only opening the app. Mirrors [findWhatsAppCallDataUri]. Only used as a secondary attempt now,
+ * since it only finds a row for contacts Meet has actually synced — [startTachyonCallActivity]
+ * above works for any number and is tried first.
  */
 private fun findGoogleMeetCallDataUri(context: Context, phoneNumber: String, mimeType: String): Uri? {
     if (!isGoogleMeetInstalled(context)) return null
@@ -226,35 +249,40 @@ private fun findGoogleMeetCallDataUri(context: Context, phoneNumber: String, mim
     } catch (_: Exception) { null }
 }
 
-/** Starts a real Google Meet voice call to [phoneNumber] if this contact is Meet-synced on the
- *  device. Falls back to [startGoogleMeetCall] (which still places a real Meet call, just not
- *  necessarily voice-only) when no direct-call shortcut is registered for this contact. Returns
- *  false only if Google Meet isn't installed at all. */
+/** Starts a real Google Meet voice call to [phoneNumber]. Tries the same custom action + explicit
+ *  component the stock Contacts app fires for its "Voice call" quick action first (works for any
+ *  number); if that can't be resolved (e.g. CALL_PHONE not granted), falls back to a Meet-synced
+ *  contact's registered call shortcut, then to just opening the Meet app. Returns false only if
+ *  Google Meet isn't installed at all. */
 fun startGoogleMeetVoiceCall(context: Context, phoneNumber: String): Boolean {
     if (!isGoogleMeetInstalled(context)) return false
+    if (startTachyonCallActivity(context, phoneNumber, TACHYON_AUDIO_ACTION_ACTIVITY)) return true
     val uri = findGoogleMeetCallDataUri(context, phoneNumber, MIME_MEET_AUDIO_CALL)
     if (uri != null) {
-        return try {
+        try {
             context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            true
-        } catch (_: Exception) { startGoogleMeetCall(context, phoneNumber) }
+            return true
+        } catch (_: Exception) { /* fall through */ }
     }
-    return startGoogleMeetCall(context, phoneNumber)
+    return openGoogleMeetApp(context)
 }
 
-/** Starts a real Google Meet video call to [phoneNumber] if this contact is Meet-synced on the
- *  device. Falls back to [startGoogleMeetCall] when no direct-call shortcut is registered for this
- *  contact. Returns false only if Google Meet isn't installed at all. */
+/** Starts a real Google Meet video call to [phoneNumber]. Tries the same custom action + explicit
+ *  component the stock Contacts app fires for its "Video call" quick action first (works for any
+ *  number); if that can't be resolved, falls back to a Meet-synced contact's registered call
+ *  shortcut, then to just opening the Meet app. Returns false only if Google Meet isn't installed
+ *  at all. */
 fun startGoogleMeetVideoCall(context: Context, phoneNumber: String): Boolean {
     if (!isGoogleMeetInstalled(context)) return false
+    if (startTachyonCallActivity(context, phoneNumber, TACHYON_VIDEO_ACTION_ACTIVITY)) return true
     val uri = findGoogleMeetCallDataUri(context, phoneNumber, MIME_MEET_VIDEO_CALL)
     if (uri != null) {
-        return try {
+        try {
             context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            true
-        } catch (_: Exception) { startGoogleMeetCall(context, phoneNumber) }
+            return true
+        } catch (_: Exception) { /* fall through */ }
     }
-    return startGoogleMeetCall(context, phoneNumber)
+    return openGoogleMeetApp(context)
 }
 
 private fun hasReadContactsPermission(context: Context) =

@@ -625,6 +625,7 @@ fun ContactListItem(
 
     CallChatViaOverlay(
         phoneNumber = contact.phoneNumbers.firstOrNull()?.takeIf { it.isNotBlank() },
+        phoneNumbers = contact.phoneNumbers.filter { it.isNotBlank() },
         showPicker = showCallChatViaPicker,
         onPickerDismiss = { showCallChatViaPicker = false },
         showGoogleMeet = true
