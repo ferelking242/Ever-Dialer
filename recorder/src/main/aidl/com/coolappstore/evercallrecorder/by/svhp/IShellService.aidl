@@ -24,6 +24,16 @@ interface IShellService {
      */
     boolean grantAppOpByPackage(String packageName, String opName, int userProfileId) = 4;
 
+    /**
+     * Grants a role to a package for a specific user profile (e.g. a companion-device role).
+     * Used as a fallback for [grantAppOpByPackage] on OEM ROMs (Vivo, Oppo, Xiaomi, etc.) whose
+     * aggressive permission management silently blocks direct `appops set` calls: granting the
+     * app a companion-device role causes the OS to also grant MANAGE_ONGOING_CALLS as part of
+     * that role's permissions on those ROMs.
+     * See: https://github.com/kitsumed/ShizuCallRecorder/issues/41
+     */
+    boolean grantRole(String packageName, String roleName, int userProfileId) = 5;
+
     // The special Shizuku transaction code for "destroy" process
     void destroy() = 16777114;
 }

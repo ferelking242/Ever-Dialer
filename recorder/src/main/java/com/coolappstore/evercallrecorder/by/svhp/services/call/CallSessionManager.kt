@@ -540,6 +540,15 @@ class CallSessionManager private constructor(context: Context) {
      * Determines whether a call from/to a specific phone number should be ignored based on the user's contact filtering preferences.
      */
     private fun shouldIgnoreContact(normalisedNumber: String, mode: AppPreferences.IgnoreContactsMode, ignoredNumbers: Set<String>): Boolean {
+        // Upstream fix (ShizuCallRecorder issue #95 / v1.3.3): a blank normalised number — e.g. from a
+        // third-party app that puts non-numeric text in the phone number field, which gets stripped out
+        // by normalisation — used to be encoded straight into the PhoneLookup URI below and queried
+        // as-is, which could crash the content resolver. Bail out before building that URI at all.
+        if (normalisedNumber.isBlank()) {
+            AppLogger.i(TAG, "Cannot determine if contact should be ignored: phone number is blank, returning false")
+            return false
+        }
+
         val shouldIgnore = when (mode) {
             AppPreferences.IgnoreContactsMode.NONE  -> false
             AppPreferences.IgnoreContactsMode.ALL   -> {

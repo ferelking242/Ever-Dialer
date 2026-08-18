@@ -164,7 +164,10 @@ object RecordingFileNameFormatter {
      * i.e. the "misplaced contact name" bug. This mirrors the same normalize-then-verify
      * approach used for reading recordings back in HomeViewModel.resolveContactName().
      */
-    private fun getContactName(context: Context, phoneNumber: String): String? {
+    // Made non-private (was `private fun`) so RecordingNotificationHelper can reuse the same
+    // normalize-then-verify contact lookup to show the caller's name in the post-call
+    // notification, instead of duplicating this logic there.
+    fun getContactName(context: Context, phoneNumber: String): String? {
         if (!PermissionChecks.hasContactsPermission(context)) return null
 
         val normalized = com.coolappstore.evercallrecorder.by.svhp.utils.PhoneNumberManager.normalisePhoneNumber(phoneNumber)
@@ -172,6 +175,7 @@ object RecordingFileNameFormatter {
 
         val lookupUri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(normalized))
         val projection = arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME, ContactsContract.PhoneLookup.NUMBER)
+        val queryDigits = normalized.filter { it.isDigit() }
 
         return context.contentResolver.query(lookupUri, projection, null, null, null)?.use { cursor ->
             // A contact with multiple saved numbers (home/mobile/work) can produce several rows
@@ -179,7 +183,6 @@ object RecordingFileNameFormatter {
             // first row meant that if that row's number wasn't a plausible match, the lookup
             // gave up entirely even when a later row for the same contact matched correctly —
             // walk every row and accept the first genuine match.
-            val queryDigits = normalized.filter { it.isDigit() }
             val nameIndex = cursor.getColumnIndex(ContactsContract.PhoneLookup.DISPLAY_NAME)
             var matchedName: String? = null
             while (cursor.moveToNext()) {
@@ -192,6 +195,35 @@ object RecordingFileNameFormatter {
                 break
             }
             matchedName
-        }
+        } ?: fallbackScanContactName(context, queryDigits)
+    }
+
+    /** Fallback for [getContactName]: PhoneLookup's own fuzzy matching can return zero rows at
+     *  all when a contact is saved WITH a country code but the call number is WITHOUT one (or
+     *  vice versa), especially when it disagrees with the device's detected region — row
+     *  walking above can't help then since there's nothing to walk. Recover by scanning every
+     *  saved phone number directly with the same plausibility check. */
+    private fun fallbackScanContactName(context: Context, queryDigits: String): String? {
+        if (queryDigits.isEmpty()) return null
+        return try {
+            context.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY, ContactsContract.CommonDataKinds.Phone.NUMBER),
+                null, null, null
+            )?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY)
+                val numberIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                var matchedName: String? = null
+                while (cursor.moveToNext()) {
+                    val savedDigits = cursor.getString(numberIndex)?.filter { it.isDigit() }.orEmpty()
+                    val isPlausibleMatch = savedDigits.isNotEmpty() &&
+                        (savedDigits.endsWith(queryDigits.takeLast(7)) || queryDigits.endsWith(savedDigits.takeLast(7)))
+                    if (!isPlausibleMatch) continue
+                    matchedName = if (nameIndex != -1) cursor.getString(nameIndex) else null
+                    break
+                }
+                matchedName
+            }
+        } catch (_: Exception) { null }
     }
 }

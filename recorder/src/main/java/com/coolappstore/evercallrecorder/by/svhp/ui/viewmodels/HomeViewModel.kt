@@ -626,6 +626,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
                 Uri.encode(normalized)
             )
+            val queryDigits = normalized.filter { it.isDigit() }
             context.contentResolver.query(
                 lookupUri,
                 arrayOf(ContactsContract.PhoneLookup.DISPLAY_NAME, ContactsContract.PhoneLookup.NUMBER),
@@ -642,7 +643,6 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 // even when a later row for the very same contact was the correct match. That's
                 // why a recording made from a contact's 2nd/3rd saved number could fail to show
                 // the contact's name. Walk every row and accept the first genuine match.
-                val queryDigits = normalized.filter { it.isDigit() }
                 var matchedName: String? = null
                 while (cursor.moveToNext()) {
                     val matchedNumber = runCatching { cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.PhoneLookup.NUMBER)) }.getOrNull()
@@ -651,6 +651,35 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                         (matchedDigits.endsWith(queryDigits.takeLast(7)) || queryDigits.endsWith(matchedDigits.takeLast(7)))
                     if (!isPlausibleMatch) continue
                     matchedName = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.PhoneLookup.DISPLAY_NAME))
+                    break
+                }
+                matchedName
+            } ?: fallbackScanContactName(context, queryDigits)
+        } catch (_: Exception) { null }
+    }
+
+    /** Fallback for [resolveContactName]: PhoneLookup's built-in fuzzy matching can return
+     *  zero rows at all when a contact is saved WITH a country code but the recording's number
+     *  is WITHOUT one (or vice versa), especially when it disagrees with the device's detected
+     *  region — row-walking above can't help then since there's nothing to walk. Recover by
+     *  scanning every saved phone number directly with the same plausibility check. */
+    private fun fallbackScanContactName(context: Context, queryDigits: String): String? {
+        if (queryDigits.isEmpty()) return null
+        return try {
+            context.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY, ContactsContract.CommonDataKinds.Phone.NUMBER),
+                null, null, null
+            )?.use { cursor ->
+                val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY)
+                val numberIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                var matchedName: String? = null
+                while (cursor.moveToNext()) {
+                    val savedDigits = cursor.getString(numberIdx)?.filter { it.isDigit() }.orEmpty()
+                    val isPlausibleMatch = savedDigits.isNotEmpty() &&
+                        (savedDigits.endsWith(queryDigits.takeLast(7)) || queryDigits.endsWith(savedDigits.takeLast(7)))
+                    if (!isPlausibleMatch) continue
+                    matchedName = cursor.getString(nameIdx)
                     break
                 }
                 matchedName
@@ -758,7 +787,8 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                 val lookupUri = Uri.withAppendedPath(
                     ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(normalized)
                 )
-                context.contentResolver.query(
+                val queryDigits = normalized.filter { it.isDigit() }
+                var photoUriStr: String? = context.contentResolver.query(
                     lookupUri,
                     arrayOf(ContactsContract.PhoneLookup.PHOTO_URI, ContactsContract.PhoneLookup.NUMBER),
                     null, null, null
@@ -766,22 +796,54 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
                     // Same multi-row fix as resolveContactName(): a contact with several saved
                     // numbers can produce multiple rows, so walk all of them for a genuine match
                     // instead of giving up after an unrelated first row.
-                    val queryDigits = normalized.filter { it.isDigit() }
-                    var photoUriStr: String? = null
+                    var matched: String? = null
                     while (cursor.moveToNext()) {
                         val matchedNumber = runCatching { cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.PhoneLookup.NUMBER)) }.getOrNull()
                         val matchedDigits = matchedNumber?.filter { it.isDigit() }.orEmpty()
                         val isPlausibleMatch = matchedDigits.isNotEmpty() && queryDigits.isNotEmpty() &&
                             (matchedDigits.endsWith(queryDigits.takeLast(7)) || queryDigits.endsWith(matchedDigits.takeLast(7)))
                         if (!isPlausibleMatch) continue
-                        photoUriStr = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.PhoneLookup.PHOTO_URI))
-                        if (photoUriStr != null) break
+                        matched = cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.PhoneLookup.PHOTO_URI))
+                        if (matched != null) break
                     }
-                    if (photoUriStr == null) return@withContext null
-                    val stream = context.contentResolver.openInputStream(Uri.parse(photoUriStr))
-                        ?: return@withContext null
-                    BitmapFactory.decodeStream(stream)?.asImageBitmap()
+                    matched
                 }
+
+                // Same fallback rationale as resolveContactName(): PhoneLookup can return zero
+                // rows at all for a country-code-mismatched number, so if nothing matched
+                // above, fall back to a manual scan of every saved phone number.
+                if (photoUriStr == null) {
+                    photoUriStr = fallbackScanContactPhotoUri(context, queryDigits)
+                }
+                if (photoUriStr == null) return@withContext null
+
+                val stream = context.contentResolver.openInputStream(Uri.parse(photoUriStr))
+                    ?: return@withContext null
+                BitmapFactory.decodeStream(stream)?.asImageBitmap()
             } catch (_: Exception) { null }
         }
+
+    private fun fallbackScanContactPhotoUri(context: Context, queryDigits: String): String? {
+        if (queryDigits.isEmpty()) return null
+        return try {
+            context.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.PHOTO_URI, ContactsContract.CommonDataKinds.Phone.NUMBER),
+                null, null, null
+            )?.use { cursor ->
+                val photoIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_URI)
+                val numberIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                var matchedPhoto: String? = null
+                while (cursor.moveToNext()) {
+                    val savedDigits = cursor.getString(numberIdx)?.filter { it.isDigit() }.orEmpty()
+                    val isPlausibleMatch = savedDigits.isNotEmpty() &&
+                        (savedDigits.endsWith(queryDigits.takeLast(7)) || queryDigits.endsWith(savedDigits.takeLast(7)))
+                    if (!isPlausibleMatch) continue
+                    matchedPhoto = cursor.getString(photoIdx)
+                    if (matchedPhoto != null) break
+                }
+                matchedPhoto
+            }
+        } catch (_: Exception) { null }
+    }
 }

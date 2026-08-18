@@ -134,6 +134,21 @@ class MainActivity : FragmentActivity() {
             Rivo4Theme {
                 val navController = rememberNavController()
 
+                // Eagerly create CallLogViewModel here, at the top of the compose tree, instead
+                // of letting it lazily spin up the first time the Calls/Recents screen (or any
+                // other screen that happens to reference it) is composed. Its init{} block is
+                // what registers the CallLog/Contacts ContentObservers and starts collecting
+                // CallService.currentCallSession — so until it exists, a call placed or received
+                // through EverDialer *or any other app* (any write to the system CallLog
+                // provider) doesn't trigger a refresh at all; the list only ever catches up the
+                // next time the user happens to open the app or navigate into the call log
+                // section, since that's what was creating the ViewModel for the first time.
+                // Creating it unconditionally here means the observers are live as soon as
+                // MainActivity is, regardless of which tab is the configured start destination,
+                // so call log updates from anywhere arrive immediately instead of on next visit.
+                val callLogViewModel: com.coolappstore.everdialer.by.svhp.controller.CallLogViewModel =
+                    org.koin.compose.viewmodel.koinActivityViewModel()
+
                 val prefs = remember {
                     GlobalContext.get().get<PreferenceManager>()
                 }

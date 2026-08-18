@@ -121,7 +121,19 @@ class PhoneNumberManager private constructor(context: Context) {
      */
     suspend fun parsePhoneNumber(rawNumber: String, defaultRegion: String = getDeviceCountryIso()): Phonenumber.PhoneNumber? = withContext(Dispatchers.Default) {
         return@withContext try {
-            phoneUtil.parse(rawNumber, defaultRegion.uppercase())
+            val parsedNumber = phoneUtil.parse(rawNumber, defaultRegion.uppercase())
+            // Upstream fix (v1.3.2): some call providers/OEMs omit the leading '+' on otherwise
+            // international numbers, so parsing purely in the device's region can produce a
+            // "successfully parsed" but not-actually-valid number. When that happens, retry once
+            // as an explicit international number (with a '+' prepended if missing) instead of
+            // silently returning the wrong/invalid regional interpretation.
+            if (phoneUtil.isValidNumber(parsedNumber)) {
+                parsedNumber
+            } else {
+                val internationalNumberStr = if (rawNumber.startsWith("+")) rawNumber else "+$rawNumber"
+                AppLogger.v(TAG, "Parsed number ($rawNumber) is invalid in region ($defaultRegion), attempting to parse as international: $internationalNumberStr")
+                phoneUtil.parse(internationalNumberStr, "ZZ")
+            }
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error parsing phone number: ${e.message}", e)
             null

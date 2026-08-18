@@ -324,7 +324,7 @@ class ContactsRepository(private val contentResolver: ContentResolver, private v
                 .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, contact.name)
                 .build())
 
-            contact.phoneNumbers.forEach { number ->
+            contact.phoneNumbers.filter { it.isNotBlank() }.forEach { number ->
                 ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
                     .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, rawContactIndex)
                     .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
@@ -332,13 +332,87 @@ class ContactsRepository(private val contentResolver: ContentResolver, private v
                     .withValue(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
                     .build())
             }
+
+            // Bug fix: brand-new contacts previously only ever got their name + phone numbers
+            // written — any email or address typed on the "new contact" screen was silently
+            // dropped since there were no insert ops for those mimetypes here at all.
+            contact.emails.filter { it.isNotBlank() }.forEach { email ->
+                ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, rawContactIndex)
+                    .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.CommonDataKinds.Email.ADDRESS, email)
+                    .withValue(ContactsContract.CommonDataKinds.Email.TYPE, ContactsContract.CommonDataKinds.Email.TYPE_HOME)
+                    .build())
+            }
+            contact.addresses.filter { it.isNotBlank() }.forEach { address ->
+                ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                    .withValueBackReference(ContactsContract.Data.RAW_CONTACT_ID, rawContactIndex)
+                    .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredPostal.CONTENT_ITEM_TYPE)
+                    .withValue(ContactsContract.CommonDataKinds.StructuredPostal.FORMATTED_ADDRESS, address)
+                    .withValue(ContactsContract.CommonDataKinds.StructuredPostal.TYPE, ContactsContract.CommonDataKinds.StructuredPostal.TYPE_HOME)
+                    .build())
+            }
         } else {
-            
+
             ops.add(ContentProviderOperation.newUpdate(ContactsContract.Data.CONTENT_URI)
                 .withSelection("${ContactsContract.Data.CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?", 
                     arrayOf(contact.id, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE))
                 .withValue(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, contact.name)
                 .build())
+
+            // Bug fix: editing an existing contact previously only ever updated the display
+            // name — phone numbers, emails, and addresses typed into the edit screen were
+            // silently discarded because there was no code here to write them back at all.
+            // That's why saving an email/address (or editing/removing a number) appeared to
+            // do nothing. Since the app doesn't track a per-row Data._ID for each individual
+            // phone/email/address (the Contact model only holds plain string lists), the
+            // simplest correct approach is: replace-in-place — delete every existing row of
+            // each mimetype for this aggregate contact, then re-insert the current list of
+            // values against one of its raw contacts. Deleting by CONTACT_ID removes rows
+            // across *all* raw contacts merged into this aggregate (e.g. Google + SIM), while
+            // the new rows are (re)inserted into a single raw contact — Android's aggregation
+            // still surfaces them correctly on the merged Contact afterwards.
+            val targetRawContactId = getRawContactIdsForContact(contact.id).firstOrNull()
+
+            ops.add(ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
+                .withSelection("${ContactsContract.Data.CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                    arrayOf(contact.id, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE))
+                .build())
+            ops.add(ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
+                .withSelection("${ContactsContract.Data.CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                    arrayOf(contact.id, ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE))
+                .build())
+            ops.add(ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
+                .withSelection("${ContactsContract.Data.CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                    arrayOf(contact.id, ContactsContract.CommonDataKinds.StructuredPostal.CONTENT_ITEM_TYPE))
+                .build())
+
+            if (targetRawContactId != null) {
+                contact.phoneNumbers.filter { it.isNotBlank() }.forEach { number ->
+                    ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                        .withValue(ContactsContract.Data.RAW_CONTACT_ID, targetRawContactId)
+                        .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE)
+                        .withValue(ContactsContract.CommonDataKinds.Phone.NUMBER, number)
+                        .withValue(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.TYPE_MOBILE)
+                        .build())
+                }
+                contact.emails.filter { it.isNotBlank() }.forEach { email ->
+                    ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                        .withValue(ContactsContract.Data.RAW_CONTACT_ID, targetRawContactId)
+                        .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.Email.CONTENT_ITEM_TYPE)
+                        .withValue(ContactsContract.CommonDataKinds.Email.ADDRESS, email)
+                        .withValue(ContactsContract.CommonDataKinds.Email.TYPE, ContactsContract.CommonDataKinds.Email.TYPE_HOME)
+                        .build())
+                }
+                contact.addresses.filter { it.isNotBlank() }.forEach { address ->
+                    ops.add(ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                        .withValue(ContactsContract.Data.RAW_CONTACT_ID, targetRawContactId)
+                        .withValue(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredPostal.CONTENT_ITEM_TYPE)
+                        .withValue(ContactsContract.CommonDataKinds.StructuredPostal.FORMATTED_ADDRESS, address)
+                        .withValue(ContactsContract.CommonDataKinds.StructuredPostal.TYPE, ContactsContract.CommonDataKinds.StructuredPostal.TYPE_HOME)
+                        .build())
+                }
+            }
         }
 
         try {
@@ -667,6 +741,53 @@ class ContactsRepository(private val contentResolver: ContentResolver, private v
                     photoUri = photoUri,
                     isFavorite = starred,
                     phoneNumbers = listOf(number)
+                )
+            }
+        }
+
+        // Fallback: PhoneLookup's own built-in fuzzy matching relies on Android's internal
+        // PHONE_NUMBERS_EQUAL comparison, which on many OEMs/Android versions simply fails to
+        // bridge a number saved WITH a country code (e.g. "+917875551234") against the same
+        // number dialed/received WITHOUT one ("7875551234"), or vice versa — especially when
+        // the device's detected region doesn't match the number's country. In that case
+        // PhoneLookup returns *zero* rows at all, so no amount of row-walking above helps; the
+        // contact is wrongly treated as unknown everywhere this lookup is used (contact info
+        // page, call logs, call recording logs, incoming/ongoing call UI). Recover by manually
+        // scanning every saved phone number directly and applying the same trusted
+        // exact-or-suffix comparison ourselves.
+        return getContactByNumberFallbackScan(queriedDigits)
+    }
+
+    /** Manual scan over every saved phone number, used when PhoneLookup itself fails to
+     *  surface a genuine match (see [getContactByNumber]). */
+    private fun getContactByNumberFallbackScan(queriedDigits: String): Contact? {
+        if (queriedDigits.isEmpty()) return null
+        val projection = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY,
+            ContactsContract.CommonDataKinds.Phone.PHOTO_URI,
+            ContactsContract.CommonDataKinds.Phone.STARRED,
+            ContactsContract.CommonDataKinds.Phone.NUMBER
+        )
+        contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            projection,
+            null, null, null
+        )?.use { cursor ->
+            val idIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
+            val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY)
+            val photoIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_URI)
+            val starredIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.STARRED)
+            val numberIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+            while (cursor.moveToNext()) {
+                val savedNumber = cursor.getString(numberIdx) ?: continue
+                if (!numbersLikelyMatch(queriedDigits, savedNumber)) continue
+                return Contact(
+                    id = cursor.getString(idIdx) ?: continue,
+                    name = cursor.getString(nameIdx),
+                    photoUri = cursor.getString(photoIdx),
+                    isFavorite = cursor.getInt(starredIdx) == 1,
+                    phoneNumbers = listOf(savedNumber)
                 )
             }
         }

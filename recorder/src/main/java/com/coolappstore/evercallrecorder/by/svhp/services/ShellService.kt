@@ -355,6 +355,35 @@ class ShellService : IShellService.Stub {
     }
 
     /**
+     * Grants a role to [packageName] for a given user profile via `cmd role add-role-holder`,
+     * using the elevated shell identity this service runs under via Shizuku.
+     *
+     * Ported from upstream ShizuCallRecorder (v1.3.1) as a fallback escalation step for
+     * [grantAppOpByPackage]: on some OEM ROMs (Vivo, Oppo, Xiaomi) direct `appops set` calls are
+     * silently ignored by the ROM's own permission manager, but granting a companion-device role
+     * causes the OS to also grant the app the MANAGE_ONGOING_CALLS AppOp as part of that role.
+     * See: https://github.com/kitsumed/ShizuCallRecorder/issues/41
+     */
+    override fun grantRole(packageName: String, roleName: String, userProfileId: Int): Boolean {
+        return try {
+            AppLogger.i(TAG, "Executing: cmd role add-role-holder --user $userProfileId $roleName $packageName")
+            val process = ProcessBuilder("cmd", "role", "add-role-holder", "--user", userProfileId.toString(), roleName, packageName).start()
+            val exitCode = process.waitFor()
+            val errorOutput = process.errorStream.bufferedReader().readText().trim()
+            if (exitCode == 0 && errorOutput.isEmpty()) {
+                AppLogger.i(TAG, "Successfully granted role $roleName to $packageName")
+                true
+            } else {
+                AppLogger.e(TAG, "Failed to grant role $roleName. Exit code $exitCode. Error: ${errorOutput.ifBlank { "None" }}")
+                false
+            }
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Exception granting role $roleName to $packageName", e)
+            false
+        }
+    }
+
+    /**
      * Called by Shizuku when it wants to shut down this user service.
      * MUST call [exitProcess] so the entire shell process is terminated; otherwise Shizuku may
      * be unable to clean up the process, and it will linger in memory.

@@ -202,6 +202,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
      * Grants the MANAGE_ONGOING_CALLS AppOp to this app through Shizuku, so the OS accepts binding
      * [com.coolappstore.evercallrecorder.by.svhp.services.call.AppInCallService]. Requires Shizuku
      * to be installed and its permission already granted (same requirement as recording itself).
+     *
+     * Ported from upstream ShizuCallRecorder (v1.3.1, issue #41): on some OEM ROMs (Vivo, Oppo,
+     * Xiaomi) with aggressive permission management, a direct `appops set` grant is silently
+     * ignored. If the direct grant doesn't actually stick (verified via [hasManageOngoingCallsPermission]
+     * right after), fall back to granting a companion-device role instead — those ROMs grant
+     * MANAGE_ONGOING_CALLS as a side effect of that role, even when they block the direct AppOp
+     * grant. Tries the Glasses role first on Android 14+ (it carries slightly fewer side-permissions
+     * than Watch), then Watch on Android 12+.
      */
     override fun grantInCallServicePermission(onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
@@ -215,8 +223,28 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 }
                 val service = manager.getShellService()
                 val userId = android.os.Process.myUid() / 100000
-                val granted = service.grantAppOpByPackage(appContext.packageName, "MANAGE_ONGOING_CALLS", userId)
-                onResult(granted)
+
+                service.grantAppOpByPackage(appContext.packageName, "MANAGE_ONGOING_CALLS", userId)
+                if (hasManageOngoingCallsPermission()) {
+                    onResult(true)
+                    return@launch
+                }
+
+                AppLogger.i("SCR:SettingsViewModel", "Direct AppOp grant didn't stick, falling back to role-grant escalation (OEM permission manager workaround)")
+                val roleFallbackChain = buildList {
+                    if (android.os.Build.VERSION.SDK_INT >= 34) add("android.app.role.COMPANION_DEVICE_GLASSES")
+                    if (android.os.Build.VERSION.SDK_INT >= 31) add("android.app.role.COMPANION_DEVICE_WATCH")
+                }
+                for (roleName in roleFallbackChain) {
+                    service.grantRole(appContext.packageName, roleName, userId)
+                    if (hasManageOngoingCallsPermission()) {
+                        AppLogger.i("SCR:SettingsViewModel", "MANAGE_ONGOING_CALLS granted via role fallback: $roleName")
+                        onResult(true)
+                        return@launch
+                    }
+                }
+
+                onResult(false)
             } catch (e: Exception) {
                 AppLogger.e("SCR:SettingsViewModel", "Failed to grant MANAGE_ONGOING_CALLS via Shizuku", e)
                 onResult(false)

@@ -118,6 +118,27 @@ fun RecentScreen(navController: NavController, navigator: DestinationsNavigator)
         }
     }
 
+    // Bug fix: the call log list previously only ever updated via the system ContentObserver
+    // (which can lag well behind the moment a call actually starts/ends) or by watching
+    // CallService's session state end-to-end — nothing re-fetched just from the user coming
+    // back to this screen/app, which is why re-opening the app right after a call, or bringing
+    // it to the foreground mid-call, could show a stale list until something else (like a
+    // scroll, which happens to trigger recomposition) forced it to catch up. Explicitly
+    // re-fetch every time this screen becomes visible again so the list is always current the
+    // instant it's looked at, with no scroll needed. Uses the same activity-scoped
+    // CallLogViewModel instance that CallLogFullContent below reads from.
+    val callLogViewModel: CallLogViewModel = koinActivityViewModel()
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                callLogViewModel.refreshLogs()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     if (showDialpad) {
         val dialpadSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         val dialpadScope = rememberCoroutineScope()

@@ -304,7 +304,18 @@ class RecordingNotificationHelper(private val context: Context) {
         val notificationId = Random.nextInt(1000, Int.MAX_VALUE)
 
         val directionLabel = metadata?.direction?.labelResId?.let { context.getString(it) } ?: ""
-        val numberLabel = metadata?.getBestNumber()?.takeIf { it.isNotBlank() } ?: metadata?.sourceApp
+        val bestNumber = metadata?.getBestNumber()?.takeIf { it.isNotBlank() }
+        // Upstream improvement (v1.3.2): show the caller's contact name in the post-call
+        // notification instead of just the bare number, when it can be resolved.
+        val contactName = bestNumber?.let {
+            com.coolappstore.evercallrecorder.by.svhp.utils.RecordingFileNameFormatter.getContactName(context, it)
+        }
+        val numberLabel = when {
+            contactName != null && bestNumber != null -> "$contactName ($bestNumber)"
+            contactName != null -> contactName
+            bestNumber != null -> bestNumber
+            else -> metadata?.sourceApp
+        }
         val contentText = context.getString(
             R.string.post_recording_notification_text,
             listOfNotNull(numberLabel, directionLabel.ifBlank { null }).joinToString(" · ")

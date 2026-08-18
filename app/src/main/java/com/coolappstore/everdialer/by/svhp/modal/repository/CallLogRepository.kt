@@ -264,6 +264,46 @@ class CallLogRepository(
                 } ?: Triple(null, null, null)
         } catch (e: Exception) {
             Triple(null, null, null)
+        }.let { resolved ->
+            // Fallback: PhoneLookup's own fuzzy matching can return zero rows at all when a
+            // contact is saved WITH a country code but the call-log number is WITHOUT one (or
+            // vice versa), particularly when it disagrees with the device's detected region —
+            // no amount of row-walking above helps in that case since there's nothing to walk.
+            // Recover by manually scanning every saved phone number directly, same as
+            // ContactsRepository.getContactByNumberFallbackScan(), so calls/recordings from a
+            // contact's differently-formatted number don't show up as "Unknown".
+            if (resolved.first == null && resolved.third == null) {
+                fallbackScanContactByNumber(queriedDigits) ?: resolved
+            } else resolved
         }
+    }
+
+    private fun fallbackScanContactByNumber(queriedDigits: String): Triple<String?, String?, Long?>? {
+        if (queriedDigits.isEmpty()) return null
+        val projection = arrayOf(
+            ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY,
+            ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI,
+            ContactsContract.CommonDataKinds.Phone.NUMBER
+        )
+        return try {
+            contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                projection, null, null, null
+            )?.use { cursor ->
+                val idIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.CONTACT_ID)
+                val nameIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY)
+                val photoIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.PHOTO_THUMBNAIL_URI)
+                val numberIdx = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+                var result: Triple<String?, String?, Long?>? = null
+                while (cursor.moveToNext()) {
+                    val savedNumber = cursor.getString(numberIdx) ?: continue
+                    if (!numbersLikelyMatch(queriedDigits, savedNumber)) continue
+                    result = Triple(cursor.getString(nameIdx), cursor.getString(photoIdx), cursor.getLong(idIdx))
+                    break
+                }
+                result
+            }
+        } catch (_: Exception) { null }
     }
 }

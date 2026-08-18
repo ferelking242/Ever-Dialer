@@ -228,7 +228,10 @@ class ScrcpyClient(
                 val payloadBytes = ByteArray(header.payloadSize)
                 inputStream.readFully(payloadBytes)
 
-                AppLogger.v(TAG, "Packet: pts=${header.pts} config=${header.isConfig} keyFrame=${header.isKeyFrame} media=${header.isMedia} size=${header.payloadSize}")
+                // UNCOMMENT WHEN DEBUGGING ScrcpyClient decoder or updating scrcpy-server version.
+                // Upstream fix: left uncommented this fires on every single audio packet (dozens
+                // per second for the whole call), flooding logcat and adding needless overhead.
+                //AppLogger.v(TAG, "Packet: pts=${header.pts} config=${header.isConfig} keyFrame=${header.isKeyFrame} media=${header.isMedia} size=${header.payloadSize}")
 
                 listener.onAudioPacket(
                     AudioPacket(
@@ -244,7 +247,9 @@ class ScrcpyClient(
             listener.onStreamEnd(null)
         } catch (e: Exception) {
             // Any other exception indicates an abnormal termination.
-            AppLogger.w(TAG, "Stream ended with error: ${e.message}")
+            // Upstream fix: log at error level with the exception attached (was a warning with no
+            // stack trace before), so an abnormal stream termination is actually diagnosable.
+            AppLogger.e(TAG, "Stream ended with error: ${e.message}", e)
             listener.onStreamEnd(e.message)
         } finally {
             runCatching { inputStream.close() } // do NOT close inputPfd here; that is done in close()

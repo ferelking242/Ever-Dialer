@@ -102,18 +102,35 @@ class CallLogViewModel(
         // ends — while the user is still on the in-call screen / navigating back — so Recents
         // is already showing the finished call by the time they look, with no pull-to-refresh
         // and no visible loading animation needed.
+        //
+        // Bug fix: this previously only ever refetched when a call *ended* (session transitioned
+        // to null). That meant an incoming call that was missed/rejected super quickly, or a
+        // call log row that the provider already had queued up by the time the call actually
+        // starts ringing/dialing, wouldn't show up until something else (like scrolling, which
+        // happens to force a recomposition) nudged the list to catch up. Now also refetch right
+        // when a call *starts* — both incoming and outgoing — so Recents stays current through
+        // the whole lifecycle of a call, not just after it hangs up.
         viewModelScope.launch {
             CallService.currentCallSession.collect { session ->
                 if (session != null) {
-                    wasInCall = true
+                    if (!wasInCall) {
+                        wasInCall = true
+                        callEndRefreshJob?.cancel()
+                        callEndRefreshJob = viewModelScope.launch(Dispatchers.IO) {
+                            fetchLogsInternal()
+                        }
+                    }
                 } else if (wasInCall) {
                     wasInCall = false
                     callEndRefreshJob?.cancel()
                     callEndRefreshJob = viewModelScope.launch(Dispatchers.IO) {
-                        // Fire right away, then once more shortly after as a safety net in case
-                        // the provider hadn't finished writing the row on the first pass yet.
+                        // Fire right away, then a couple more times shortly after as a safety
+                        // net in case the provider hadn't finished writing the row on the
+                        // first (or second) pass yet.
                         fetchLogsInternal()
-                        delay(600)
+                        delay(400)
+                        fetchLogsInternal()
+                        delay(800)
                         fetchLogsInternal()
                     }
                 }
