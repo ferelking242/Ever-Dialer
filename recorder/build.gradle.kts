@@ -22,6 +22,9 @@ val scrcpyServerSha256 = "84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74
 val scrcpyServerAssetName = "scrcpy-server"
 val scrcpyDownloadDir = layout.buildDirectory.dir("generated/scrcpy/assets")
 val scrcpyServerAssetFile = scrcpyDownloadDir.map { it.file(scrcpyServerAssetName) }
+// Bundled copy checked into the repo. If present (and hash matches), it is used
+// instead of hitting GitHub at build time, avoiding release-download API/rate-limit failures.
+val bundledScrcpyServerFile = layout.projectDirectory.file("scrcpy-server/scrcpy-server-v$scrcpyVersion")
 val libphonenumberMetadataDir = layout.buildDirectory.dir("generated/libphonenumber/assets")
 
 // Detect if we're running in a CI environment (e.g., GitHub Actions).
@@ -37,20 +40,38 @@ abstract class DownloadAssetTask : DefaultTask() {
     @get:Input
     abstract val assetName: Property<String>
 
+    @get:InputFile
+    @get:Optional
+    abstract val bundledFile: RegularFileProperty
+
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
 
     @TaskAction
     fun download() {
         val targetFile = outputDir.get().file(assetName.get()).asFile
+        targetFile.parentFile.mkdirs()
 
-        // Internal check to skip if already correct
+        // 1. Prefer the locally bundled copy, if it exists and matches the expected hash.
+        val bundled = bundledFile.orNull?.asFile
+        if (bundled != null && bundled.exists()) {
+            val bundledHash = calculateSha256(bundled)
+            if (bundledHash.equals(sha256.get(), ignoreCase = true)) {
+                println("Using bundled ${assetName.get()} (no download needed).")
+                bundled.copyTo(targetFile, overwrite = true)
+                return
+            } else {
+                println("Bundled ${assetName.get()} hash mismatch (expected ${sha256.get()}, got $bundledHash), falling back to download.")
+            }
+        }
+
+        // 2. Skip re-download if the previously produced output is already correct.
         if (targetFile.exists() && calculateSha256(targetFile).equals(sha256.get(), ignoreCase = true)) {
             println("${assetName.get()} is already up-to-date.")
             return
         }
 
-        targetFile.parentFile.mkdirs()
+        // 3. Fall back to downloading from GitHub.
         println("Downloading ${assetName.get()}...")
 
         URI(url.get()).toURL().openStream().use { input ->
@@ -88,6 +109,9 @@ val downloadScrcpyServer = tasks.register<DownloadAssetTask>("downloadScrcpyServ
     url.set(scrcpyServerUrl)
     sha256.set(scrcpyServerSha256)
     assetName.set(scrcpyServerAssetName)
+    if (bundledScrcpyServerFile.asFile.exists()) {
+        bundledFile.set(bundledScrcpyServerFile)
+    }
     outputDir.set(scrcpyDownloadDir)
 }
 
