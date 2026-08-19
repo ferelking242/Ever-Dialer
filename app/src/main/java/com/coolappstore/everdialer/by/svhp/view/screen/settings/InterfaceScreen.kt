@@ -841,7 +841,7 @@ fun InterfaceScreen(navigator: DestinationsNavigator, highlightKey: String? = nu
                                     headline = "Dynamic Colors",
                                     supporting = "Wallpaper based app color theming",
                                     leadingIcon = Icons.Outlined.Palette,
-                                    iconContainerColor = ColorPurple,
+                                    iconContainerColor = MaterialTheme.colorScheme.primary,
                                     checked = dynamicColors,
                                     modifier = Modifier.settingsSearchHighlight("dynamic_colors", highlightedKey) { highlightedKey = null },
                                     onCheckedChange = {

@@ -38,6 +38,8 @@ private fun buildCustomColorScheme(primary: Color, dark: Boolean): androidx.comp
     val b = android.graphics.Color.blue(argb)
 
     fun blend(a: Int, b2: Int, ratio: Float) = (a + (b2 - a) * ratio).toInt().coerceIn(0, 255)
+    fun tint(target: Int, ratio: Float, r0: Int, g0: Int, b0: Int) =
+        Color(blend(r0, target, ratio), blend(g0, target, ratio), blend(b0, target, ratio))
 
     val secR = blend(r, 128, 0.4f)
     val secG = blend(g, 128, 0.4f)
@@ -60,13 +62,20 @@ private fun buildCustomColorScheme(primary: Color, dark: Boolean): androidx.comp
             blend(g, 0, 0.7f),
             blend(b, 0, 0.7f)
         )
+        val secondaryDark = Color(blend(secR, 200, 0.5f), blend(secG, 200, 0.5f), blend(secB, 200, 0.5f))
+        val tertiaryDark = Color(blend(terR, 200, 0.5f), blend(terG, 200, 0.5f), blend(terB, 200, 0.5f))
         darkColorScheme(
             primary = primaryContainer,
             onPrimary = onPrimaryContainer,
             primaryContainer = Color(blend(r, 40, 0.7f), blend(g, 40, 0.7f), blend(b, 40, 0.7f)),
             onPrimaryContainer = primaryContainer,
-            secondary = Color(blend(secR, 200, 0.5f), blend(secG, 200, 0.5f), blend(secB, 200, 0.5f)),
-            tertiary = Color(blend(terR, 200, 0.5f), blend(terG, 200, 0.5f), blend(terB, 200, 0.5f))
+            secondary = secondaryDark,
+            secondaryContainer = tint(40, 0.7f, secR, secG, secB),
+            onSecondaryContainer = secondaryDark,
+            tertiary = tertiaryDark,
+            tertiaryContainer = tint(40, 0.7f, terR, terG, terB),
+            onTertiaryContainer = tertiaryDark,
+            inversePrimary = Color(blend(r, 0, 0.35f), blend(g, 0, 0.35f), blend(b, 0, 0.35f))
         ).copy(
             background           = Color(0xFF1C1B1F),
             surface              = Color(0xFF1C1B1F),
@@ -94,7 +103,12 @@ private fun buildCustomColorScheme(primary: Color, dark: Boolean): androidx.comp
             primaryContainer = primaryContainer,
             onPrimaryContainer = onPrimaryContainer,
             secondary = secondary,
-            tertiary = tertiary
+            secondaryContainer = tint(255, 0.8f, secR, secG, secB),
+            onSecondaryContainer = tint(0, 0.7f, secR, secG, secB),
+            tertiary = tertiary,
+            tertiaryContainer = tint(255, 0.8f, terR, terG, terB),
+            onTertiaryContainer = tint(0, 0.7f, terR, terG, terB),
+            inversePrimary = Color(blend(r, 255, 0.55f), blend(g, 255, 0.55f), blend(b, 255, 0.55f))
         ).copy(
             background           = Color(0xFFFFFBFE),
             surface              = Color(0xFFFFFBFE),

@@ -673,7 +673,7 @@ fun ExpressiveCallScreen(
         }
     }
 
-    val bgColor = MaterialTheme.colorScheme.surface
+    val bgColor = colorLerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primary, 0.035f)
     val onBgColor = MaterialTheme.colorScheme.onSurface
     val subtleColor = MaterialTheme.colorScheme.onSurfaceVariant
     val overlayColor = if (isDark) Color.White.copy(0.08f) else Color.Black.copy(0.06f)
@@ -1064,8 +1064,8 @@ fun ExpressiveCallScreen(
                                     }
                                 },
                                 onMessage = onMessageButtonClick,
-                                labelColor = subtleColor,
-                                bgColor = overlayColor,
+                                labelColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(0.6f),
+                                bgColor = colorLerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, 0.55f),
                                 isPocketBlocked = isPocketBlocked,
                                 isDark = isDark
                             )
@@ -1101,9 +1101,18 @@ fun ExpressiveCallScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Top
                     ) {
-                        Box(modifier = Modifier.size(120.dp).clip(CircleShape).background(controlBtnColor)) {
+                        val isIncomingRinging = effectiveCallState == Call.STATE_RINGING
+                        val callAvatarSize = 240.dp
+                        val callAvatarIconSize = 100.dp
+                        val callNameStyle = if (isIncomingRinging)
+                            MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold)
+                        else
+                            MaterialTheme.typography.displayMedium.copy(fontWeight = FontWeight.Medium)
+                        val callNameBoxHeight = if (isIncomingRinging) 64.dp else 58.dp
+
+                        Box(modifier = Modifier.size(callAvatarSize).clip(CircleShape).background(controlBtnColor)) {
                             // Always render Icon as base layer so layout never shifts
-                            Icon(Icons.Default.Person, null, modifier = Modifier.align(Alignment.Center).size(56.dp), tint = subtleColor)
+                            Icon(Icons.Default.Person, null, modifier = Modifier.align(Alignment.Center).size(callAvatarIconSize), tint = subtleColor)
                             if (!photoUri.isNullOrEmpty()) {
                                 AsyncImage(
                                     model = ImageRequest.Builder(context)
@@ -1118,19 +1127,35 @@ fun ExpressiveCallScreen(
                         }
 
                         Spacer(modifier = Modifier.height(28.dp))
+
                         // Fixed height box so layout never shifts when name loads
-                        Box(modifier = Modifier.fillMaxWidth().height(52.dp), contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.fillMaxWidth().height(callNameBoxHeight), contentAlignment = Alignment.Center) {
                             Text(
                                 text = contactName.ifEmpty { "" },
-                                style = MaterialTheme.typography.displaySmall.copy(fontWeight = FontWeight.Medium),
+                                style = callNameStyle,
                                 color = onBgColor.copy(alpha = if (contactName.isEmpty()) 0f else 1f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
+
+                        // Show the number this specific call is on — resolved once for this
+                        // call session, so it's always the single correct number even when
+                        // the matched contact has multiple saved numbers. Hidden if it would
+                        // just duplicate the name shown above (e.g. unknown callers).
+                        if (phoneNumber.isNotBlank() && phoneNumber != contactName) {
+                            Text(
+                                text = phoneNumber,
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                color = onBgColor.copy(alpha = if (contactName.isEmpty()) 0f else 1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
                             if (showSimBadge && simSlot in 0..1) {
-                                SimSlotBadge(slot = simSlot, modifier = Modifier.size(width = 18.dp, height = 21.dp), shape = RoundedCornerShape(percent = 25))
+                                SimSlotBadge(slot = simSlot, modifier = Modifier.size(width = if (isIncomingRinging) 18.dp else 20.dp, height = if (isIncomingRinging) 21.dp else 23.dp), shape = RoundedCornerShape(percent = 25))
                             }
                             Text(
                                 text = when {
@@ -1143,7 +1168,7 @@ fun ExpressiveCallScreen(
                                     else -> "Connecting..."
                                 },
                                 color = if (isOnHold) Color(0xFFFFB74D) else subtleColor,
-                                style = MaterialTheme.typography.titleMedium
+                                style = if (isIncomingRinging) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge
                             )
                         }
 
@@ -1314,8 +1339,8 @@ fun ExpressiveCallScreen(
                                     }
                                 },
                                 onMessage = onMessageButtonClick,
-                                labelColor = subtleColor,
-                                bgColor = overlayColor,
+                                labelColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(0.6f),
+                                bgColor = colorLerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, 0.55f),
                                 isPocketBlocked = isPocketBlocked,
                                 isDark = isDark
                             )
@@ -1981,12 +2006,12 @@ fun AnimatedCallButton(
 }
 
 @Composable
-fun NewSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: () -> Unit = {}, labelColor: Color = Color.White.copy(0.6f), bgColor: Color = Color.White.copy(0.08f), isPocketBlocked: () -> Boolean = { false }, isDark: Boolean = isSystemInDarkTheme()) {
+fun NewSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: () -> Unit = {}, labelColor: Color = MaterialTheme.colorScheme.onPrimaryContainer.copy(0.6f), bgColor: Color = colorLerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, 0.55f), isPocketBlocked: () -> Boolean = { false }, isDark: Boolean = isSystemInDarkTheme()) {
     val coroutineScope = rememberCoroutineScope()
     val offsetX = remember { Animatable(0f) }
     val density = LocalDensity.current
-    val handleColor = if (isDark) Color.Black.copy(0.85f) else Color.White
-    val handleFg = if (isDark) Color.White else Color.Black
+    val handleColor = MaterialTheme.colorScheme.surface
+    val handleFg = MaterialTheme.colorScheme.onSurface
 
     var pillWidthPx by remember { mutableFloatStateOf(0f) }
     val handleSizePx = with(density) { 72.dp.toPx() }
@@ -1998,10 +2023,95 @@ fun NewSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: () 
     val answerFlash  = remember { Animatable(0f) }
     val declineFlash = remember { Animatable(0f) }
 
+    // Entrance reveal — pill starts narrow (just the handle) and expands outward to both
+    // sides fast and smoothly, revealing the Decline/Answer labels as it grows.
+    var pillRevealed by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(120)
+        pillRevealed = true
+    }
+    val pillWidthFraction by animateFloatAsState(
+        targetValue = if (pillRevealed) 0.8f else 0.26f,
+        animationSpec = tween(900, easing = FastOutSlowInEasing),
+        label = "pillWidthFraction"
+    )
+    val pillRevealAlpha = ((pillWidthFraction - 0.26f) / (0.8f - 0.26f)).coerceIn(0f, 1f)
+
+    // The recurring hint only starts 3 seconds after the entrance reveal has fully
+    // finished, so the two animations never run at the same time.
+    var pulseActive by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(120 + 900 + 3000)
+        pulseActive = true
+    }
+
+    // Recurring hint pulse — a subtle translucent capsule that grows outward and fades
+    // in, then immediately fades back out in place (no shrink-back motion, no idle
+    // wait) and loops straight into the next cycle. Inset from the outer pill's edges
+    // by the same absolute gap on every side (matching the top/bottom gap), so it
+    // always sits fully inside the pill with a small margin.
+    val pillInset = 98.dp * 0.075f
+    val hintHeight = 98.dp - (pillInset * 2)
+
+    // The infiniteTransition below only gets created once pulseActive flips true, so
+    // its cycle always starts fresh from 0 the instant it activates. Previously it was
+    // created unconditionally at composition start, running its loop the whole time
+    // regardless of pulseActive — so by the time pulseActive turned true the loop was
+    // already mid-cycle at some arbitrary offset, making the hint bar snap straight to
+    // a half-grown/half-faded value instead of starting from nothing. That's the
+    // "glitching" on first activation.
+    var pulseAlpha = 0f
+    var pulseGrowth = 0f
+    if (pulseActive) {
+        val pulseTransition = rememberInfiniteTransition(label = "pillPulse")
+        // Alpha: fades in (very translucent peak) while growing, then — the instant
+        // the grow/expand animation finishes — immediately starts a very slow, smooth
+        // fade out to fully invisible in place (no hold/pause), and the cycle wraps
+        // straight back into the next reveal with no idle waiting gap.
+        val pulseAlphaRaw by pulseTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 0f,
+            animationSpec = infiniteRepeatable(
+                animation = keyframes {
+                    durationMillis = 2800
+                    0f at 0
+                    0.09f at 1200 using FastOutSlowInEasing
+                    0f at 2800 using FastOutSlowInEasing
+                },
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "pulseAlphaRaw"
+        )
+        // Growth: 0 (fully collapsed, invisible, zero footprint) at cycle start, then
+        // grows straight out from nothing to full size — mirroring the outer pill's
+        // entrance reveal, just slower. Once grown it stays at full size for the entire
+        // slow fade-out, and only resets to zero right at the cycle wrap (matching
+        // alpha's own end), so the reset is never visible as motion, only ever
+        // perceived as a slow fade — and the next reveal starts immediately after.
+        val pulseGrowthRaw by pulseTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 0f,
+            animationSpec = infiniteRepeatable(
+                animation = keyframes {
+                    durationMillis = 2800
+                    0f at 0
+                    1f at 1200 using FastOutSlowInEasing
+                    1f at 2799
+                    0f at 2800
+                },
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "pulseGrowthRaw"
+        )
+        pulseAlpha = pulseAlphaRaw
+        pulseGrowth = pulseGrowthRaw
+    }
+    val pulseColor = if (isDark) Color(0xFFBDBDBD) else Color.White
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 110.dp),
+            .padding(bottom = 150.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(24.dp)
     ) {
@@ -2009,29 +2119,47 @@ fun NewSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: () 
         Surface(
             onClick = onMessage,
             shape = CircleShape,
-            color = bgColor,
+            color = colorLerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, 0.55f),
             modifier = Modifier.height(45.dp).width(140.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-                Icon(Icons.Default.ChatBubbleOutline, null, tint = labelColor, modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.ChatBubble, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Message", color = labelColor, style = MaterialTheme.typography.labelLarge)
+                Text("Message", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
             }
         }
 
-        // Swipe pill
-        Box(
-            modifier = Modifier
-                .height(90.dp)
-                .fillMaxWidth(0.85f)
-                .clip(CircleShape)
-                .background(bgColor)
-                .onSizeChanged { pillWidthPx = it.width.toFloat() },
-            contentAlignment = Alignment.Center
-        ) {
+        // Swipe pill, with its recurring hint pulse layered above the solid background
+        // but below the labels/handle, so it's actually visible on top of the pill.
+        Box(contentAlignment = Alignment.Center) {
+            Box(
+                modifier = Modifier
+                    .height(98.dp)
+                    .fillMaxWidth(pillWidthFraction)
+                    .clip(CircleShape)
+                    .background(bgColor)
+                    .onSizeChanged { pillWidthPx = it.width.toFloat() },
+                contentAlignment = Alignment.Center
+            ) {
+            // Hint pulse — grows outward from the center (from behind the phone icon
+            // handle) up to the pill's own width, inset by a small fixed margin on
+            // every side (same gap as top/bottom), and fades, mirroring the entrance
+            // reveal. Sized in absolute dp off the pill's real measured width, so it
+            // always stays fully inside the pill's own footprint. Drawn as the first
+            // child here so it layers on top of the pill's solid background.
+            val hintFullWidth = with(density) { pillWidthPx.toDp() } - (pillInset * 2)
+            Box(
+                modifier = Modifier
+                    .height(hintHeight)
+                    .width((hintFullWidth.coerceAtLeast(0.dp)) * pulseGrowth)
+                    .clip(CircleShape)
+                    .background(pulseColor)
+                    .alpha(pulseAlpha)
+            )
+
             // Green answer fill — grows from right on confirm
             if (answerFlash.value > 0f) {
                 Box(
@@ -2056,27 +2184,26 @@ fun NewSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: () 
             }
 
             // Decline / Answer labels
-            val labelFade = (1f - maxOf(answerFlash.value, declineFlash.value) * 1.8f).coerceIn(0f, 1f)
+            val labelFade = (1f - maxOf(answerFlash.value, declineFlash.value) * 1.8f).coerceIn(0f, 1f) * pillRevealAlpha
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 40.dp).alpha(labelFade),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Decline", color = labelColor, style = MaterialTheme.typography.bodyLarge)
-                Text("Answer",  color = labelColor, style = MaterialTheme.typography.bodyLarge)
+                Text("Decline", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                Text("Answer",  color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
             }
 
-            // Draggable handle
+            // Draggable handle — the pill itself stays a fixed neutral color while
+            // dragging; only the phone icon glows green/red as feedback. The icon is
+            // green by default and blends to red only as the user drags toward decline.
             val dragFraction = if (maxDrag > 0f) (offsetX.value / maxDrag).coerceIn(-1f, 1f) else 0f
-            val dynamicHandleColor = when {
-                dragFraction >  0.45f -> colorLerp(handleColor, Color(0xFF4CAF50), ((dragFraction - 0.45f) / 0.55f).coerceIn(0f, 1f))
-                dragFraction < -0.45f -> colorLerp(handleColor, Color(0xFFF44336), ((-dragFraction - 0.45f) / 0.55f).coerceIn(0f, 1f))
-                else -> handleColor
-            }
-            val iconTint = when {
-                dragFraction >  0.45f -> Color(0xFF4CAF50)
-                dragFraction < -0.45f -> Color(0xFFF44336)
-                else -> handleFg
-            }
+            val iconTint = if (dragFraction < -0.45f)
+                colorLerp(Color(0xFF4CAF50), Color(0xFFF44336), ((-dragFraction - 0.45f) / 0.55f).coerceIn(0f, 1f))
+            else
+                Color(0xFF4CAF50)
+            // Answer (positive drag): phone icon rotates clockwise up to 90° (stands vertical).
+            // Decline (negative drag): phone icon rotates anticlockwise up to 135°.
+            val iconRotation = if (dragFraction >= 0f) dragFraction * 90f else dragFraction * 135f
             val handleAlpha = (1f - maxOf(answerFlash.value, declineFlash.value) * 2f).coerceIn(0f, 1f)
 
             Box(
@@ -2084,7 +2211,7 @@ fun NewSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: () 
                     .offset { IntOffset(offsetX.value.roundToInt(), 0) }
                     .size(72.dp)
                     .clip(CircleShape)
-                    .background(dynamicHandleColor)
+                    .background(handleColor)
                     .alpha(handleAlpha)
                     .pointerInput(Unit) {
                         detectHorizontalDragGestures(
@@ -2130,8 +2257,11 @@ fun NewSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: () 
                     imageVector = Icons.Default.Call,
                     contentDescription = null,
                     tint = iconTint,
-                    modifier = Modifier.size(30.dp)
+                    modifier = Modifier
+                        .size(30.dp)
+                        .graphicsLayer { rotationZ = iconRotation }
                 )
+            }
             }
         }
     }
