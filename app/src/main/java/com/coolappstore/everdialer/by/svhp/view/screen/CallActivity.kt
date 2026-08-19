@@ -1092,23 +1092,23 @@ fun ExpressiveCallScreen(
                         .alpha(acceptAlpha)
                 ) {
                     // ── Top: caller info — absolutely top-anchored, never affected by bottom content ──
+                    val isIncomingRinging = effectiveCallState == Call.STATE_RINGING
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .wrapContentHeight()
                             .align(Alignment.TopCenter)
-                            .padding(top = 130.dp),
+                            .padding(top = if (isIncomingRinging) 130.dp else 100.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Top
                     ) {
-                        val isIncomingRinging = effectiveCallState == Call.STATE_RINGING
                         val callAvatarSize = 240.dp
                         val callAvatarIconSize = 100.dp
                         val callNameStyle = if (isIncomingRinging)
                             MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold)
                         else
-                            MaterialTheme.typography.displayMedium.copy(fontWeight = FontWeight.Medium)
-                        val callNameBoxHeight = if (isIncomingRinging) 64.dp else 58.dp
+                            MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Medium)
+                        val callNameBoxHeight = if (isIncomingRinging) 64.dp else 50.dp
 
                         Box(modifier = Modifier.size(callAvatarSize).clip(CircleShape).background(controlBtnColor)) {
                             // Always render Icon as base layer so layout never shifts
@@ -1126,7 +1126,7 @@ fun ExpressiveCallScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(28.dp))
+                        Spacer(modifier = Modifier.height(if (isIncomingRinging) 28.dp else 20.dp))
 
                         // Fixed height box so layout never shifts when name loads
                         Box(modifier = Modifier.fillMaxWidth().height(callNameBoxHeight), contentAlignment = Alignment.Center) {
@@ -1146,7 +1146,7 @@ fun ExpressiveCallScreen(
                         if (phoneNumber.isNotBlank() && phoneNumber != contactName) {
                             Text(
                                 text = phoneNumber,
-                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                style = (if (isIncomingRinging) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium).copy(fontWeight = FontWeight.Bold),
                                 color = onBgColor.copy(alpha = if (contactName.isEmpty()) 0f else 1f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -1168,7 +1168,7 @@ fun ExpressiveCallScreen(
                                     else -> "Connecting..."
                                 },
                                 color = if (isOnHold) Color(0xFFFFB74D) else subtleColor,
-                                style = if (isIncomingRinging) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge
+                                style = if (isIncomingRinging) MaterialTheme.typography.titleMedium else MaterialTheme.typography.bodyLarge
                             )
                         }
 
@@ -2037,76 +2037,42 @@ fun NewSwipeToAnswer(onAnswer: () -> Unit, onDecline: () -> Unit, onMessage: () 
     )
     val pillRevealAlpha = ((pillWidthFraction - 0.26f) / (0.8f - 0.26f)).coerceIn(0f, 1f)
 
-    // The recurring hint only starts 3 seconds after the entrance reveal has fully
-    // finished, so the two animations never run at the same time.
+    // The hint only starts shortly after the entrance reveal has fully finished, so the
+    // two animations never run at the same time.
     var pulseActive by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(120 + 900 + 3000)
+        kotlinx.coroutines.delay(120 + 900 + 300)
         pulseActive = true
     }
 
-    // Recurring hint pulse — a subtle translucent capsule that grows outward and fades
-    // in, then immediately fades back out in place (no shrink-back motion, no idle
-    // wait) and loops straight into the next cycle. Inset from the outer pill's edges
-    // by the same absolute gap on every side (matching the top/bottom gap), so it
-    // always sits fully inside the pill with a small margin.
+    // Hint bar — a subtle translucent capsule that grows outward from the phone-button
+    // handle to the pill's edges, then retreats back into the handle, repeating on its
+    // own as a recurring hint (no fading — visibility is just its width). The instant
+    // the drag coming out of the handle gets close to either end of the pill, this
+    // same retreat fires immediately and overrides the cycle, so it clears out of the
+    // way of the answer/decline fill instead of waiting for its own timer.
     val pillInset = 98.dp * 0.075f
     val hintHeight = 98.dp - (pillInset * 2)
 
-    // The infiniteTransition below only gets created once pulseActive flips true, so
-    // its cycle always starts fresh from 0 the instant it activates. Previously it was
-    // created unconditionally at composition start, running its loop the whole time
-    // regardless of pulseActive — so by the time pulseActive turned true the loop was
-    // already mid-cycle at some arbitrary offset, making the hint bar snap straight to
-    // a half-grown/half-faded value instead of starting from nothing. That's the
-    // "glitching" on first activation.
-    var pulseAlpha = 0f
-    var pulseGrowth = 0f
-    if (pulseActive) {
-        val pulseTransition = rememberInfiniteTransition(label = "pillPulse")
-        // Alpha: fades in (very translucent peak) while growing, then — the instant
-        // the grow/expand animation finishes — immediately starts a very slow, smooth
-        // fade out to fully invisible in place (no hold/pause), and the cycle wraps
-        // straight back into the next reveal with no idle waiting gap.
-        val pulseAlphaRaw by pulseTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = 0f,
-            animationSpec = infiniteRepeatable(
-                animation = keyframes {
-                    durationMillis = 2800
-                    0f at 0
-                    0.09f at 1200 using FastOutSlowInEasing
-                    0f at 2800 using FastOutSlowInEasing
-                },
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "pulseAlphaRaw"
-        )
-        // Growth: 0 (fully collapsed, invisible, zero footprint) at cycle start, then
-        // grows straight out from nothing to full size — mirroring the outer pill's
-        // entrance reveal, just slower. Once grown it stays at full size for the entire
-        // slow fade-out, and only resets to zero right at the cycle wrap (matching
-        // alpha's own end), so the reset is never visible as motion, only ever
-        // perceived as a slow fade — and the next reveal starts immediately after.
-        val pulseGrowthRaw by pulseTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = 0f,
-            animationSpec = infiniteRepeatable(
-                animation = keyframes {
-                    durationMillis = 2800
-                    0f at 0
-                    1f at 1200 using FastOutSlowInEasing
-                    1f at 2799
-                    0f at 2800
-                },
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "pulseGrowthRaw"
-        )
-        pulseAlpha = pulseAlphaRaw
-        pulseGrowth = pulseGrowthRaw
+    var pulseCycleOn by remember { mutableStateOf(false) }
+    LaunchedEffect(pulseActive) {
+        if (pulseActive) {
+            while (true) {
+                pulseCycleOn = true
+                kotlinx.coroutines.delay(700 + 1400) // grow duration + hold
+                pulseCycleOn = false
+                kotlinx.coroutines.delay(700 + 500)  // retreat duration + gap before next cycle
+            }
+        }
     }
-    val pulseColor = if (isDark) Color(0xFFBDBDBD) else Color.White
+
+    val hintDragFraction = if (maxDrag > 0f) (offsetX.value / maxDrag).coerceIn(-1f, 1f) else 0f
+    val hintNearEnd = kotlin.math.abs(hintDragFraction) > 0.6f
+    val hintTarget = if (pulseActive && pulseCycleOn && !hintNearEnd) 1f else 0f
+    val hintSpec = if (hintNearEnd) tween<Float>(180, easing = FastOutSlowInEasing) else tween<Float>(700, easing = FastOutSlowInEasing)
+    val pulseGrowth by animateFloatAsState(targetValue = hintTarget, animationSpec = hintSpec, label = "pulseGrowth")
+    val pulseAlpha by animateFloatAsState(targetValue = hintTarget * 0.09f, animationSpec = hintSpec, label = "pulseAlpha")
+    val pulseColor = if (isDark) Color(0xFF212121) else Color.White
 
     Column(
         modifier = Modifier
