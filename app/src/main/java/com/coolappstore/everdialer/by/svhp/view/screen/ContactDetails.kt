@@ -8,6 +8,9 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.ContactsContract
 import android.telecom.TelecomManager
+import android.media.RingtoneManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
@@ -79,6 +82,7 @@ import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinActivityViewModel
 import org.koin.compose.koinInject
 import com.coolappstore.everdialer.by.svhp.controller.util.numbersLikelyMatch
+import com.coolappstore.everdialer.by.svhp.controller.util.ContactRingtoneUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
@@ -123,10 +127,19 @@ fun ContactDetailsScreen(
     var showNumberPicker by remember { mutableStateOf(false) }
     var pendingNumber by remember { mutableStateOf<String?>(null) }
     var showQrDialog by remember { mutableStateOf(false) }
+    // "Add to Home Screen": pick-a-number step (only shown when the contact has 2+ numbers),
+    // then the open-info-vs-call-directly step, before actually pinning the shortcut.
+    var showShortcutNumberPicker by remember { mutableStateOf(false) }
+    var showShortcutActionPicker by remember { mutableStateOf(false) }
+    var pendingShortcutNumber by remember { mutableStateOf<String?>(null) }
     var showNoteEditor by remember { mutableStateOf(false) }
     var showMoveDialog by remember { mutableStateOf(false) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var showChooseSimDialog by remember { mutableStateOf(false) }
+    // Contact Info → "Ringtone" — per-contact custom ringtone (ContactsContract CUSTOM_RINGTONE),
+    // same mechanism the system Contacts app and Telecom's incoming-call ringer use. Bumped after
+    // the ringtone picker returns so the current-value query below re-runs.
+    var ringtoneVersion by remember { mutableStateOf(0) }
     var showChooseDefaultNumberDialog by remember { mutableStateOf(false) }
     // "chat_app" for the Social card's WhatsApp/Telegram quick-action popup: null when hidden,
     // otherwise "whatsapp" or "telegram" to say which app's Chat/Voice Call/Video Call sheet to show.
@@ -180,6 +193,50 @@ fun ContactDetailsScreen(
     // picker once set). Same keying as contactSimKey, so it travels with the same contact.
     val contactDefaultNumber = remember(settingsVer, contactSimKey) { prefs.getContactDefaultNumber(contactSimKey) }
         .takeIf { number -> contact != null && number != null && contact.phoneNumbers.contains(number) }
+
+    // Contact Info → "Ringtone" — per-contact custom ringtone, read straight from Contacts
+    // provider so it always reflects reality (including changes made from the system Contacts
+    // app), re-queried whenever ringtoneVersion is bumped after the picker returns.
+    val contactRingtoneUri = remember(contact?.id, ringtoneVersion) {
+        contact?.id?.let { ContactRingtoneUtils.getCustomRingtoneUri(context, it) }
+    }
+    val contactRingtoneLabel = remember(contactRingtoneUri) { ContactRingtoneUtils.ringtoneLabel(context, contactRingtoneUri) }
+    val ringtonePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val defaultUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+            val hasPickedExtra = result.data?.hasExtra(RingtoneManager.EXTRA_RINGTONE_PICKED_URI) == true
+            @Suppress("DEPRECATION")
+            val pickedUri = if (hasPickedExtra) result.data?.getParcelableExtra<Uri>(RingtoneManager.EXTRA_RINGTONE_PICKED_URI) else null
+            val toStore: Uri? = when {
+                !hasPickedExtra -> Uri.EMPTY // "Silent" chosen → explicitly silent
+                pickedUri == null || pickedUri == defaultUri -> null // "Default" chosen → clear custom ringtone
+                else -> pickedUri
+            }
+            contact?.let { c ->
+                ContactRingtoneUtils.setCustomRingtoneUri(context, c.id, toStore)
+                ringtoneVersion++
+            }
+        }
+    }
+    fun openRingtonePicker() {
+        val id = contact?.id ?: return
+        val defaultUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+        val existingUri = when (contactRingtoneUri) {
+            null -> defaultUri // nothing custom set yet → highlight "Default" instead of "Silent"
+            Uri.EMPTY -> Uri.EMPTY // explicitly silent → highlight "Silent"
+            else -> contactRingtoneUri
+        }
+        val intent = Intent(RingtoneManager.ACTION_RINGTONE_PICKER).apply {
+            putExtra(RingtoneManager.EXTRA_RINGTONE_TYPE, RingtoneManager.TYPE_RINGTONE)
+            putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_DEFAULT, true)
+            putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, true)
+            putExtra(RingtoneManager.EXTRA_RINGTONE_DEFAULT_URI, defaultUri)
+            putExtra(RingtoneManager.EXTRA_RINGTONE_EXISTING_URI, existingUri)
+        }
+        ringtonePickerLauncher.launch(intent)
+    }
 
     fun chooseSocialApp(app: String) {
         if (socialNumbers.isEmpty()) return
@@ -319,6 +376,44 @@ fun ContactDetailsScreen(
     if (showQrDialog) {
         QrCodeDialog(name = displayName, phone = displayPhone, email = contact?.emails?.firstOrNull(), onDismiss = { showQrDialog = false })
     }
+    val shortcutNumbers = remember(contact, phoneNumber) {
+        contact?.phoneNumbers?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() }
+            ?: listOfNotNull(phoneNumber?.takeIf { it.isNotBlank() && it != "Unknown" })
+    }
+    if (showShortcutNumberPicker) {
+        NumberPickerDialog(
+            numbers = shortcutNumbers,
+            onDismissRequest = { showShortcutNumberPicker = false },
+            onNumberSelected = { number ->
+                showShortcutNumberPicker = false
+                pendingShortcutNumber = number
+                showShortcutActionPicker = true
+            }
+        )
+    }
+    if (showShortcutActionPicker && pendingShortcutNumber != null) {
+        val shortcutNumber = pendingShortcutNumber!!
+        val shortcutKeyId = contact?.id ?: shortcutNumber
+        ShortcutActionDialog(
+            onOpenContactInfo = {
+                showShortcutActionPicker = false
+                if (contact != null) {
+                    com.coolappstore.everdialer.by.svhp.controller.util.ContactShortcutUtils.pinOpenContactShortcut(
+                        context, contact.id, displayName, contact.photoUri
+                    )
+                } else {
+                    android.widget.Toast.makeText(context, "Save this number as a contact first", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            },
+            onCallDirectly = {
+                showShortcutActionPicker = false
+                com.coolappstore.everdialer.by.svhp.controller.util.ContactShortcutUtils.pinCallShortcut(
+                    context, shortcutKeyId, displayName, shortcutNumber, contact?.photoUri
+                )
+            },
+            onDismiss = { showShortcutActionPicker = false }
+        )
+    }
     if (showNoteEditor) {
         NoteEditorDialog(contactName = displayName, phoneNumber = displayPhone, onDismiss = { showNoteEditor = false })
     }
@@ -401,6 +496,16 @@ fun ContactDetailsScreen(
                                     .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                IconButton(onClick = {
+                                    if (shortcutNumbers.isEmpty()) {
+                                        android.widget.Toast.makeText(context, "No phone number to add", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else if (shortcutNumbers.size > 1) {
+                                        showShortcutNumberPicker = true
+                                    } else {
+                                        pendingShortcutNumber = shortcutNumbers.first()
+                                        showShortcutActionPicker = true
+                                    }
+                                }) { Icon(Icons.Default.AddToHomeScreen, "Add to Home Screen") }
                                 IconButton(onClick = { showQrDialog = true }) { Icon(Icons.Outlined.QrCode2, "QR Code") }
                                 if (contact != null) {
                                     IconButton(onClick = { contactsViewModel.toggleFavorite(contact) }) {
@@ -420,11 +525,10 @@ fun ContactDetailsScreen(
                         }
 
                         Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Box(modifier = Modifier.size(340.dp), contentAlignment = Alignment.Center) {
-                                Box(modifier = Modifier.size(280.dp).background(brush = Brush.radialGradient(colors = listOf(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f), Color.Transparent))).blur(60.dp))
-                                RivoAvatar(name = displayName, photoUri = contact?.photoUri, modifier = Modifier.size(180.dp), shape = CircleShape)
+                            Box(modifier = Modifier.size(400.dp), contentAlignment = Alignment.Center) {
+                                Box(modifier = Modifier.size(330.dp).background(brush = Brush.radialGradient(colors = listOf(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f), Color.Transparent))).blur(60.dp))
+                                RivoAvatar(name = displayName, photoUri = contact?.photoUri, modifier = Modifier.size(240.dp), shape = CircleShape)
                             }
-                            Spacer(modifier = Modifier.height(8.dp))
                             Text(text = displayName, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                         }
                     }
@@ -491,6 +595,7 @@ fun ContactDetailsScreen(
                                     headline = number,
                                     supporting = "Mobile",
                                     leadingIcon = Icons.Default.Phone,
+                                    compact = contact.phoneNumbers.size > 1,
                                     onClick = { initiateCall(number) },
                                     onLongClick = {
                                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -750,6 +855,22 @@ fun ContactDetailsScreen(
                             trailingIcon = Icons.Default.ChevronRight,
                             onClick = { showChooseSimDialog = true }
                         )
+                    }
+                }
+
+                // Ringtone — per-contact custom ringtone, defaulting to the system ringtone.
+                // Only meaningful for a saved contact (writes to ContactsContract by contact id).
+                if (contact != null) {
+                    item {
+                        RivoExpressiveCard(title = "Ringtone", icon = Icons.Default.MusicNote) {
+                            RivoListItem(
+                                headline = contactRingtoneLabel,
+                                supporting = "Ringtone for calls from this contact",
+                                leadingIcon = Icons.Default.MusicNote,
+                                trailingIcon = Icons.Default.ChevronRight,
+                                onClick = { openRingtonePicker() }
+                            )
+                        }
                     }
                 }
 

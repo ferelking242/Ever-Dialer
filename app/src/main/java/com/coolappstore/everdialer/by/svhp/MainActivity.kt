@@ -761,7 +761,12 @@ class MainActivity : FragmentActivity() {
                     else -> null
                 }
                 if (number != null) {
-                    navController.navigate(DialPadScreenDestination(initialNumber = number).route)
+                    // Do NOT navigate to the dialpad here — ACTION_CALL means "place the call
+                    // now", and doing both at once (navigating this Activity's UI while also
+                    // handing the call off to Telecom, which immediately brings up CallActivity
+                    // in front of it) raced the two screens for foreground/composition and was
+                    // why direct-call shortcuts got stuck showing "Connecting..." forever instead
+                    // of ever reaching the live call screen.
                     val telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
                     val accounts = try { telecomManager.callCapablePhoneAccounts } catch (_: SecurityException) { emptyList() }
                     if (accounts.size > 1) {

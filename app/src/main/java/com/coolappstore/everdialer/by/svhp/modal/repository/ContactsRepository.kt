@@ -74,7 +74,17 @@ class ContactsRepository(private val contentResolver: ContentResolver, private v
 
     override fun getContacts(): List<Contact> = getContacts(emptySet())
 
-    override fun getContacts(enabledAccountKeys: Set<String>): List<Contact> {
+    override fun getContacts(enabledAccountKeys: Set<String>): List<Contact> = try {
+        getContactsInternal(enabledAccountKeys)
+    } catch (_: SecurityException) {
+        // READ_CONTACTS not granted yet (e.g. right after a fresh install, before the user
+        // answers the permission prompt) — fail safe instead of crashing.
+        emptyList()
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    private fun getContactsInternal(enabledAccountKeys: Set<String>): List<Contact> {
         // Build list of raw contact IDs allowed by the enabled account filter
         val allowedRawContactIds: Set<Long>? = if (enabledAccountKeys.isNotEmpty()) {
             buildAllowedRawContactIds(enabledAccountKeys)
@@ -230,7 +240,13 @@ class ContactsRepository(private val contentResolver: ContentResolver, private v
         return allowed
     }
 
-    override fun getContactById(contactId: String): Contact? {
+    override fun getContactById(contactId: String): Contact? = try {
+        getContactByIdInternal(contactId)
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun getContactByIdInternal(contactId: String): Contact? {
         val projection = arrayOf(
             ContactsContract.Data.CONTACT_ID,
             ContactsContract.Data.DISPLAY_NAME_PRIMARY,
@@ -298,13 +314,15 @@ class ContactsRepository(private val contentResolver: ContentResolver, private v
     }
 
     override fun toggleFavorite(contactId: String, isFavorite: Boolean) {
-        val contentValue = ContentValues().apply {
-            put(ContactsContract.Contacts.STARRED, if (isFavorite) 1 else 0)
-        }
-        val updateUri = ContactsContract.Contacts.CONTENT_URI.buildUpon()
-            .appendPath(contactId)
-            .build()
-        contentResolver.update(updateUri, contentValue, null, null)
+        try {
+            val contentValue = ContentValues().apply {
+                put(ContactsContract.Contacts.STARRED, if (isFavorite) 1 else 0)
+            }
+            val updateUri = ContactsContract.Contacts.CONTENT_URI.buildUpon()
+                .appendPath(contactId)
+                .build()
+            contentResolver.update(updateUri, contentValue, null, null)
+        } catch (_: Exception) {}
     }
 
     override fun saveContact(contact: Contact, accountType: String?, accountName: String?) {
@@ -423,11 +441,19 @@ class ContactsRepository(private val contentResolver: ContentResolver, private v
     }
 
     override fun deleteContact(contactId: String) {
-        val uri = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contactId)
-        contentResolver.delete(uri, null, null)
+        try {
+            val uri = Uri.withAppendedPath(ContactsContract.Contacts.CONTENT_URI, contactId)
+            contentResolver.delete(uri, null, null)
+        } catch (_: Exception) {}
     }
 
-    override fun getAvailableAccounts(excludedContactIds: Set<String>): List<ContactAccount> {
+    override fun getAvailableAccounts(excludedContactIds: Set<String>): List<ContactAccount> = try {
+        getAvailableAccountsInternal(excludedContactIds)
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    private fun getAvailableAccountsInternal(excludedContactIds: Set<String>): List<ContactAccount> {
         data class AccInfo(val type: String, val name: String, val contactIds: MutableSet<Long> = mutableSetOf())
         val accountMap = mutableMapOf<String, AccInfo>()
 
@@ -699,7 +725,13 @@ class ContactsRepository(private val contentResolver: ContentResolver, private v
     }
 
 
-    override fun getContactByNumber(number: String): Contact? {
+    override fun getContactByNumber(number: String): Contact? = try {
+        getContactByNumberInternal(number)
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun getContactByNumberInternal(number: String): Contact? {
         val uri = Uri.withAppendedPath(ContactsContract.PhoneLookup.CONTENT_FILTER_URI, Uri.encode(number))
         val projection = arrayOf(
             ContactsContract.PhoneLookup._ID,

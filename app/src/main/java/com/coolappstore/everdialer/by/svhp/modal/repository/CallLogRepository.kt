@@ -46,7 +46,17 @@ class CallLogRepository(
         } catch (_: Exception) {}
     }
 
-    override fun getCallLogs(): List<CallLogEntry> {
+    override fun getCallLogs(): List<CallLogEntry> = try {
+        getCallLogsInternal()
+    } catch (_: SecurityException) {
+        // READ_CALL_LOG / READ_CONTACTS not granted (e.g. right after a fresh install before
+        // the user answers the permission prompt) — fail safe instead of crashing.
+        emptyList()
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    private fun getCallLogsInternal(): List<CallLogEntry> {
         pruneAutoDeletedUnknownCalls()
         val callLogs = mutableListOf<CallLogEntry>()
 

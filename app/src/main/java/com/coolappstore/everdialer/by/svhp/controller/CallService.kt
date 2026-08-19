@@ -282,6 +282,24 @@ class CallService : InCallService() {
 
     // Callback for the primary (active/dialing) call
     private val callCallback = object : Call.Callback() {
+        override fun onDetailsChanged(call: Call, details: Call.Details) {
+            super.onDetailsChanged(call, details)
+            // The call's handle/caller info can arrive or change AFTER onCallAdded (e.g. some
+            // carriers/OEMs deliver the ringing call before its number is attached, or update
+            // caller ID data slightly later). Since the notification and the incoming/ongoing
+            // call UI both derive the displayed name from call.details.handle at the moment
+            // they're built, missing this callback meant they never re-resolved the contact
+            // once the number showed up — leaving the name blank even though the call log
+            // (built later, once the call ends) resolved it fine. Refresh both here.
+            if (_currentCallSession.value?.call == call) {
+                _currentCallSession.value = CallSession(call, call.state)
+                updateNotification(call)
+            } else if (_heldCallSession.value?.call == call) {
+                _heldCallSession.value = CallSession(call, call.state)
+                updateNotification(call)
+            }
+        }
+
         override fun onConnectionEvent(call: Call, event: String, extras: android.os.Bundle?) {
             super.onConnectionEvent(call, event, extras)
             val number = call.details?.handle?.schemeSpecificPart?.let { android.net.Uri.decode(it) } ?: ""
@@ -379,6 +397,14 @@ class CallService : InCallService() {
     }
 
     private val heldCallCallback = object : Call.Callback() {
+        override fun onDetailsChanged(call: Call, details: Call.Details) {
+            super.onDetailsChanged(call, details)
+            if (_heldCallSession.value?.call == call) {
+                _heldCallSession.value = CallSession(call, call.state)
+                updateNotification(call)
+            }
+        }
+
         override fun onStateChanged(call: Call, state: Int) {
             super.onStateChanged(call, state)
             RaiseToAnswerManager.onCallStateChanged(this@CallService, call)

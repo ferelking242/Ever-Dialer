@@ -71,11 +71,13 @@ class CallLogViewModel(
     }
 
     init {
-        getApplication<Application>().contentResolver.registerContentObserver(
-            CallLog.Calls.CONTENT_URI,
-            true,
-            callLogObserver
-        )
+        try {
+            getApplication<Application>().contentResolver.registerContentObserver(
+                CallLog.Calls.CONTENT_URI,
+                true,
+                callLogObserver
+            )
+        } catch (_: Exception) {}
         try {
             getApplication<Application>().contentResolver.registerContentObserver(
                 ContactsContract.Contacts.CONTENT_URI,
@@ -140,8 +142,12 @@ class CallLogViewModel(
 
     override fun onCleared() {
         super.onCleared()
-        getApplication<Application>().contentResolver.unregisterContentObserver(callLogObserver)
-        getApplication<Application>().contentResolver.unregisterContentObserver(contactsObserver)
+        try {
+            getApplication<Application>().contentResolver.unregisterContentObserver(callLogObserver)
+        } catch (_: Exception) {}
+        try {
+            getApplication<Application>().contentResolver.unregisterContentObserver(contactsObserver)
+        } catch (_: Exception) {}
     }
 
     fun setFilter(newFilter: CallLogFilter) {

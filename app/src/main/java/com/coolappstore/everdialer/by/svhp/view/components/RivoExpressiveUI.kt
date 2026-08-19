@@ -507,6 +507,9 @@ fun RivoListItem(
     onAvatarClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     isMenuOpen: Boolean = false,
+    /** Tighter vertical padding for lists of many short, similar rows (e.g. a contact's several
+     *  phone numbers) where the default spacing wastes space. */
+    compact: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -543,7 +546,7 @@ fun RivoListItem(
                     },
                     onLongClick = onLongClick
                 )
-                .padding(horizontal = 12.dp, vertical = 14.dp),
+                .padding(horizontal = 12.dp, vertical = if (compact) 6.dp else 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             if (avatarName != null || photoUri != null) {
