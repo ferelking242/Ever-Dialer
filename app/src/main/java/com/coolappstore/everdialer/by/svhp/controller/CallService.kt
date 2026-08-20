@@ -316,6 +316,11 @@ class CallService : InCallService() {
         override fun onStateChanged(call: Call, state: Int) {
             super.onStateChanged(call, state)
 
+            android.util.Log.d(
+                "EverDialerCall",
+                "call state -> ${stateName(state)} number=${call.details?.handle} account=${call.details?.accountHandle}"
+            )
+
             RaiseToAnswerManager.onCallStateChanged(this@CallService, call)
 
             // "Add to call" flow — watch the outgoing 3rd-party call
@@ -377,6 +382,12 @@ class CallService : InCallService() {
             }
 
             if (state == Call.STATE_DISCONNECTED) {
+                val cause = call.details?.disconnectCause
+                android.util.Log.w(
+                    "EverDialerCall",
+                    "call DISCONNECTED number=${call.details?.handle} code=${cause?.code} " +
+                        "label=${cause?.label} description=${cause?.description} reason=${cause?.reason}"
+                )
                 if (_currentCallSession.value?.call == call) {
                     _currentCallSession.value = null
                     _heldCallSession.value?.let { held ->
@@ -505,9 +516,31 @@ class CallService : InCallService() {
         startActivity(intent)
     }
 
+    private fun stateName(state: Int): String = when (state) {
+        Call.STATE_NEW -> "NEW"
+        Call.STATE_RINGING -> "RINGING"
+        Call.STATE_DIALING -> "DIALING"
+        Call.STATE_ACTIVE -> "ACTIVE"
+        Call.STATE_HOLDING -> "HOLDING"
+        Call.STATE_DISCONNECTED -> "DISCONNECTED"
+        Call.STATE_CONNECTING -> "CONNECTING"
+        Call.STATE_DISCONNECTING -> "DISCONNECTING"
+        Call.STATE_SELECT_PHONE_ACCOUNT -> "SELECT_PHONE_ACCOUNT"
+        Call.STATE_PULLING_CALL -> "PULLING_CALL"
+        Call.STATE_AUDIO_PROCESSING -> "AUDIO_PROCESSING"
+        Call.STATE_SIMULATED_RINGING -> "SIMULATED_RINGING"
+        else -> "UNKNOWN($state)"
+    }
+
     override fun onCallAdded(call: Call) {
         super.onCallAdded(call)
         instance = this
+        val direction = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) call.details?.callDirection else null
+        android.util.Log.d(
+            "EverDialerCall",
+            "onCallAdded number=${call.details?.handle} state=${stateName(call.state)} " +
+                "account=${call.details?.accountHandle} isOutgoing=$direction"
+        )
 
         // WhatsApp registers its voice/video calls as a self-managed Telecom
         // connection. Because this InCallService declares

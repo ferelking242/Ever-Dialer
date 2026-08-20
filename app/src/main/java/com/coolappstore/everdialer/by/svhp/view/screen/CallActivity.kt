@@ -850,18 +850,56 @@ fun ExpressiveCallScreen(
                 scope.launch(kotlinx.coroutines.Dispatchers.Main) {
                     // Signal CallService FIRST so it knows the next outgoing call is an "add to call"
                     CallService.isAddingToCall = true
-                    // Hold the current call and reflect that in UI
+                    // Hold the current call and reflect that in UI.
+                    var holdSucceeded = false
                     try {
                         call.hold()
                         isOnHold = true
-                    } catch (_: Exception) {}
-                    delay(300)
+                        holdSucceeded = true
+                    } catch (e: Exception) {
+                        android.util.Log.e("EverDialerCall", "Add call: hold() on current call threw", e)
+                    }
+                    if (!holdSucceeded) {
+                        CallService.isAddingToCall = false
+                        isOnHold = false
+                        android.widget.Toast.makeText(context, "Couldn't hold the current call, so the second call wasn't placed", android.widget.Toast.LENGTH_SHORT).show()
+                        return@launch
+                    }
+                    // The old code used a blind delay(300) here and assumed the current call had
+                    // actually reached STATE_HOLDING by then. On slower networks/modems that
+                    // transition can take noticeably longer than 300ms, and placing a second
+                    // outgoing call before the first one is confirmed HELD is a common reason
+                    // Telecom silently drops the second call — it never even reaches the
+                    // radio/telephony layer, so nothing appears to happen. Actively wait for the
+                    // confirmed state instead of guessing a fixed delay, with a bounded timeout so
+                    // this can't hang forever if hold silently never completes.
+                    var actuallyHeld = call.state == Call.STATE_HOLDING
+                    if (!actuallyHeld) {
+                        val waitStart = System.currentTimeMillis()
+                        while (System.currentTimeMillis() - waitStart < 3000) {
+                            delay(100)
+                            if (call.state == Call.STATE_HOLDING) { actuallyHeld = true; break }
+                            // If the call disconnected or moved to a terminal state while we were
+                            // waiting for hold, stop waiting — there's nothing left to add to.
+                            if (call.state == Call.STATE_DISCONNECTED || call.state == Call.STATE_DISCONNECTING) break
+                        }
+                    }
+                    if (!actuallyHeld) {
+                        android.util.Log.w("EverDialerCall", "Add call: current call never reached STATE_HOLDING (state=${call.state}), aborting second call")
+                        CallService.isAddingToCall = false
+                        isOnHold = call.state == Call.STATE_HOLDING
+                        android.widget.Toast.makeText(context, "Couldn't add the call — the current call didn't hold in time", android.widget.Toast.LENGTH_SHORT).show()
+                        return@launch
+                    }
                     try {
+                        android.util.Log.d("EverDialerCall", "Add call: placing second call to $number")
                         makeCall(context, number)
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        android.util.Log.e("EverDialerCall", "Add call: makeCall() for second party threw", e)
                         CallService.isAddingToCall = false
                         isOnHold = false
                         try { call.unhold() } catch (_: Exception) {}
+                        android.widget.Toast.makeText(context, "Couldn't place the second call", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 }
             }

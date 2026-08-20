@@ -78,7 +78,10 @@ fun hasDualSim(context: Context): Boolean {
 
 fun makeCall(context: Context, number: String, accountHandle: PhoneAccountHandle? = null) {
     val sanitized = number.trim().replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-    if (sanitized.isEmpty()) return
+    if (sanitized.isEmpty()) {
+        android.util.Log.w("EverDialerCall", "makeCall: empty number after sanitizing '$number', aborting")
+        return
+    }
     val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
     val uri = Uri.fromParts("tel", sanitized, null)
     val extras = Bundle()
@@ -87,8 +90,23 @@ fun makeCall(context: Context, number: String, accountHandle: PhoneAccountHandle
         rememberLastUsedSim(context, telecomManager, accountHandle)
     }
     if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
-        telecomManager.placeCall(uri, extras)
+        try {
+            android.util.Log.d("EverDialerCall", "placeCall uri=$uri account=$accountHandle")
+            telecomManager.placeCall(uri, extras)
+        } catch (e: SecurityException) {
+            // placeCall() can still throw even after the permission check above — e.g. Telecom
+            // enforces it can't always be reasoned about purely from PackageManager's granted
+            // state (appops, per-user restrictions, or a stale/invalid accountHandle passed for
+            // a SIM that's since been removed/disabled). Don't fail silently: fall back to the
+            // system dialer with the number pre-filled so the user still gets *something*
+            // actionable instead of a dead tap.
+            android.util.Log.e("EverDialerCall", "placeCall threw SecurityException, falling back to ACTION_DIAL", e)
+            val intent = Intent(Intent.ACTION_DIAL, uri)
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            context.startActivity(intent)
+        }
     } else {
+        android.util.Log.w("EverDialerCall", "makeCall: CALL_PHONE not granted, falling back to ACTION_DIAL")
         val intent = Intent(Intent.ACTION_DIAL, uri)
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
         context.startActivity(intent)

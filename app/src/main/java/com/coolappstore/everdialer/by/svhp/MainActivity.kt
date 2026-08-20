@@ -681,25 +681,60 @@ class MainActivity : FragmentActivity() {
     private fun resolvePhoneNumberFromContactUri(context: Context, uri: Uri): String? {
         if (uri.scheme == "tel") return uri.schemeSpecificPart
         return try {
-            val contactId = uri.lastPathSegment?.toLongOrNull() ?: return null
-            context.contentResolver.query(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
-                "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
-                arrayOf(contactId.toString()),
-                "${ContactsContract.CommonDataKinds.Phone.IS_SUPER_PRIMARY} DESC"
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    cursor.getString(cursor.getColumnIndexOrThrow(ContactsContract.CommonDataKinds.Phone.NUMBER))
-                } else null
+            // These content:// URIs come in several incompatible shapes depending on which app
+            // built them:
+            //  - content://com.android.contacts/data/<id>            → a Data row id (one
+            //    specific phone number entry)
+            //  - content://com.android.contacts/contacts/<id>         → an aggregate Contact id
+            //  - content://com.android.contacts/contacts/lookup/<key>/<id> → lookup-key form,
+            //    where lastPathSegment can be the numeric id BUT the segment before it is the
+            //    non-numeric lookup key, and on some OEM builds the trailing numeric id is stale
+            //    and needs re-resolving via the lookup key instead.
+            // Blindly treating lastPathSegment as a CommonDataKinds.Phone.CONTACT_ID (the old
+            // behavior) silently returns null - and therefore silently drops the call - for the
+            // first and third shapes above. Try each interpretation in turn.
+            val lastSegment = uri.lastPathSegment
+            val isDataUri = uri.pathSegments.getOrNull(0) == "data"
+
+            fun queryByContactId(id: Long): String? =
+                context.contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                    "${ContactsContract.CommonDataKinds.Phone.CONTACT_ID} = ?",
+                    arrayOf(id.toString()),
+                    "${ContactsContract.CommonDataKinds.Phone.IS_SUPER_PRIMARY} DESC"
+                )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+
+            fun queryByDataId(id: Long): String? =
+                context.contentResolver.query(
+                    uri.buildUpon().authority(ContactsContract.AUTHORITY).path(null)
+                        .appendPath("data").appendPath(id.toString()).build(),
+                    arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                    null, null, null
+                )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+
+            fun queryByLookup(): String? {
+                val lookupUri = try { ContactsContract.Contacts.lookupContact(context.contentResolver, uri) } catch (_: Exception) { null } ?: return null
+                val id = lookupUri.lastPathSegment?.toLongOrNull() ?: return null
+                return queryByContactId(id)
             }
-        } catch (_: Exception) {
+
+            when {
+                isDataUri -> lastSegment?.toLongOrNull()?.let(::queryByDataId) ?: queryByLookup()
+                else -> {
+                    val id = lastSegment?.toLongOrNull()
+                    (id?.let(::queryByContactId)) ?: queryByLookup()
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("EverDialerCall", "resolvePhoneNumberFromContactUri failed for $uri", e)
             null
         }
     }
 
     private fun handleIntent(intent: Intent?, navController: androidx.navigation.NavController) {
         intent ?: return
+        android.util.Log.d("EverDialerCall", "handleIntent action=${intent.action} data=${intent.data}")
         val data = intent.data
         val action = intent.action
 
@@ -751,15 +786,18 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
-            Intent.ACTION_CALL -> {
+            Intent.ACTION_CALL, "android.intent.action.CALL_PRIVILEGED" -> {
                 // Contact widgets/Assistant "call [contact]" shortcuts, and third-party caller-ID
                 // apps like Truecaller "call back" on a missed call, send ACTION_CALL expecting
-                // the call to be placed immediately, not just shown on a dialpad.
+                // the call to be placed immediately, not just shown on a dialpad. Google Contacts'
+                // (and several other apps') "Direct call" home-screen shortcut specifically sends
+                // ACTION_CALL_PRIVILEGED instead of plain ACTION_CALL - handled identically here.
                 val number = when {
                     data?.scheme == "tel" -> data.schemeSpecificPart
                     data != null -> resolvePhoneNumberFromContactUri(this, data)
                     else -> null
                 }
+                android.util.Log.d("EverDialerCall", "external call intent action=$action data=$data resolvedNumber=$number")
                 if (number != null) {
                     // Do NOT navigate to the dialpad here — ACTION_CALL means "place the call
                     // now", and doing both at once (navigating this Activity's UI while also
@@ -767,22 +805,21 @@ class MainActivity : FragmentActivity() {
                     // in front of it) raced the two screens for foreground/composition and was
                     // why direct-call shortcuts got stuck showing "Connecting..." forever instead
                     // of ever reaching the live call screen.
-                    val telecomManager = getSystemService(Context.TELECOM_SERVICE) as TelecomManager
-                    val accounts = try { telecomManager.callCapablePhoneAccounts } catch (_: SecurityException) { emptyList() }
-                    if (accounts.size > 1) {
-                        val prefsInstance = org.koin.core.context.GlobalContext.get().get<PreferenceManager>()
-                        val simPref = prefsInstance.getInt(PreferenceManager.KEY_DEFAULT_SIM, prefsInstance.getDefaultSimIndexDefault())
-                        when {
-                            simPref == 1 && accounts.isNotEmpty() -> com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this, number, accounts[0])
-                            simPref == 2 && accounts.size >= 2 -> com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this, number, accounts[1])
-                            else -> {
-                                pendingExternalCallNumber = number
-                                showExternalSimPicker = true
-                            }
-                        }
-                    } else {
-                        com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this, number)
+                    //
+                    // Reuses the same placeCallWithSimPreference() helper that every in-app call
+                    // button (dialpad, contact details, favorites, recents) goes through, instead
+                    // of a separately hand-rolled copy of the same SIM-selection logic, so this
+                    // path can't silently drift out of sync with the one that's known to work.
+                    val prefsInstance = org.koin.core.context.GlobalContext.get().get<PreferenceManager>()
+                    val simPref = prefsInstance.getInt(PreferenceManager.KEY_DEFAULT_SIM, prefsInstance.getDefaultSimIndexDefault())
+                    com.coolappstore.everdialer.by.svhp.controller.util.placeCallWithSimPreference(
+                        this, number, simPref
+                    ) {
+                        pendingExternalCallNumber = number
+                        showExternalSimPicker = true
                     }
+                } else {
+                    android.util.Log.w("EverDialerCall", "external call intent had no resolvable number, ignoring")
                 }
             }
             Intent.ACTION_INSERT -> {
