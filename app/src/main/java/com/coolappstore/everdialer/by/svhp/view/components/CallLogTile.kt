@@ -158,12 +158,16 @@ fun CallLogTile(
         if (raw.isBlank()) emptySet() else raw.split(",").filter { it.isNotBlank() }.toSet()
     }
     val contactsRepo = koinInject<IContactsRepository>()
-    val isHiddenContact = remember(log.number, hiddenIds, hideNames) {
-        if (!hideNames || hiddenIds.isEmpty() || log.number.isBlank()) false
-        else {
-            val c = try { contactsRepo.getContactByNumber(log.number) } catch (_: Exception) { null }
-            c != null && c.id in hiddenIds
-        }
+    // Bug fix: this used to call contactsRepo.getContactByNumber(log.number) here — a synchronous
+    // PhoneLookup ContentResolver query (with a full-table fallback scan on top) run directly
+    // during composition for every tile. Since the LazyColumn composes new tiles continuously
+    // while scrolling, that meant a live DB query on the UI thread for every row that scrolled
+    // into view - the actual cause of call logs scrolling laggy while Contacts (which has no
+    // per-item DB calls) stayed smooth. CallLogEntry.contactId is already resolved once up front
+    // by CallLogRepository, so checking hidden status is now a plain in-memory lookup with zero
+    // IPC.
+    val isHiddenContact = remember(log.contactId, hiddenIds, hideNames) {
+        hideNames && hiddenIds.isNotEmpty() && log.contactId != null && log.contactId in hiddenIds
     }
     val displayName = when {
         isHiddenContact -> log.number
@@ -379,8 +383,16 @@ fun CallLogTile(
     // on the contact, not just this particular call log entry's number — e.g. a contact saved
     // with both a country-coded and a plain number, where only one is actually registered on the
     // target app.
-    val callChatViaNumbers = remember(log.number) {
-        try { contactsRepo.getContactByNumber(log.number)?.phoneNumbers } catch (_: Exception) { null }
+    // Bug fix: this used to be `remember(log.number) { contactsRepo.getContactByNumber(...) }`,
+    // a synchronous ContentResolver query run eagerly during composition for every tile even
+    // though the result is only ever needed if the user actually opens the Call/Chat Via picker.
+    // Deferred into a LaunchedEffect gated on the picker actually being opened, and off the main
+    // composition path entirely, so scrolling the list no longer pays for it at all.
+    var callChatViaNumbers by remember(log.number) { mutableStateOf<List<String>?>(null) }
+    LaunchedEffect(showCallChatViaPicker, log.number) {
+        if (showCallChatViaPicker && callChatViaNumbers == null) {
+            callChatViaNumbers = try { contactsRepo.getContactByNumber(log.number)?.phoneNumbers } catch (_: Exception) { null }
+        }
     }
     CallChatViaOverlay(
         phoneNumber = log.number.takeIf { it.isNotBlank() },

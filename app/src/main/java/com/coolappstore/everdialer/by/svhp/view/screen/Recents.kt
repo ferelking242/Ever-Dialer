@@ -575,6 +575,29 @@ fun CallLogFullContent(
         }
         val groupedLogs = remember(filteredLogs) { filteredLogs.groupBy { formatDateHeader(it.date) } }
 
+        // Bug fix: a new call (e.g. the first call of a new day, when the last entry in the list
+        // was from yesterday) gets correctly prepended to the top of `logs` the moment it's
+        // detected, but the LazyColumn's scroll position doesn't move on its own — if the user
+        // was sitting at/near the top already, the new "Today" section is inserted *above* the
+        // current viewport and never becomes visible until they manually scroll up, which reads
+        // as "the call log isn't updating". Detect exactly that case (the very top entry's
+        // identity changed) and, only when the user was already near the top of the list, scroll
+        // them to it automatically. If they've scrolled down into older history, leave their
+        // position alone rather than yanking them back up.
+        val topEntryKey = remember(groupedLogs) {
+            groupedLogs.entries.firstOrNull()?.value?.firstOrNull()?.let { "${it.number}_${it.date}" }
+        }
+        var lastKnownTopEntryKey by remember { mutableStateOf<String?>(null) }
+        LaunchedEffect(topEntryKey) {
+            val previous = lastKnownTopEntryKey
+            lastKnownTopEntryKey = topEntryKey
+            if (previous != null && topEntryKey != null && topEntryKey != previous &&
+                listState.firstVisibleItemIndex <= 1
+            ) {
+                listState.animateScrollToItem(0)
+            }
+        }
+
         if (showSimPicker && pendingNumber != null) {
             SimPickerDialog(
                 onDismissRequest = { showSimPicker = false },

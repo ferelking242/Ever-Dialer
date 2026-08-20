@@ -184,8 +184,13 @@ class CallLogViewModel(
                         a.name != b.name || a.photoUri != b.photoUri
                 }
             cachedLogs = result
-            saveToDisk(result)
             if (changed) {
+                // Only touch disk when the data actually changed. This method gets called
+                // several times back-to-back (call-start, call-end + 2 retries, the call-log
+                // ContentObserver, and the screen's own onResume refresh can all land within a
+                // second of each other), and on a large call history serializing and writing the
+                // full JSON every single time - even when nothing changed - was pure wasted I/O.
+                saveToDisk(result)
                 withContext(Dispatchers.Main) {
                     _allCallLogs.value = result
                 }
