@@ -5,6 +5,7 @@ import android.app.DownloadManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -43,6 +44,7 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.navigation.compose.rememberNavController
 import com.coolappstore.everdialer.by.svhp.controller.CallService
@@ -56,7 +58,6 @@ import com.coolappstore.everdialer.by.svhp.view.screen.CallActivity
 import com.coolappstore.everdialer.by.svhp.view.components.Android14WelcomeDialog
 import com.coolappstore.everdialer.by.svhp.view.components.TelegramJoinDialog
 import com.coolappstore.everdialer.by.svhp.view.components.FullScreenIntentDialog
-import com.coolappstore.everdialer.by.svhp.view.components.SimPickerDialog
 import com.coolappstore.everdialer.by.svhp.view.components.BottomBar
 import com.coolappstore.everdialer.by.svhp.view.components.enterNotesTab
 import com.coolappstore.everdialer.by.svhp.liquidglass.LocalLiquidGlassBackdrop
@@ -104,6 +105,29 @@ class MainActivity : FragmentActivity() {
         ActivityResultContracts.RequestMultiplePermissions()
     ) { _ -> /* permissions result; dialer popup now shown after welcome */ }
 
+    // If a third-party direct-call shortcut hands us ACTION_CALL before CALL_PHONE happens to be
+    // granted yet (e.g. very first run, right as the default-dialer role prompt from
+    // requestDefaultDialer() is still pending an answer), don't silently fall back to just
+    // opening the dialpad with the number filled in — that reads as "the shortcut did nothing."
+    // Stash the number, ask for CALL_PHONE directly, and complete the call the moment it's
+    // granted; only fall back to ACTION_DIAL if the user actually denies it.
+    private var pendingExternalCallNumber: String? = null
+    private val requestCallPhonePermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val number = pendingExternalCallNumber
+        pendingExternalCallNumber = null
+        if (number != null) {
+            if (granted) {
+                com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this, number)
+            } else {
+                val intent = Intent(Intent.ACTION_DIAL, android.net.Uri.fromParts("tel", number, null))
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                startActivity(intent)
+            }
+        }
+    }
+
     // Holds whatever intent should currently be processed by handleIntent(). Set from onCreate's
     // initial intent and re-set from onNewIntent() so Compose actually reacts to intents delivered
     // to an already-running instance (contact/dial shortcuts, "call back" from other apps like
@@ -111,12 +135,6 @@ class MainActivity : FragmentActivity() {
     // the LaunchedEffect below, since Compose has no way to observe a mutation of the Activity's
     // own `intent` field.
     private var pendingIntent by mutableStateOf<Intent?>(null)
-
-    // SIM picker for calls placed by external apps (e.g. Truecaller "call back" on a missed
-    // call, Contacts shortcuts) on dual/multi-SIM devices, so an ambiguous outgoing call never
-    // gets left waiting on a system SIM disambiguation prompt hidden behind our own CallActivity.
-    private var showExternalSimPicker by mutableStateOf(false)
-    private var pendingExternalCallNumber by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -272,23 +290,6 @@ class MainActivity : FragmentActivity() {
                 var autoDownloadId by remember { mutableStateOf<Long?>(null) }
                 var autoDownloadProgress by remember { mutableFloatStateOf(0f) }
                 var showAutoDownloadProgress by remember { mutableStateOf(false) }
-
-                // ── SIM picker for calls placed by external apps (e.g. Truecaller "call
-                // back" on a missed call, Contacts shortcuts) on dual/multi-SIM devices,
-                // so an ambiguous outgoing call never gets left waiting on a system SIM
-                // disambiguation prompt hidden behind our own CallActivity.
-                if (showExternalSimPicker) {
-                    SimPickerDialog(
-                        onDismissRequest = { showExternalSimPicker = false; pendingExternalCallNumber = null },
-                        onSimSelected = { handle ->
-                            showExternalSimPicker = false
-                            pendingExternalCallNumber?.let {
-                                com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this@MainActivity, it, handle)
-                            }
-                            pendingExternalCallNumber = null
-                        }
-                    )
-                }
 
                 LaunchedEffect(Unit) {
                     val autoCheck = prefs.getBoolean(PreferenceManager.KEY_AUTO_UPDATE_CHECK, true)
@@ -788,17 +789,21 @@ class MainActivity : FragmentActivity() {
             }
             Intent.ACTION_CALL, "android.intent.action.CALL_PRIVILEGED" -> {
                 // Contact widgets/Assistant "call [contact]" shortcuts, and third-party caller-ID
-                // apps like Truecaller "call back" on a missed call, send ACTION_CALL expecting
-                // the call to be placed immediately, not just shown on a dialpad. Google Contacts'
-                // (and several other apps') "Direct call" home-screen shortcut specifically sends
-                // ACTION_CALL_PRIVILEGED instead of plain ACTION_CALL - handled identically here.
+                // apps like Truecaller "call back" on a missed call, send plain ACTION_CALL with
+                // a tel: URI expecting the call to be placed immediately, not just shown on a
+                // dialpad — that's the realistic third-party trigger. (ACTION_CALL_PRIVILEGED is
+                // also matched here defensively, but note it's restricted by the system to
+                // apps holding the signature|privileged CALL_PRIVILEGED permission — ordinary
+                // third-party apps and launcher shortcuts cannot send it, so in practice this
+                // branch is reached via ACTION_CALL.)
                 val number = when {
-                    data?.scheme == "tel" -> data.schemeSpecificPart
+                    data?.scheme == "tel" -> data.schemeSpecificPart?.let { android.net.Uri.decode(it) }
+                    data?.scheme == "voicemail" -> null // not handled; let system voicemail flow own it
                     data != null -> resolvePhoneNumberFromContactUri(this, data)
                     else -> null
-                }
+                }?.trim()
                 android.util.Log.d("EverDialerCall", "external call intent action=$action data=$data resolvedNumber=$number")
-                if (number != null) {
+                if (!number.isNullOrBlank()) {
                     // Do NOT navigate to the dialpad here — ACTION_CALL means "place the call
                     // now", and doing both at once (navigating this Activity's UI while also
                     // handing the call off to Telecom, which immediately brings up CallActivity
@@ -806,17 +811,25 @@ class MainActivity : FragmentActivity() {
                     // why direct-call shortcuts got stuck showing "Connecting..." forever instead
                     // of ever reaching the live call screen.
                     //
-                    // Reuses the same placeCallWithSimPreference() helper that every in-app call
-                    // button (dialpad, contact details, favorites, recents) goes through, instead
-                    // of a separately hand-rolled copy of the same SIM-selection logic, so this
-                    // path can't silently drift out of sync with the one that's known to work.
-                    val prefsInstance = org.koin.core.context.GlobalContext.get().get<PreferenceManager>()
-                    val simPref = prefsInstance.getInt(PreferenceManager.KEY_DEFAULT_SIM, prefsInstance.getDefaultSimIndexDefault())
-                    com.coolappstore.everdialer.by.svhp.controller.util.placeCallWithSimPreference(
-                        this, number, simPref
-                    ) {
+                    // Deliberately does NOT run any of Ever Dialer's own SIM-selection logic
+                    // (no per-contact preference, no app-wide default-SIM setting, no picker) —
+                    // just hands the number straight to Telecom with no PhoneAccountHandle, the
+                    // same as if the call were placed with plain ACTION_CALL and no dialer app
+                    // installed at all. Telecom then falls back to the system's own configured
+                    // default (Settings → Network & internet → SIMs → Calls), or its native SIM
+                    // picker if that's set to "Ask every time".
+                    //
+                    // Check CALL_PHONE directly here rather than trusting makeCall()'s own
+                    // internal check-and-fallback: onCreate's requestRequiredPermissions() is
+                    // fire-and-forget, so on a very first run a shortcut tapped in the same
+                    // moment the permission dialog is still pending could otherwise silently
+                    // degrade to "just opens the dialpad" instead of actually calling — asking
+                    // directly here and completing the call once granted avoids that gap.
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+                        com.coolappstore.everdialer.by.svhp.controller.util.makeCall(this, number)
+                    } else {
                         pendingExternalCallNumber = number
-                        showExternalSimPicker = true
+                        requestCallPhonePermissionLauncher.launch(Manifest.permission.CALL_PHONE)
                     }
                 } else {
                     android.util.Log.w("EverDialerCall", "external call intent had no resolvable number, ignoring")

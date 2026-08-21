@@ -124,18 +124,10 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="tel" />
             </intent-filter>
-            <!-- Bug fix: Google Contacts' (and several other apps') "Direct call" home-screen
-                 shortcut does NOT fire plain ACTION_CALL - it fires the separate, older
-                 ACTION_CALL_PRIVILEGED action. Without a filter for it, tapping such a shortcut
-                 never reached this app at all (it silently fell back to whatever the system's
-                 default dialer is instead), even though Ever Dialer's own "pin to home screen"
-                 shortcut - which launches this app directly rather than going through an
-                 implicit call intent - always worked fine. -->
-            <intent-filter>
-                <action android:name="android.intent.action.CALL_PRIVILEGED" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="tel" />
-            </intent-filter>
+            <!-- android.intent.action.CALL_PRIVILEGED is restricted to apps holding the
+                 signature|privileged CALL_PRIVILEGED permission — ordinary third-party apps and
+                 home-screen shortcuts cannot send it, so it's not a real integration point and
+                 isn't declared here. Real "direct call" shortcuts use plain ACTION_CALL above. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
