@@ -14,3 +14,4 @@ val EVERLASTING_TWEAK_URL = "https://hari161008.github.io/Website-For-Everlastin
 val TELEGRAM_DEV_URL = "https://t.me/hariprabhu1008"
 val GITHUB_RELEASES_URL = "https://github.com/hari161008/Ever-Dialer/releases"
 val GITHUB_API_RELEASES = "https://api.github.com/repos/hari161008/Ever-Dialer/releases/latest"
+val GITHUB_API_RELEASES_LIST = "https://api.github.com/repos/hari161008/Ever-Dialer/releases"

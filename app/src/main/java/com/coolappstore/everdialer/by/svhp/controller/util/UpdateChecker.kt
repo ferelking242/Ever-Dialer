@@ -22,8 +22,33 @@ import java.net.URL
 
 data class ReleaseInfo(
     val tagName: String,
-    val apkUrl: String?
+    val apkUrl: String?,
+    val releaseNotes: String? = null,
+    val publishedAt: String? = null
 )
+
+private fun parseReleaseJson(json: JSONObject): ReleaseInfo {
+    val tag = json.optString("tag_name", "")
+    val assets = json.optJSONArray("assets")
+    var apkUrl: String? = null
+    if (assets != null) {
+        for (i in 0 until assets.length()) {
+            val asset = assets.getJSONObject(i)
+            if (asset.optString("name", "").endsWith(".apk", ignoreCase = true)) {
+                apkUrl = asset.optString("browser_download_url")
+                break
+            }
+        }
+    }
+    val notes = json.optString("body", "").trim().ifBlank { null }
+    val publishedAt = json.optString("published_at", "").ifBlank { null }
+    return ReleaseInfo(
+        tagName = tag.trimStart('v', 'V'),
+        apkUrl = apkUrl,
+        releaseNotes = notes,
+        publishedAt = publishedAt
+    )
+}
 
 suspend fun fetchLatestRelease(apiUrl: String): ReleaseInfo? = withContext(Dispatchers.IO) {
     try {
@@ -36,20 +61,34 @@ suspend fun fetchLatestRelease(apiUrl: String): ReleaseInfo? = withContext(Dispa
         }
         if (connection.responseCode != 200) return@withContext null
         val body = connection.inputStream.bufferedReader().readText()
-        val json = JSONObject(body)
-        val tag = json.optString("tag_name", "")
-        val assets = json.optJSONArray("assets")
-        var apkUrl: String? = null
-        if (assets != null) {
-            for (i in 0 until assets.length()) {
-                val asset = assets.getJSONObject(i)
-                if (asset.optString("name", "").endsWith(".apk", ignoreCase = true)) {
-                    apkUrl = asset.optString("browser_download_url")
-                    break
-                }
-            }
+        parseReleaseJson(JSONObject(body))
+    } catch (_: Exception) { null }
+}
+
+/**
+ * Fetches the release whose tag matches [version] (with or without a leading "v")
+ * from the repo's full releases list. Used to show release notes for the
+ * currently-installed version, so the user can compare it against the latest.
+ */
+suspend fun fetchReleaseForVersion(apiListUrl: String, version: String): ReleaseInfo? = withContext(Dispatchers.IO) {
+    try {
+        val connection = URL(apiListUrl).openConnection() as HttpURLConnection
+        connection.apply {
+            requestMethod = "GET"
+            setRequestProperty("Accept", "application/vnd.github+json")
+            connectTimeout = 10_000
+            readTimeout = 10_000
         }
-        ReleaseInfo(tagName = tag.trimStart('v', 'V'), apkUrl = apkUrl)
+        if (connection.responseCode != 200) return@withContext null
+        val body = connection.inputStream.bufferedReader().readText()
+        val array = org.json.JSONArray(body)
+        val target = version.trimStart('v', 'V')
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            val tag = obj.optString("tag_name", "").trimStart('v', 'V')
+            if (tag == target) return@withContext parseReleaseJson(obj)
+        }
+        null
     } catch (_: Exception) { null }
 }
 

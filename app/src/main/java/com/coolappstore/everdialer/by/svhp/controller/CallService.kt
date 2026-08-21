@@ -222,10 +222,21 @@ class CallService : InCallService() {
 
         private val WHATSAPP_PACKAGES = setOf("com.whatsapp", "com.whatsapp.w4b")
 
-        /** True if [call] is a self-managed call placed/received by WhatsApp. */
+        // Third-party apps that register their own voice/video calls as
+        // self-managed Telecom connections. Because CallService declares
+        // INCLUDE_SELF_MANAGED_CALLS, Telecom hands these to us too — but
+        // Ever Dialer must never touch them (no CallActivity, no notification,
+        // no cellular call side-effects). Snapchat is one such app: without
+        // this exclusion its self-managed call was being treated like a real
+        // cellular call by this service.
+        private val SELF_MANAGED_THIRD_PARTY_PACKAGES = WHATSAPP_PACKAGES + setOf(
+            "com.snapchat.android"
+        )
+
+        /** True if [call] is a self-managed call placed/received by a third-party app (WhatsApp, Snapchat, etc.) that Ever Dialer must not touch. */
         private fun isWhatsAppCall(call: Call): Boolean {
             val pkg = call.details?.accountHandle?.componentName?.packageName ?: return false
-            return pkg in WHATSAPP_PACKAGES
+            return pkg in SELF_MANAGED_THIRD_PARTY_PACKAGES
         }
 
         private val _currentCallSession = MutableStateFlow<CallSession?>(null)

@@ -1,7 +1,6 @@
 package com.coolappstore.everdialer.by.svhp.view.screen.settings
 
 import android.app.Activity
-import android.app.DownloadManager
 
 import android.content.ComponentName
 import android.content.Context
@@ -55,14 +54,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.coolappstore.everdialer.by.svhp.APP_VERSION
-import com.coolappstore.everdialer.by.svhp.GITHUB_API_RELEASES
 import com.coolappstore.everdialer.by.svhp.controller.util.BackupManager
 import com.coolappstore.everdialer.by.svhp.controller.util.PreferenceManager
-import com.coolappstore.everdialer.by.svhp.controller.util.enqueueApkDownload
-import com.coolappstore.everdialer.by.svhp.controller.util.fetchLatestRelease
-import com.coolappstore.everdialer.by.svhp.controller.util.getApkDestinationFile
-import com.coolappstore.everdialer.by.svhp.controller.util.installApkAndScheduleDelete
-import com.coolappstore.everdialer.by.svhp.controller.util.isNewerVersion
 import com.coolappstore.everdialer.by.svhp.modal.`interface`.ICallLogRepository
 import com.coolappstore.everdialer.by.svhp.modal.`interface`.IContactsRepository
 import com.coolappstore.everdialer.by.svhp.view.components.RivoAnimatedSection
@@ -72,11 +65,6 @@ import com.coolappstore.everdialer.by.svhp.view.components.RivoListItem
 import com.coolappstore.everdialer.by.svhp.view.components.RivoSwitchListItem
 import com.coolappstore.everdialer.by.svhp.view.components.ScrollHapticsEffect
 import com.coolappstore.everdialer.by.svhp.view.components.settingsSearchHighlight
-import com.coolappstore.everdialer.by.svhp.view.components.UpdateAvailableDialog
-import com.coolappstore.everdialer.by.svhp.view.components.UpdateCheckingDialog
-import com.coolappstore.everdialer.by.svhp.view.components.UpdateDownloadingDialog
-import com.coolappstore.everdialer.by.svhp.view.components.UpdateErrorDialog
-import com.coolappstore.everdialer.by.svhp.view.components.UpdateUpToDateDialog
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.generated.destinations.*
@@ -172,7 +160,6 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
             ?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
     }
 
-    var updateDialogState by remember { mutableStateOf<UpdateDialogState>(UpdateDialogState.Idle) }
     var backupState       by remember { mutableStateOf<BackupDialogState>(BackupDialogState.Idle) }
 
     var visible by remember { mutableStateOf(false) }
@@ -800,93 +787,6 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
         }
     }
 
-    // ── Update Dialogs ────────────────────────────────────────────────────────
-    when (val state = updateDialogState) {
-
-        is UpdateDialogState.Checking -> UpdateCheckingDialog()
-
-        is UpdateDialogState.UpToDate -> UpdateUpToDateDialog(
-            currentVersion = APP_VERSION,
-            onDismiss = { updateDialogState = UpdateDialogState.Idle }
-        )
-
-        // ── Update available — install directly if already downloaded ──
-        is UpdateDialogState.ConfirmUpdate -> UpdateAvailableDialog(
-            currentVersion = APP_VERSION,
-            latestVersion = state.latestVersion,
-            readyToInstall = state.readyToInstall,
-            onAction = {
-                if (state.readyToInstall) {
-                    // APK for this version is already downloaded — install it directly,
-                    // no need to download it again.
-                    val file = getApkDestinationFile()
-                    updateDialogState = UpdateDialogState.Idle
-                    installApkAndScheduleDelete(context, file)
-                } else {
-                    val url = state.apkUrl
-                    if (url != null) {
-                        val downloadId = enqueueApkDownload(context, url)
-                        if (downloadId != null) {
-                            updateDialogState = UpdateDialogState.Downloading(state.latestVersion, url, downloadId, 0f)
-                        } else {
-                            updateDialogState = UpdateDialogState.Error
-                        }
-                    } else {
-                        updateDialogState = UpdateDialogState.Error
-                    }
-                }
-            },
-            onDismiss = { updateDialogState = UpdateDialogState.Idle }
-        )
-
-        // ── Accurate download progress ──
-        is UpdateDialogState.Downloading -> {
-            // Poll DownloadManager for real progress
-            LaunchedEffect(state.downloadId) {
-                val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                while (true) {
-                    delay(300)
-                    val query = DownloadManager.Query().setFilterById(state.downloadId)
-                    val cursor = dm.query(query)
-                    if (!cursor.moveToFirst()) { cursor.close(); break }
-
-                    val dmStatus = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                    val downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
-                    val total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
-                    cursor.close()
-
-                    when (dmStatus) {
-                        DownloadManager.STATUS_SUCCESSFUL -> {
-                            // Remember which version we now have on disk so a future
-                            // "Check For Updates" tap can install it directly.
-                            prefs.setString(PreferenceManager.KEY_DOWNLOADED_UPDATE_VERSION, state.latestVersion)
-                            updateDialogState = UpdateDialogState.Idle
-                            val file = getApkDestinationFile()
-                            installApkAndScheduleDelete(context, file)
-                            break
-                        }
-                        DownloadManager.STATUS_FAILED -> {
-                            updateDialogState = UpdateDialogState.Error
-                            break
-                        }
-                        else -> {
-                            val progress = if (total > 0L) (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f) else 0f
-                            updateDialogState = state.copy(progress = progress)
-                        }
-                    }
-                }
-            }
-
-            UpdateDownloadingDialog(latestVersion = state.latestVersion, progress = state.progress)
-        }
-
-        is UpdateDialogState.Error -> UpdateErrorDialog(
-            onDismiss = { updateDialogState = UpdateDialogState.Idle }
-        )
-
-        else -> {}
-    }
-
     // ── Backup Dialogs ────────────────────────────────────────────────────────
     when (val state = backupState) {
         is BackupDialogState.Restoring -> Dialog(onDismissRequest = {}) {
@@ -1200,21 +1100,7 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                                 trailingIcon = Icons.Default.ChevronRight,
                                 modifier = Modifier.settingsSearchHighlight("check_for_updates", highlightedSettingKey) { highlightedSettingKey = null },
                                 onClick = {
-                                    scope.launch {
-                                        updateDialogState = UpdateDialogState.Checking
-                                        val release = fetchLatestRelease(GITHUB_API_RELEASES)
-                                        updateDialogState = when {
-                                            release == null -> UpdateDialogState.Error
-                                            isNewerVersion(release.tagName, APP_VERSION) -> {
-                                                val apkFile = getApkDestinationFile()
-                                                val downloadedVersion = prefs.getString(PreferenceManager.KEY_DOWNLOADED_UPDATE_VERSION, null)
-                                                val readyToInstall = apkFile.exists() && apkFile.length() > 0L &&
-                                                    downloadedVersion == release.tagName
-                                                UpdateDialogState.ConfirmUpdate(release.tagName, release.apkUrl, readyToInstall)
-                                            }
-                                            else -> UpdateDialogState.UpToDate
-                                        }
-                                    }
+                                    navigator.navigate(com.ramcosta.composedestinations.generated.destinations.UpdatesScreenDestination)
                                 }
                             )
                         }
@@ -1671,14 +1557,7 @@ private data class SettingsSearchEntry(
     val navigateTo: ((DestinationsNavigator) -> Unit)? = null
 )
 
-private sealed class UpdateDialogState {
-    object Idle : UpdateDialogState()
-    object Checking : UpdateDialogState()
-    object UpToDate : UpdateDialogState()
-    data class ConfirmUpdate(val latestVersion: String, val apkUrl: String?, val readyToInstall: Boolean = false) : UpdateDialogState()
-    data class Downloading(val latestVersion: String, val apkUrl: String?, val downloadId: Long, val progress: Float) : UpdateDialogState()
-    object Error : UpdateDialogState()
-}
+
 
 private sealed class BackupDialogState {
     object Idle : BackupDialogState()
