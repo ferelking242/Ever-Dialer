@@ -278,7 +278,10 @@ object PrivilegedRuntime {
     }
 
     /**
-     * Pushes the pinned fork APK into $REMOTE_DIR when its remote SHA-256 differs(client: AdbClient, context: Context, log: ((String) -> Unit)?) {
+     * Pushes the pinned fork APK into $REMOTE_DIR when its remote SHA-256 differs
+     * from the pinned asset hash.
+     */
+    private fun ensureRemotePayloadChecked(client: AdbClient, context: Context, log: ((String) -> Unit)?) {
         val expectedSha = BuildConfig.SHIZUKU_APK_SHA256
         var remoteSha: String? = null
         runCatching {

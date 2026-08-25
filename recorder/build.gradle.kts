@@ -8,6 +8,7 @@
 
 import java.net.URI
 import java.security.MessageDigest
+import java.util.zip.ZipInputStream
 
 plugins {
     alias(libs.plugins.android.library)
@@ -169,7 +170,7 @@ abstract class PrepareShizukuEmbeddedTask : DefaultTask() {
         // 2. Prebuilt native libs → generated jniLibs dir (wired below).
         val jniRoot = File(outDir, "jniLibs")
         jniRoot.deleteRecursively()
-        java.util.zip.ZipInputStream(apkFile.inputStream().buffered()).use { zip ->
+        ZipInputStream(apkFile.inputStream().buffered()).use { zip ->
             var entry = zip.nextEntry
             while (entry != null) {
                 if (!entry.isDirectory &&
@@ -268,7 +269,8 @@ android {
     sourceSets {
         getByName("main") {
             // Prebuilt libadb.so / libshizuku.so extracted by prepareShizukuEmbedded.
-            jniLibs.srcDir(layout.buildDirectory.dir("generated/shizuku/jniLibs"))
+            // Plain string path: AGP rejects Provider instances in SourceSet APIs.
+            jniLibs.srcDir("${layout.buildDirectory.get().asFile}/generated/shizuku/jniLibs")
         }
     }
     packaging {
