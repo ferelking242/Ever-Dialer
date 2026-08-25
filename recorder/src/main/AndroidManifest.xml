@@ -152,14 +152,18 @@
             </intent-filter>
         </service>
 
+        <!-- FileProvider déjà déclaré dans le module app → on le supprime ici pour
+             éviter un conflit de manifests qui rend l'APK invalide sur HiOS/Tecno. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.provider"
             android:exported="false"
-            android:grantUriPermissions="true">
+            android:grantUriPermissions="true"
+            tools:node="merge">
             <meta-data
                 android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
+                android:resource="@xml/file_paths"
+                tools:node="replace" />
         </provider>
 
         <provider
@@ -168,7 +172,8 @@
             android:enabled="true"
             android:exported="true"
             android:multiprocess="false"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL"
+            tools:node="merge" />
 
         <!--
              Phase 2 — embedded privileged runtime:

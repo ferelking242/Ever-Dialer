@@ -40,9 +40,10 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
         debug {
-            // التصليح هنا: الـ Debug يستعمل المفتاح التلقائي (Default)
-            // هكا الـ GitHub Actions يجم يخرجلك APK حتى من غير Keystore
-            signingConfig signingConfigs.debug
+            // Debug signe avec la même keystore que release
+            // pour éviter INSTALL_FAILED_UPDATE_INCOMPATIBLE
+            signingConfig signingConfigs.release
+            debuggable = true
         }
     }
 
