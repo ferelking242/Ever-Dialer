@@ -10,7 +10,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+         Ever Dialer+ embeds its own Shizuku-compatible runtime (Phase 2): this app IS the
+         "manager" now. We define the manager API permission ourselves so the vendored server
+         (pushed binder discovery) treats us as the privileged client host.
+         NOTE: do NOT install an external Shizuku app alongside — duplicate permission definition.
+    -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <permission
+        android:name="moe.shizuku.manager.permission.API_V23"
+        android:protectionLevel="normal" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
@@ -160,6 +169,38 @@
             android:exported="true"
             android:multiprocess="false"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!--
+             Phase 2 — embedded privileged runtime:
+             dedicated pairing page (wireless debugging, self-pairing), watchdog foreground
+             service keeping the embedded Shizuku server alive, and compatibility receiver
+             intercepting the standard START/STOP broadcasts aimed at the Shizuku manager
+             (now routed to OUR embedded runtime instead of an external app).
+        -->
+        <activity
+            android:name=".privileged.PairingActivity"
+            android:exported="false"
+            android:label="Privilèges système intégrés"
+            android:theme="@style/Theme.EverCallRecorder" />
+
+        <service
+            android:name=".privileged.EmbeddedShizukuService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the embedded Shizuku privileged helper alive for call recording." />
+        </service>
+
+        <receiver
+            android:name=".privileged.PrivilegedBroadcastReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="moe.shizuku.privileged.api.START" />
+                <action android:name="moe.shizuku.privileged.api.STOP" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

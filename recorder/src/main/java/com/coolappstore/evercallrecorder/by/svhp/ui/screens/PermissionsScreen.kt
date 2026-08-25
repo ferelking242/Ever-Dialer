@@ -43,7 +43,9 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.coolappstore.evercallrecorder.by.svhp.R
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
+import android.content.Intent
 import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PairingActivity
 import com.coolappstore.evercallrecorder.by.svhp.onboarding.OnboardingStatus
 import com.coolappstore.evercallrecorder.by.svhp.system.openAppSettings
 import com.coolappstore.evercallrecorder.by.svhp.ui.common.StorageLocationDialog
@@ -99,12 +101,21 @@ fun PermissionsScreen(
     }
 
     val grantAccess = {
-        viewModel.onGrantAccess(
-            status = status,
-            onPermissionGranted = onPermissionGranted,
-            requestRuntimePermission = { permission -> permissionRequestLauncher.launch(permission) },
-            showStorageChoice = { showStorageChoiceDialog = true },
-        )
+        // Phase 2 — embedded privileged runtime: when the Shizuku server isn't running
+        // AND no external manager app is installed, route the user to OUR dedicated
+        // wireless-debugging pairing page instead of the "install/open Shizuku" flow.
+        val externalManager = ShizukuConnectionManager.getPackageName(activityContext)
+            ?.takeIf { it != activityContext.packageName }
+        if (!status.shizukuRunning && externalManager == null) {
+            activityContext.startActivity(Intent(activityContext, PairingActivity::class.java))
+        } else {
+            viewModel.onGrantAccess(
+                status = status,
+                onPermissionGranted = onPermissionGranted,
+                requestRuntimePermission = { permission -> permissionRequestLauncher.launch(permission) },
+                showStorageChoice = { showStorageChoiceDialog = true },
+            )
+        }
     }
 
     // Auto-pop next permission when Shizuku is ready and a runtime permission is still missing
