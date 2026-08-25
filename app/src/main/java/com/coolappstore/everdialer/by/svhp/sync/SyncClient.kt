@@ -21,7 +21,7 @@ object SyncClient {
     private const val TAG = "EverSync/Client"
     private const val CHUNK = 64 * 1024
     private const val CONNECT_TIMEOUT_MS = 6_000
-    private const val DISCOVERY_TIMEOUT_MS = 12_000
+    private const val DISCOVERY_TIMEOUT_MS = 12_000L
 
     /**
      * One full push cycle. Returns a short human summary on success.

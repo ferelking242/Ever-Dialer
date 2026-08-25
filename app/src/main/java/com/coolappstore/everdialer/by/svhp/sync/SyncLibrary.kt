@@ -41,7 +41,7 @@ object SyncLibrary {
     fun merge(context: Context, incoming: List<CallMeta>) {
         if (incoming.isEmpty()) return
         val existing = load(context)
-        val keyed = existing.associateBy { "${it.date}|${it.number}|${it.direction}" }
+        val keyed = existing.associateBy { "${it.date}|${it.number}|${it.direction}" }.toMutableMap()
         for (meta in incoming) {
             val key = "${meta.date}|${meta.number}|${meta.direction}"
             keyed[key] = meta

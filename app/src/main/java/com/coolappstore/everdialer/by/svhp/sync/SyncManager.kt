@@ -162,12 +162,12 @@ class SyncWorker(
         if (!SyncStore.isEnabled(context)) return Result.success()
         if (SyncStore.role(context) != SyncRole.SENDER) return Result.success()
 
-        return when (val outcome = SyncClient.runPush(context)) {
-            is kotlin.Result.Success -> Result.success()
-            is kotlin.Result.Failure -> {
-                val message = outcome.exceptionOrNull()?.message ?: "erreur"
+        return SyncClient.runPush(context).fold(
+            onSuccess = { Result.success() },
+            onFailure = { throwable ->
+                val message = throwable.message ?: "erreur"
                 if (message.contains("introuvable")) Result.retry() else Result.failure()
             }
-        }
+        )
     }
 }

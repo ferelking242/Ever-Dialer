@@ -84,7 +84,7 @@ private fun qrBitmap(content: String, size: Int = 640): Bitmap {
     val bitmap = createBitmap(size, size)
     for (y in 0 until size) {
         for (x in 0 until size) {
-            bitmap.setPixel(x, y, if (matrix[x, y]) Color.Black else Color.White)
+            bitmap.setPixel(x, y, if (matrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE)
         }
     }
     return bitmap
@@ -139,7 +139,7 @@ fun SyncSettingsScreen(navigator: DestinationsNavigator) {
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Outlined.Sync, tint = AccentColor)
+                Icon(Icons.Outlined.Sync, contentDescription = null, tint = AccentColor)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Activer la synchronisation", fontWeight = FontWeight.SemiBold)
@@ -168,7 +168,7 @@ fun SyncSettingsScreen(navigator: DestinationsNavigator) {
                 },
                 enabled = true
             ) {
-                Icon(Icons.Outlined.PhoneForwarded, Modifier.size(18.dp))
+                Icon(Icons.Outlined.PhoneForwarded, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
                 Text("Ce téléphone reçoit (B)")
             }
@@ -176,7 +176,7 @@ fun SyncSettingsScreen(navigator: DestinationsNavigator) {
             Card(shape = RoundedCornerShape(18.dp)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.PhoneInTalk, tint = AccentColor)
+                        Icon(Icons.Outlined.PhoneInTalk, contentDescription = null, tint = AccentColor)
                         Spacer(Modifier.width(12.dp))
                         Text("Ce téléphone envoie (A)", fontWeight = FontWeight.SemiBold)
                     }
@@ -199,7 +199,7 @@ fun SyncSettingsScreen(navigator: DestinationsNavigator) {
                             }
                         }
                     ) {
-                        Icon(Icons.Default.Send, Modifier.size(16.dp))
+                        Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
                         Text("Appairer avec le téléphone B")
                     }
@@ -238,7 +238,7 @@ fun SyncSettingsScreen(navigator: DestinationsNavigator) {
                             modifier = Modifier.size(220.dp).background(Color.White)
                         )
                         OutlinedButton(onClick = { copyToClipboard(context, "Ever Dialer pairing", shownCode) }) {
-                            Icon(Icons.Default.ContentCopy, Modifier.size(16.dp))
+                            Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Copier le code")
                         }
@@ -271,7 +271,7 @@ fun SyncSettingsScreen(navigator: DestinationsNavigator) {
                             modifier = Modifier.fillMaxWidth(),
                             onClick = { SyncManager.requestSyncNow(context) }
                         ) {
-                            Icon(Icons.Default.Send, Modifier.size(16.dp))
+                            Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("Synchroniser maintenant")
                         }

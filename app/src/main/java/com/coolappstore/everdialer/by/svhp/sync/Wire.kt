@@ -14,7 +14,7 @@ import java.io.DataOutputStream
 import java.net.Socket
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
-import javax.crypto.SecretKeySpec
+import javax.crypto.spec.SecretKeySpec
 
 internal const val KIND_CONTROL: Byte = 0
 internal const val KIND_DATA: Byte = 1

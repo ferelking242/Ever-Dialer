@@ -116,7 +116,7 @@ object SyncServer {
                     }
                     is MsgFileEnd -> {
                         val name = pendingName ?: error("file_end hors transfert")
-                        pendingOut?.flush(); pendingOut?.fd.sync(); pendingOut?.close(); pendingOut = null
+                        pendingOut?.flush(); runCatching { pendingOut?.fd?.sync() }; pendingOut?.close(); pendingOut = null
                         val actualSha = pendingDigest!!.digest().joinToString("") { "%02x".format(it) }
                         val ok = actualSha.equals(msg.sha256, ignoreCase = true)
                         if (ok) {
