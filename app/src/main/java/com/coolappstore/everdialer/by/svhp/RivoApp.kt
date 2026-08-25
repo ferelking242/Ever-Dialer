@@ -17,6 +17,7 @@ class RivoApp : ShizuApplication() {
             modules(appModule)
         }
         restoreSavedAppIcon()
+        com.coolappstore.everdialer.by.svhp.sync.SyncManager.init(this)
         com.coolappstore.everdialer.by.svhp.controller.FakeCallConnectionService.ensureRegistered(this)
     }
 

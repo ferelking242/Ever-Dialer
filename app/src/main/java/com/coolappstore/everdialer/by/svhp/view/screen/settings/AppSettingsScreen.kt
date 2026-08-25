@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Note
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.SignalCellularAlt
+import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -28,6 +29,7 @@ import com.coolappstore.everdialer.by.svhp.view.components.settingsSearchHighlig
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
 import com.ramcosta.composedestinations.generated.destinations.CallSettingsScreenDestination
+import com.ramcosta.composedestinations.generated.destinations.SyncSettingsScreenDestination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
@@ -87,6 +89,16 @@ fun AppSettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = 
                         trailingIcon = Icons.Default.ChevronRight,
                         modifier = Modifier.settingsSearchHighlight("nav_call_settings", highlightedKey) { highlightedKey = null },
                         onClick = { navigator.navigate(CallSettingsScreenDestination()) }
+                    )
+                    CardDivider()
+                    RivoListItem(
+                        headline = "Phone-to-Phone Sync",
+                        supporting = "Send calls & recordings to your other phone",
+                        leadingIcon = Icons.Outlined.Sync,
+                        iconContainerColor = Color(0xFF00897B),
+                        trailingIcon = Icons.Default.ChevronRight,
+                        modifier = Modifier.settingsSearchHighlight("phone_to_phone_sync", highlightedKey) { highlightedKey = null },
+                        onClick = { navigator.navigate(SyncSettingsScreenDestination()) }
                     )
                     CardDivider()
                     RivoListItem(
