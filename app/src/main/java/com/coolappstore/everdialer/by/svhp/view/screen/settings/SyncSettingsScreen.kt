@@ -186,7 +186,7 @@ fun SyncSettingsScreen(navigator: DestinationsNavigator) {
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Colle ici le code affiché sur le téléphone B") },
                         minLines = 2,
-                        fontSize = 12.sp
+                        textStyle = MaterialTheme.typography.bodySmall
                     )
                     Button(
                         modifier = Modifier.fillMaxWidth(),
