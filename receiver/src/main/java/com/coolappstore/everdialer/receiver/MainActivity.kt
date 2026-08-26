@@ -83,7 +83,7 @@ class MainActivity : ComponentActivity() {
 
 /* ── Error reporter (catches crashes inside composables) ──────────────────── */
 
-private val LocalErrorReporter = staticCompositionLocalOf<(String) -> Unit> { }
+private val LocalErrorReporter = staticCompositionLocalOf<(String) -> Unit> { _ -> }
 
 @Composable
 private fun ErrorFallbackScreen(error: String, onRetry: () -> Unit) {
