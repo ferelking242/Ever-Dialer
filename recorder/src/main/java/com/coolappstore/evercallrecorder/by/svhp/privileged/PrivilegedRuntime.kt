@@ -98,6 +98,7 @@ object PrivilegedRuntime {
                 if (ok) {
                     Log.i(TAG, "Pairing succeeded")
                     _state.value = State.PAIRED_IDLE
+                    PairingNotifier.onPairingSucceeded(context)
                     Result.success(Unit)
                 } else {
                     Log.w(TAG, "Pairing failed (wrong code or stale port)")

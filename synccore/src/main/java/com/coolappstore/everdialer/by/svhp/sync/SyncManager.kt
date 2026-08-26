@@ -83,6 +83,7 @@ object SyncManager {
         val (id, name) = SyncStore.identity(ctx)
         val secret = SyncSecrets.randomB64(32)
         SyncStore.ownPairingSecret(ctx, secret)
+        // IMPORTANT: set role BEFORE enable so ensureRunning() starts the server.
         SyncStore.setRole(ctx, SyncRole.RECEIVER)
         setEnabled(ctx, true) // brings the NSD listener up immediately
         log("Code de jumelage généré — en attente du téléphone A")
@@ -138,6 +139,8 @@ object SyncManager {
             return false
         }
         SyncStore.importPeer(ctx, payload)
+        // IMPORTANT: set role BEFORE enable so ensureRunning() starts the server.
+        SyncStore.setRole(ctx, SyncRole.RECEIVER)
         setEnabled(ctx, true)
         SyncServer.start(ctx)
         log("Appairé avec ${payload.name} ✔")

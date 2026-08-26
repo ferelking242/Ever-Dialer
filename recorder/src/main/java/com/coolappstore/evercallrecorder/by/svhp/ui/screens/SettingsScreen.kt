@@ -177,7 +177,7 @@ fun SettingsContent(
                     // ORDER: Call Recording Switch → Notifications → Recording → Audio → Security → Languages → About → Debug
                     CallRecordingMasterSwitchSection(preferences, updateTrigger, actions)
                     AppearanceSection(preferences, updateTrigger, actions)
-                    RecordingMenuAppearanceSection(preferences, updateTrigger, actions)
+                    // RecordingMenuAppearanceSection removed — dialer-specific placement option no longer needed in standalone Ever Call Recording app.
                     RecordingSection(preferences, updateTrigger, actions, onStorageClick, onOpenContactsIncoming, onOpenContactsOutgoing)
                     AutoDeleteSection(preferences, updateTrigger, actions)
                     AudioSection(preferences, updateTrigger, actions)

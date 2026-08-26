@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -41,6 +42,7 @@ import com.coolappstore.everdialer.by.svhp.sync.CallMeta
 import com.coolappstore.everdialer.by.svhp.sync.SyncLibrary
 import com.coolappstore.everdialer.by.svhp.sync.SyncManager
 import com.coolappstore.everdialer.by.svhp.sync.SyncRole
+import com.coolappstore.everdialer.by.svhp.sync.SyncStore
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
@@ -57,7 +59,16 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                EverReceiverApp()
+                var errorMessage by remember { mutableStateOf<String?>(null) }
+                if (errorMessage != null) {
+                    ErrorFallbackScreen(error = errorMessage!!) { errorMessage = null }
+                } else {
+                    CompositionLocalProvider(
+                        LocalErrorReporter provides { msg -> errorMessage = msg }
+                    ) {
+                        EverReceiverApp()
+                    }
+                }
             }
         }
     }
@@ -66,6 +77,22 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         if (com.coolappstore.everdialer.by.svhp.sync.SyncStore.isEnabled(this)) {
             ReceiveService.start(this)
+        }
+    }
+}
+
+/* ── Error reporter (catches crashes inside composables) ──────────────────── */
+
+private val LocalErrorReporter = staticCompositionLocalOf<(String) -> Unit> { }
+
+@Composable
+private fun ErrorFallbackScreen(error: String, onRetry: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.padding(32.dp)) {
+            Icon(Icons.Outlined.ErrorOutline, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(48.dp))
+            Text("Erreur", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+            Button(onClick = onRetry) { Text("Réessayer") }
         }
     }
 }
@@ -80,6 +107,7 @@ private fun EverReceiverApp() {
     val logs by SyncManager.logs.collectAsState()
 
     var showP2p by remember { mutableStateOf(false) }
+    var showShizukuPairing by remember { mutableStateOf(false) }
     var recordings by remember { mutableStateOf<List<File>>(emptyList()) }
     var calls by remember { mutableStateOf<List<CallMeta>>(emptyList()) }
     var reloadTick by remember { mutableStateOf(0) }
@@ -96,6 +124,10 @@ private fun EverReceiverApp() {
 
     val isPaired = syncState.enabled && syncState.role == SyncRole.RECEIVER
 
+    if (showShizukuPairing) {
+        ShizukuPairingBanner(onDismiss = { showShizukuPairing = false })
+    }
+
     if (showP2p) {
         P2pScreen(
             enabled = syncState.enabled,
@@ -107,8 +139,15 @@ private fun EverReceiverApp() {
             logs = logs,
             onBack = { showP2p = false },
             onToggle = { enable ->
-                SyncManager.setEnabled(context, enable)
-                if (enable) ReceiveService.start(context) else ReceiveService.stop(context)
+                if (enable) {
+                    // Ensure role is RECEIVER before enabling so server starts.
+                    SyncStore.setRole(context, SyncRole.RECEIVER)
+                    SyncManager.setEnabled(context, true)
+                    ReceiveService.start(context)
+                } else {
+                    SyncManager.setEnabled(context, false)
+                    ReceiveService.stop(context)
+                }
             },
             onRefreshLists = { reloadTick++ }
         )
@@ -582,6 +621,34 @@ private fun RecordingRow(file: File, onClick: () -> Unit) {
         },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
+}
+
+/* ── Shizuku pairing notification banner ──────────────────────────────────── */
+
+@Composable
+private fun ShizukuPairingBanner(onDismiss: () -> Unit) {
+    // Placeholder — Shizuku pairing is handled by the emitter's PairingActivity.
+    // On the receiver, we just show a notice.
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF1565C0)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Outlined.Info, null, tint = Color.White, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Pairing Shizuku", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Color.White)
+                Text("Le pairing Shizuku embarqué est géré par l'émetteur (phone A). Ce téléphone n'en a pas besoin.", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.9f))
+            }
+            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Outlined.Close, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            }
+        }
+    }
 }
 
 /* ── Shared UI ────────────────────────────────────────────────────────────── */

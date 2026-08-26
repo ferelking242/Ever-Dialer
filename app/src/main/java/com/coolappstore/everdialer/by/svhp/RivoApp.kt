@@ -24,5 +24,12 @@ class RivoApp : ShizuApplication() {
             }
         )
         runCatching { com.coolappstore.everdialer.by.svhp.sync.SyncManager.init(this) }
+
+        // Start monitoring for wireless-debugging pairing availability.
+        // When detected, shows a notification prompting the user to pair —
+        // same behaviour as the real Shizuku manager.
+        runCatching {
+            com.coolappstore.evercallrecorder.by.svhp.privileged.PairingNotifier.startWatching(this)
+        }
     }
 }
