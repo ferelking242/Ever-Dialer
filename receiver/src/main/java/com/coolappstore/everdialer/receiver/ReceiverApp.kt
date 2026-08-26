@@ -18,7 +18,7 @@ class ReceiverApp : Application() {
         // Boots the same sync engine embedded in the dialer. On this device it
         // stays a RECEIVER: it serves one paired sender (phone A) and stores
         // everything under filesDir/EverSync.
-        SyncManager.init(this)
+        runCatching { SyncManager.init(this) }
     }
 
     companion object {
