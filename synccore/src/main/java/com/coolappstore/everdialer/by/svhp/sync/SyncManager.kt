@@ -111,6 +111,39 @@ object SyncManager {
         return true
     }
 
+    /** SENDER flow: generates pairing blob for phone A. */
+    fun generateSenderPairingCode(context: Context): String {
+        val ctx = context.applicationContext
+        val (id, name) = SyncStore.identity(ctx)
+        val secret = SyncSecrets.randomB64(32)
+        SyncStore.ownPairingSecret(ctx, secret)
+        SyncStore.setRole(ctx, SyncRole.SENDER)
+        log("Code émetteur généré")
+        return SyncJson.encodeToString(
+            PairingPayload(id = id, name = name, role = "sender", secret = secret)
+        )
+    }
+
+    /** RECEIVER flow: imports the blob shown on phone A. */
+    fun importReceiverPairingCode(context: Context, raw: String): Boolean {
+        val ctx = context.applicationContext
+        val payload = runCatching {
+            SyncJson.decodeFromString<PairingPayload>(raw.trim())
+        }.getOrElse {
+            log("Code invalide : ${it.message}")
+            return false
+        }
+        if (payload.role != "sender") {
+            log("Ce code n'est pas celui d'un émetteur.")
+            return false
+        }
+        SyncStore.importPeer(ctx, payload)
+        setEnabled(ctx, true)
+        SyncServer.start(ctx)
+        log("Appairé avec ${payload.name} ✔")
+        return true
+    }
+
     fun requestSyncNow(context: Context) {
         val ctx = context.applicationContext
         WorkManager.getInstance(ctx).enqueueUniqueWork(

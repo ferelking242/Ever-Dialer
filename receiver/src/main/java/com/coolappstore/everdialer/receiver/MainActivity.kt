@@ -1,10 +1,8 @@
 /*
- * Ever Call Recording (phone B) — minimal companion that ONLY receives what
- * the main Ever Dialer+ app (phone A) pushes over the local network.
+ * Ever Client (phone B) — receives call recordings from Ever Émetteur (phone A) via P2P.
  *
- * The UI is intentionally styled to match the Ever Call Recorder's recording
- * list (dark theme, Material3 ListItem rows, filter pills, grouped by date).
- * This app has NO call detection — it is purely a passive receiver.
+ * UI: recording list + ⚙ P2P settings with paste-code input and generate-code button.
+ * No call detection — purely a passive P2P receiver.
  */
 package com.coolappstore.everdialer.receiver
 
@@ -72,7 +70,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/* ── Main screen: recording list (matches Ever Call Recorder HomeScreen) ── */
+/* ── Main screen ─────────────────────────────────────────────────────────── */
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -118,7 +116,7 @@ private fun EverReceiverApp() {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("Ever Call Recording", fontWeight = FontWeight.Bold) },
+                    title = { Text("Ever Client", fontWeight = FontWeight.Bold) },
                     actions = {
                         IconButton(onClick = { showP2p = true }, modifier = Modifier.size(52.dp)) {
                             Icon(Icons.Outlined.Settings, contentDescription = "Settings")
@@ -133,14 +131,13 @@ private fun EverReceiverApp() {
                 modifier = Modifier.fillMaxSize().padding(innerPadding),
                 contentPadding = PaddingValues(bottom = 100.dp)
             ) {
-                // ── Pairing status banner (when not paired) ─────────────────
                 if (!isPaired) {
                     item {
                         NotPairedBanner(onClick = { showP2p = true })
                     }
                 }
 
-                // ── Search bar ─────────────────────────────────────────────
+                // Search bar
                 item {
                     Surface(
                         onClick = {},
@@ -153,10 +150,7 @@ private fun EverReceiverApp() {
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)
                         ) {
-                            Icon(
-                                Icons.Outlined.Search, null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Icon(Icons.Outlined.Search, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             OutlinedTextField(
                                 value = searchQuery,
                                 onValueChange = { searchQuery = it },
@@ -173,10 +167,8 @@ private fun EverReceiverApp() {
                     }
                 }
 
-                // ── Call log section ───────────────────────────────────────
-                item {
-                    DateGroupHeader(label = "Journal d'appels du téléphone A")
-                }
+                // Call log section
+                item { DateGroupHeader(label = "Journal d'appels du téléphone A") }
 
                 val filteredCalls = if (searchQuery.isBlank()) calls else {
                     val q = searchQuery.trim().lowercase()
@@ -197,47 +189,27 @@ private fun EverReceiverApp() {
                         )
                     }
                 } else {
-                    // Group calls by date
                     val grouped = filteredCalls.groupBy { groupLabel(it.date) }
                     grouped.forEach { (dateLabel, callsInGroup) ->
-                        item(key = "header_$dateLabel") {
-                            DateGroupHeader(label = dateLabel)
-                        }
+                        item(key = "header_$dateLabel") { DateGroupHeader(label = dateLabel) }
                         item(key = "group_$dateLabel") {
                             Card(
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                                 shape = RoundedCornerShape(20.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                                ),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                                 elevation = CardDefaults.cardElevation(0.dp)
                             ) {
                                 Column(modifier = Modifier.padding(vertical = 4.dp)) {
                                     callsInGroup.forEachIndexed { index, call ->
                                         val hasAudio = call.recording != null &&
-                                            java.io.File(context.filesDir, "EverSync/recordings/${call.recording}").exists()
-                                        CallLogRow(
-                                            call = call,
-                                            hasAudio = hasAudio,
-                                            onClick = {
-                                                call.recording?.let { name ->
-                                                    openRecording(
-                                                        context,
-                                                        File(context.filesDir, "EverSync/recordings/$name")
-                                                    )
-                                                } ?: Toast.makeText(
-                                                    context,
-                                                    "Pas d'enregistrement pour cet appel",
-                                                    Toast.LENGTH_SHORT
-                                                ).show()
-                                            }
-                                        )
+                                            File(context.filesDir, "EverSync/recordings/${call.recording}").exists()
+                                        CallLogRow(call = call, hasAudio = hasAudio, onClick = {
+                                            call.recording?.let { name ->
+                                                openRecording(context, File(context.filesDir, "EverSync/recordings/$name"))
+                                            } ?: Toast.makeText(context, "Pas d'enregistrement", Toast.LENGTH_SHORT).show()
+                                        })
                                         if (index < callsInGroup.lastIndex) {
-                                            HorizontalDivider(
-                                                modifier = Modifier.padding(horizontal = 16.dp),
-                                                thickness = 0.5.dp,
-                                                color = MaterialTheme.colorScheme.outlineVariant
-                                            )
+                                            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
                                         }
                                     }
                                 }
@@ -246,12 +218,8 @@ private fun EverReceiverApp() {
                     }
                 }
 
-                // ── Recordings section ─────────────────────────────────────
-                item {
-                    DateGroupHeader(
-                        label = "Enregistrements reçus (${recordings.size})"
-                    )
-                }
+                // Recordings section
+                item { DateGroupHeader(label = "Enregistrements reçus (${recordings.size})") }
 
                 val filteredRecordings = if (searchQuery.isBlank()) recordings else {
                     val q = searchQuery.trim().lowercase()
@@ -265,7 +233,7 @@ private fun EverReceiverApp() {
                             body = if (!isPaired)
                                 "Configure la synchronisation P2P pour recevoir les enregistrements du téléphone A."
                             else
-                                "Les enregistrements arrivent ici automatiquement quand le téléphone A est en ligne."
+                                "Les enregistrements arrivent ici automatiquement."
                         )
                     }
                 } else {
@@ -273,23 +241,14 @@ private fun EverReceiverApp() {
                         Card(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                             shape = RoundedCornerShape(20.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                            ),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
                             elevation = CardDefaults.cardElevation(0.dp)
                         ) {
                             Column(modifier = Modifier.padding(vertical = 4.dp)) {
                                 filteredRecordings.forEachIndexed { index, file ->
-                                    RecordingRow(
-                                        file = file,
-                                        onClick = { openRecording(context, file) }
-                                    )
+                                    RecordingRow(file = file, onClick = { openRecording(context, file) })
                                     if (index < filteredRecordings.lastIndex) {
-                                        HorizontalDivider(
-                                            modifier = Modifier.padding(horizontal = 16.dp),
-                                            thickness = 0.5.dp,
-                                            color = MaterialTheme.colorScheme.outlineVariant
-                                        )
+                                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp, color = MaterialTheme.colorScheme.outlineVariant)
                                     }
                                 }
                             }
@@ -301,7 +260,7 @@ private fun EverReceiverApp() {
     }
 }
 
-/* ── Not-paired banner (invites user to configure) ────────────────────── */
+/* ── Not-paired banner ───────────────────────────────────────────────────── */
 
 @Composable
 private fun NotPairedBanner(onClick: () -> Unit) {
@@ -316,33 +275,18 @@ private fun NotPairedBanner(onClick: () -> Unit) {
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                Icons.Outlined.ErrorOutline, null,
-                tint = Color.White, modifier = Modifier.size(22.dp)
-            )
+            Icon(Icons.Outlined.ErrorOutline, null, tint = Color.White, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "Synchronisation non configurée",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
-                )
-                Text(
-                    "Appaire avec le téléphone A pour recevoir appels et enregistrements.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.9f)
-                )
+                Text("Synchronisation non configurée", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Color.White)
+                Text("Configure le P2P pour recevoir appels et enregistrements du téléphone A.", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.9f))
             }
-            Icon(
-                Icons.Outlined.ChevronRight, null,
-                tint = Color.White.copy(alpha = 0.8f)
-            )
+            Icon(Icons.Outlined.ChevronRight, null, tint = Color.White.copy(alpha = 0.8f))
         }
     }
 }
 
-/* ── Full-screen P2P settings ─────────────────────────────────────────── */
+/* ── P2P Settings ─────────────────────────────────────────────────────────── */
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -360,19 +304,13 @@ private fun P2pScreen(
 ) {
     val context = LocalContext.current
     var pairingCode by remember { mutableStateOf<String?>(null) }
+    var emitterCodeInput by remember { mutableStateOf("") }
     val dateFormat = remember { SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE) }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text(
-                        "Synchronisation P2P",
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
+                title = { Text("Synchronisation P2P", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
@@ -390,7 +328,7 @@ private fun P2pScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ── Status card ──────────────────────────────────────────────
+            // Status card
             Card(
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
@@ -417,18 +355,11 @@ private fun P2pScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 3, overflow = TextOverflow.Ellipsis
                         )
-                    } else if (lastStatus.isNotBlank()) {
-                        Text(
-                            lastStatus,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 3, overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
             }
 
-            // ── Toggle ──────────────────────────────────────────────────
+            // Toggle
             Card(shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
@@ -437,9 +368,7 @@ private fun P2pScreen(
                     Column(Modifier.weight(1f)) {
                         Text("Réception automatique", fontWeight = FontWeight.Medium)
                         Text(
-                            if (enabled)
-                                "Activée${if (peerName.isNotBlank()) " · jumelé avec $peerName" else ""}"
-                            else "Désactivée",
+                            if (enabled) "Activée" else "Désactivée",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -448,18 +377,53 @@ private fun P2pScreen(
                 }
             }
 
-            // ── Pairing code generator ───────────────────────────────────
+            // ── Paste emitter code ────────────────────────────────────────────
             Card(shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                 Column(Modifier.padding(14.dp)) {
-                    Text("Code de jumelage", fontWeight = FontWeight.Medium)
+                    Text("Entrer le code de l'émetteur", fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Génère un code de jumelage pour CE téléphone (B). Ensuite, colle-le sur le téléphone A : Ever Dialer+ → Réglages → Synchronisation P2P.",
+                        "Sur le téléphone A (Ever Émetteur), va dans Paramètres → Synchronisation P2P → « Générer le code émetteur », copie-le puis colle-le ici.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = emitterCodeInput,
+                        onValueChange = { emitterCodeInput = it },
+                        label = { Text("Colle le code de l'émetteur") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        maxLines = 5
+                    )
+                    Spacer(Modifier.height(10.dp))
                     Button(
+                        onClick = {
+                            val ok = SyncManager.importReceiverPairingCode(context, emitterCodeInput)
+                            Toast.makeText(
+                                context,
+                                if (ok) "Jumelé avec l'émetteur ✔" else "Code invalide",
+                                Toast.LENGTH_LONG
+                            ).show()
+                            if (ok) emitterCodeInput = ""
+                        },
+                        enabled = emitterCodeInput.isNotBlank()
+                    ) { Text("Importer et jumeler") }
+                }
+            }
+
+            // ── Generate code for this receiver ──────────────────────────────
+            Card(shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Ou générer un code pour CE téléphone", fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Génère un code de jumelage pour CE téléphone (B). Ensuite, colle-le sur le téléphone A : Ever Émetteur → Paramètres → Synchronisation P2P.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
                         onClick = {
                             runCatching {
                                 pairingCode = SyncManager.generateReceiverPairingCode(context)
@@ -477,7 +441,7 @@ private fun P2pScreen(
                 }
             }
 
-            // ── Display pairing code ─────────────────────────────────────
+            // Display generated code
             pairingCode?.let { code ->
                 Card(
                     shape = RoundedCornerShape(20.dp),
@@ -499,7 +463,7 @@ private fun P2pScreen(
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Copie ce code et colle-le sur le téléphone A : Ever Dialer+ → Réglages → Synchronisation P2P.",
+                            "Copie ce code et colle-le sur le téléphone A : Ever Émetteur → Paramètres → Synchronisation P2P.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -515,25 +479,18 @@ private fun P2pScreen(
                 }
             }
 
-            // ── Refresh button ───────────────────────────────────────────
-            OutlinedButton(
-                onClick = onRefreshLists,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Rafraîchir la liste") }
+            // Refresh button
+            OutlinedButton(onClick = onRefreshLists, modifier = Modifier.fillMaxWidth()) {
+                Text("Rafraîchir la liste")
+            }
 
-            // ── Logs ─────────────────────────────────────────────────────
+            // Logs
             if (logs.isNotEmpty()) {
                 Card(shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                     Column(Modifier.padding(14.dp)) {
                         Text("Journal", style = MaterialTheme.typography.labelLarge)
                         logs.take(12).forEach { line ->
-                            Text(
-                                line,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -544,7 +501,7 @@ private fun P2pScreen(
     }
 }
 
-/* ── Call log row (matches Ever Call Recorder RecordingRow) ─────────────── */
+/* ── Call log row ─────────────────────────────────────────────────────────── */
 
 @Composable
 private fun CallLogRow(call: CallMeta, hasAudio: Boolean, onClick: () -> Unit) {
@@ -591,18 +548,14 @@ private fun CallLogRow(call: CallMeta, hasAudio: Boolean, onClick: () -> Unit) {
         },
         trailingContent = {
             if (hasAudio) {
-                Icon(
-                    Icons.Rounded.GraphicEq, null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
+                Icon(Icons.Rounded.GraphicEq, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
             }
         },
         colors = ListItemDefaults.colors(containerColor = Color.Transparent)
     )
 }
 
-/* ── Recording row ────────────────────────────────────────────────────── */
+/* ── Recording row ────────────────────────────────────────────────────────── */
 
 @Composable
 private fun RecordingRow(file: File, onClick: () -> Unit) {
@@ -614,20 +567,11 @@ private fun RecordingRow(file: File, onClick: () -> Unit) {
                     .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Rounded.GraphicEq, null,
-                    tint = MaterialTheme.colorScheme.tertiary,
-                    modifier = Modifier.size(22.dp)
-                )
+                Icon(Icons.Rounded.GraphicEq, null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(22.dp))
             }
         },
         headlineContent = {
-            Text(
-                file.name,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1, overflow = TextOverflow.Ellipsis
-            )
+            Text(file.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         },
         supportingContent = {
             Text(
@@ -640,7 +584,7 @@ private fun RecordingRow(file: File, onClick: () -> Unit) {
     )
 }
 
-/* ── Shared UI pieces ─────────────────────────────────────────────────── */
+/* ── Shared UI ────────────────────────────────────────────────────────────── */
 
 @Composable
 private fun DateGroupHeader(label: String) {
@@ -655,24 +599,14 @@ private fun DateGroupHeader(label: String) {
 
 @Composable
 private fun EmptyState(title: String, body: String) {
-    Box(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 48.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
+    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 48.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Box(
                 modifier = Modifier.size(64.dp).clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Outlined.MicNone, null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(32.dp)
-                )
+                Icon(Icons.Outlined.MicNone, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(32.dp))
             }
             Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
@@ -680,7 +614,7 @@ private fun EmptyState(title: String, body: String) {
     }
 }
 
-/* ── Helpers ────────────────────────────────────────────────────────────── */
+/* ── Helpers ──────────────────────────────────────────────────────────────── */
 
 private fun loadRecordings(context: android.content.Context): List<File> =
     runCatching {

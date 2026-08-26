@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build APKs — Ever Dialer+ (A) + Ever Call Recording (B)
+    name: Build APKs — Ever Émetteur (A) + Ever Client (B)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -36,32 +36,32 @@ jobs:
       - name: Assemble debug + release (tous modules)
         run: ./gradlew --no-daemon --stacktrace assembleDebug assembleRelease
 
-      # ── Téléphone A : Ever Dialer+ (dialer + enregistreur + Shizuku + sync sender) ──
+      # ── Téléphone A : Ever Émetteur (dialer + enregistreur + Shizuku + sync sender) ──
       - name: APK Téléphone A — debug
         uses: actions/upload-artifact@v4
         with:
-          name: Ever-Dialer-+-debug
+          name: Ever-Emetteur-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
       - name: APK Téléphone A — release signé
         uses: actions/upload-artifact@v4
         with:
-          name: Ever-Dialer-+-release-signed
+          name: Ever-Emetteur-release-signed
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
-      # ── Téléphone B : Ever Call Recording (receiver P2P, reçoit les enregistrements) ──
+      # ── Téléphone B : Ever Client (receiver P2P, reçoit les enregistrements) ──
       - name: APK Téléphone B — debug
         uses: actions/upload-artifact@v4
         with:
-          name: Ever-client-debug
+          name: Ever-Client-debug
           path: receiver/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
       - name: APK Téléphone B — release signé
         uses: actions/upload-artifact@v4
         with:
-          name: Ever-client-release-signed
+          name: Ever-Client-release-signed
           path: receiver/build/outputs/apk/release/*.apk
           if-no-files-found: error

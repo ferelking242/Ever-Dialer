@@ -1,11 +1,9 @@
 /*
- * Ever Dialer+ — Synchronisation P2P (phone A → phone B, no server).
+ * Ever Émetteur — Synchronisation P2P (phone A → phone B).
  *
- * Opened from Réglages → zone « Call Recording » → « Sync P2P vers Téléphone B ».
- * Phone A acts as the SENDER: paste here the pairing code shown on phone B
- * (Ever Call Recording app), then everything recorded on this phone
- * (call log + every recording file) is pushed automatically whenever both
- * devices are online on the same WiFi.
+ * Opened from Settings → zone « Call Recording » → « Sync P2P vers Téléphone B ».
+ * Phone A acts as the SENDER: either paste here the receiver's code OR generate
+ * your own emitter code for the receiver to paste.
  */
 package com.coolappstore.everdialer.by.svhp.view.screen.settings
 
@@ -24,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -67,6 +66,7 @@ fun SyncSettingsScreen(
     val state by SyncManager.state.collectAsState()
     val logs by SyncManager.logs.collectAsState()
     var pairingInput by remember { mutableStateOf("") }
+    var emitterPairingCode by remember { mutableStateOf<String?>(null) }
     val dateFormat = remember { SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE) }
 
     Scaffold(
@@ -90,7 +90,7 @@ fun SyncSettingsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
 
-            // ── Status ──────────────────────────────────────────────────────
+            // Status
             Card(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
@@ -120,7 +120,7 @@ fun SyncSettingsScreen(
                 }
             }
 
-            // ── Toggle ──────────────────────────────────────────────────────
+            // Toggle
             Card(shape = RoundedCornerShape(16.dp)) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
@@ -129,7 +129,7 @@ fun SyncSettingsScreen(
                     Column(Modifier.weight(1f)) {
                         Text("Envoyer vers le téléphone B", fontWeight = FontWeight.Medium)
                         Text(
-                            "Appels + enregistrements poussés automatiquement dès que les deux téléphones sont en ligne sur le même WiFi",
+                            "Appels + enregistrements poussés automatiquement",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -141,13 +141,13 @@ fun SyncSettingsScreen(
                 }
             }
 
-            // ── Pairing (paste code generated on phone B) ───────────────────
+            // ── Paste receiver code ──────────────────────────────────────────
             Card(shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.padding(14.dp)) {
-                    Text("Code de jumelage", fontWeight = FontWeight.Medium)
+                    Text("Entrer le code du récepteur", fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Sur le téléphone B, ouvre Ever Call Recording → ⚙ → « Générer le code de jumelage », copie-le puis colle-le ici.",
+                        "Sur le téléphone B (Ever Client), ouvre l'app → ⚙ → « Générer le code de jumelage », copie-le puis colle-le ici.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -176,14 +176,76 @@ fun SyncSettingsScreen(
                 }
             }
 
-            // ── Manual push ────────────────────────────────────────────────
+            // ── Generate emitter code ────────────────────────────────────────
+            Card(shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Générer un code émetteur", fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Génère un code pour CE téléphone (A). Ensuite, colle-le sur le téléphone B : Ever Client → ⚙ → Synchronisation P2P → « Entrer le code de l'émetteur ».",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(
+                        onClick = {
+                            runCatching {
+                                emitterPairingCode = SyncManager.generateSenderPairingCode(context)
+                            }.onFailure { e ->
+                                Toast.makeText(context, "Erreur : ${e.message}", Toast.LENGTH_LONG).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.QrCode2, null, Modifier.size(18.dp))
+                        Spacer(Modifier.size(8.dp))
+                        Text(if (emitterPairingCode == null) "Générer le code émetteur" else "Régénérer le code")
+                    }
+                }
+            }
+
+            // Display emitter code
+            emitterPairingCode?.let { code ->
+                Card(shape = RoundedCornerShape(16.dp)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Code généré ✔", style = MaterialTheme.typography.labelLarge)
+                            Spacer(Modifier.weight(1f))
+                            IconButton(onClick = {
+                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                    as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("ever-pairing", code))
+                                Toast.makeText(context, "Code copié", Toast.LENGTH_SHORT).show()
+                            }) {
+                                Icon(Icons.Outlined.QrCode2, "Copier")
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Copie ce code et colle-le sur le téléphone B : Ever Client → ⚙ → Synchronisation P2P.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            code,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 6,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+
+            // Manual push
             OutlinedButton(
                 onClick = { SyncManager.requestSyncNow(context); Toast.makeText(context, "Envoi lancé…", Toast.LENGTH_SHORT).show() },
                 enabled = state.enabled && state.role == SyncRole.SENDER,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Synchroniser maintenant") }
 
-            // ── Logs ───────────────────────────────────────────────────────
+            // Logs
             if (logs.isNotEmpty()) {
                 Card(shape = RoundedCornerShape(16.dp)) {
                     Column(Modifier.padding(14.dp)) {
