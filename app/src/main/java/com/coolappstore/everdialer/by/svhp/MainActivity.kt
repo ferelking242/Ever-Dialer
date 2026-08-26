@@ -1,11 +1,9 @@
 package com.coolappstore.everdialer.by.svhp
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -40,7 +38,6 @@ import com.coolappstore.evercallrecorder.by.svhp.ui.screens.SettingsScreen
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.AppNavigationViewModel
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.AppLockViewModel
-import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.HomeViewModel
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.RecordingItem
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.SettingsViewModel
 import com.coolappstore.everdialer.by.svhp.sync.SyncManager
