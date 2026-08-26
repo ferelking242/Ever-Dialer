@@ -166,12 +166,11 @@ fun PermissionsContent(
     val onPrimaryCont = MaterialTheme.colorScheme.onPrimaryContainer
 
     val grantedCount = listOf(
-        status.shizukuRunning && status.shizukuPermissionGranted,
         status.notificationsGranted, status.contactsGranted,
         status.phoneStateGranted,    status.callLogGranted,
         status.batteryExempted,      status.storageSelected
     ).count { it }
-    val totalCount = 7
+    val totalCount = 6
 
     val animatedProgress by animateFloatAsState(
         targetValue = grantedCount.toFloat() / totalCount,
@@ -342,17 +341,6 @@ fun PermissionsContent(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                PermissionRow(
-                    icon = Icons.Outlined.DeveloperMode,
-                    label = stringResource(R.string.permission_shizuku_label),
-                    description = stringResource(R.string.permission_shizuku_description),
-                    granted = status.shizukuRunning && status.shizukuPermissionGranted,
-                    statusOverride = when {
-                        !status.shizukuRunning           -> stringResource(R.string.permission_shizuku_not_running)
-                        !status.shizukuPermissionGranted -> stringResource(R.string.permissions_status_required)
-                        else                             -> null
-                    }
-                )
                 PermissionRow(Icons.Outlined.Notifications,       stringResource(R.string.permission_notifications_label), stringResource(R.string.permission_notifications_description), status.notificationsGranted)
                 PermissionRow(Icons.Outlined.Contacts,            stringResource(R.string.permission_contacts_label),      stringResource(R.string.permission_contacts_description),      status.contactsGranted)
                 PermissionRow(Icons.Outlined.Phone,               stringResource(R.string.permission_phone_state_label),   stringResource(R.string.permission_phone_state_description),   status.phoneStateGranted)
