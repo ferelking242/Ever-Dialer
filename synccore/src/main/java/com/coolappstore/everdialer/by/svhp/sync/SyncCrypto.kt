@@ -1,21 +1,23 @@
 /*
  * Ever Dialer+ — crypto helpers for the P2P sync module.
  *
- * - [SyncSecrets]: wraps sensitive values (peer pairing secret) with an
- *   AES-GCM key that never leaves AndroidKeyStore.
+ * - [SyncSecrets]: wraps the pairing secret at rest with software AES-256-GCM
+ *   stored in MODE_PRIVATE SharedPreferences. We do NOT use Android Keystore
+ *   here because many OEM ROMs (HiOS/Tecno, ColorOS, etc.) reject
+ *   caller-provided IVs on Android 12+ even when setRandomizedEncryptionRequired
+ *   is set to false, causing "Caller-provided IV not permitted" crashes.
+ *   The PSK is regenerated on each pairing so the protection level is adequate.
+ *
  * - [SessionCrypto]: HKDF-SHA256 derivation of per-direction session keys
  *   from the pairing secret + fresh handshaking nonces, and authenticated
  *   AES-GCM framing for every post-handshake byte on the wire.
  */
 package com.coolappstore.everdialer.by.svhp.sync
 
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
-import java.security.KeyStore
+import android.content.Context
 import java.security.SecureRandom
 import java.util.Base64
 import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
 import javax.crypto.Mac
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
@@ -23,43 +25,48 @@ import javax.crypto.spec.SecretKeySpec
 
 object SyncSecrets {
 
-    private const val KEYSTORE = "AndroidKeyStore"
-    private const val MASTER_ALIAS = "everdial_sync_master_key"
     private const val GCM_TAG_BITS = 128
+    private const val PREFS_FILE = "everdial_sync_secrets"
+    private const val PREFS_KEY = "master_key_b64"
+    private const val IV_LEN = 12
 
-    private fun masterKey(): SecretKey {
-        val ks = KeyStore.getInstance(KEYSTORE).apply { load(null) }
-        (ks.getKey(MASTER_ALIAS, null) as? SecretKey)?.let { return it }
-
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                MASTER_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build()
-        )
-        return generator.generateKey()
+    /**
+     * Software AES key stored in app-private SharedPreferences.
+     * Created once and reused for the lifetime of the app install.
+     * Much simpler than Android Keystore and avoids OEM compatibility issues.
+     */
+    private fun getSoftwareKey(context: Context): SecretKey {
+        val prefs = context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+        val existing = prefs.getString(PREFS_KEY, null)
+        if (existing != null) {
+            return SecretKeySpec(Base64.getDecoder().decode(existing), "AES")
+        }
+        val keyBytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        prefs.edit().putString(PREFS_KEY, Base64.getEncoder().encodeToString(keyBytes)).apply()
+        return SecretKeySpec(keyBytes, "AES")
     }
 
-    /** Returns iv || ciphertext||tag, base64-encoded for storage. */
-    fun protect(plain: ByteArray): String {
-        val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+    /**
+     * Encrypts [plain] with AES-256-GCM and returns iv(12) || ciphertext || tag, base64-encoded.
+     * Requires a non-null [context] for the software key.
+     */
+    fun protect(plain: ByteArray, context: Context): String {
+        val key = getSoftwareKey(context)
+        val iv = ByteArray(IV_LEN).also { SecureRandom().nextBytes(it) }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, masterKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
         val ct = cipher.doFinal(plain)
         return Base64.getEncoder().encodeToString(iv + ct)
     }
 
-    fun unprotect(blob: String): ByteArray? = runCatching {
+    /** Decrypts a blob produced by [protect]. Returns null on any error. */
+    fun unprotect(blob: String, context: Context): ByteArray? = runCatching {
         val data = Base64.getDecoder().decode(blob)
-        require(data.size > 12 + 16)
+        require(data.size > IV_LEN + GCM_TAG_BITS / 8) { "blob too short" }
+        val key = getSoftwareKey(context)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, masterKey(), GCMParameterSpec(GCM_TAG_BITS, data, 0, 12))
-        cipher.doFinal(data, 12, data.size - 12)
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, data, 0, IV_LEN))
+        cipher.doFinal(data, IV_LEN, data.size - IV_LEN)
     }.getOrNull()
 
     fun randomB64(size: Int): String =

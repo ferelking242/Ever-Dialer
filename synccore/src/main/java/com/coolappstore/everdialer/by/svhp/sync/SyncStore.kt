@@ -71,13 +71,13 @@ object SyncStore {
      */
     fun ownPairingSecret(context: Context, secretB64: String) =
         prefs(context).edit()
-            .putString(K_PEER_SECRET, SyncSecrets.protect(secretB64.toByteArray(Charsets.UTF_8)))
+            .putString(K_PEER_SECRET, SyncSecrets.protect(secretB64.toByteArray(Charsets.UTF_8), context))
             .apply()
 
     /** Own secret (receiver) or the peer secret imported from a pairing code (sender), UTF-8 base64. */
     fun pairingSecret(context: Context): String? =
         prefs(context).getString(K_PEER_SECRET, null)
-            ?.let { SyncSecrets.unprotect(it) }
+            ?.let { SyncSecrets.unprotect(it, context) }
             ?.let { String(it, Charsets.UTF_8) }
 
     /** Called on the SENDER after importing the receiver's pairing payload. */
@@ -85,7 +85,7 @@ object SyncStore {
         prefs(context).edit()
             .putString(K_PEER_ID, payload.id)
             .putString(K_PEER_NAME, payload.name)
-            .putString(K_PEER_SECRET, SyncSecrets.protect(payload.secret.toByteArray(Charsets.UTF_8)))
+            .putString(K_PEER_SECRET, SyncSecrets.protect(payload.secret.toByteArray(Charsets.UTF_8), context))
             .putString(K_ROLE, SyncRole.SENDER.name)
             .apply()
     }
