@@ -326,8 +326,8 @@ private fun EmitterSettingsPage(onBack: () -> Unit) {
                     }
                     val sourceLabel = when (currentSource) {
                         ScrcpyAudioSource.VOICE_CALL -> "Voice Call (toute la ligne)"
-                        ScrcpyAudioSource.UPLINK -> "Uplink (ma voix)"
-                        ScrcpyAudioSource.DOWNLINK -> "Downlink (l'autre personne)"
+                        ScrcpyAudioSource.VOICE_CALL_UPLINK -> "Uplink (ma voix)"
+                        ScrcpyAudioSource.VOICE_CALL_DOWNLINK -> "Downlink (l'autre personne)"
                         else -> "Voice Call (toute la ligne)"
                     }
 
