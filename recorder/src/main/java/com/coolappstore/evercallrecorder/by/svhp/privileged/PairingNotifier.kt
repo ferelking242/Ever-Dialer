@@ -89,7 +89,7 @@ object PairingNotifier {
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_adb)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle("Appairage privilégié disponible")
             .setContentText("Appuie ici pour entrer le code de débogage sans fil")
             .setStyle(
