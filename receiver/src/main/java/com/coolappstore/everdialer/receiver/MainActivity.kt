@@ -1,10 +1,10 @@
 /*
- * Ever Call Recording (phone B) — the whole app lives on ONE screen:
- *   • everything received from phone A (recordings + call log),
- *   • a single ⚙ gear that opens the P2P configuration (pairing + status).
+ * Ever Call Recording (phone B) — minimal companion that ONLY receives what
+ * the main Ever Dialer+ app (phone A) pushes over the local network.
  *
- * The P2P page is a full-screen Scaffold (same layout as Ever Dialer's
- * SyncSettingsScreen) — NOT a bottom sheet.
+ * The UI is intentionally styled to match the Ever Call Recorder's recording
+ * list (dark theme, Material3 ListItem rows, filter pills, grouped by date).
+ * This app has NO call detection — it is purely a passive receiver.
  */
 package com.coolappstore.everdialer.receiver
 
@@ -16,53 +16,24 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.GraphicEq
-import androidx.compose.material.icons.outlined.CallReceived
-import androidx.compose.material.icons.outlined.CallMade
-import androidx.compose.material.icons.outlined.CallMissed
-import androidx.compose.material.icons.outlined.PhoneInTalk
-import androidx.compose.material.icons.outlined.QrCode2
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -73,8 +44,7 @@ import com.coolappstore.everdialer.by.svhp.sync.SyncManager
 import com.coolappstore.everdialer.by.svhp.sync.SyncRole
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.*
 
 class MainActivity : ComponentActivity() {
 
@@ -86,17 +56,22 @@ class MainActivity : ComponentActivity() {
         ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 10)
         }
-        setContent { EverReceiverApp() }
+        setContent {
+            MaterialTheme(colorScheme = darkColorScheme()) {
+                EverReceiverApp()
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        // Keep the listener reachable whenever the app comes to the foreground.
         if (com.coolappstore.everdialer.by.svhp.sync.SyncStore.isEnabled(this)) {
             ReceiveService.start(this)
         }
     }
 }
+
+/* ── Main screen: recording list (matches Ever Call Recorder HomeScreen) ── */
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,6 +84,7 @@ private fun EverReceiverApp() {
     var recordings by remember { mutableStateOf<List<File>>(emptyList()) }
     var calls by remember { mutableStateOf<List<CallMeta>>(emptyList()) }
     var reloadTick by remember { mutableStateOf(0) }
+    var searchQuery by remember { mutableStateOf("") }
 
     fun reload() {
         recordings = loadRecordings(context)
@@ -119,8 +95,9 @@ private fun EverReceiverApp() {
     LaunchedEffect(syncState.lastSyncAt) { if (syncState.lastSyncAt > 0) reload() }
     LaunchedEffect(reloadTick) { reload() }
 
+    val isPaired = syncState.enabled && syncState.role == SyncRole.RECEIVER
+
     if (showP2p) {
-        // Full-screen P2P settings page (matches Ever Dialer SyncSettingsScreen layout)
         P2pScreen(
             enabled = syncState.enabled,
             peerName = syncState.peerName,
@@ -137,107 +114,234 @@ private fun EverReceiverApp() {
             onRefreshLists = { reloadTick++ }
         )
     } else {
-        // Main screen: call log + recordings list
-        MainScreen(
-            peerName = syncState.peerName,
-            enabled = syncState.enabled && syncState.role == SyncRole.RECEIVER,
-            lastStatus = syncState.lastStatus,
-            calls = calls,
-            recordings = recordings,
-            recordingsDir = File(context.filesDir, "EverSync/recordings"),
-            context = context,
-            onOpenP2p = { showP2p = true }
-        )
-    }
-}
-
-/* ── Main screen ─────────────────────────────────────────────────────── */
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun MainScreen(
-    peerName: String,
-    enabled: Boolean,
-    lastStatus: String,
-    calls: List<CallMeta>,
-    recordings: List<File>,
-    recordingsDir: File,
-    context: android.content.Context,
-    onOpenP2p: () -> Unit
-) {
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Ever Call Recording", fontWeight = FontWeight.SemiBold) },
-                actions = {
-                    IconButton(onClick = onOpenP2p) {
-                        Icon(Icons.Outlined.PhoneInTalk, contentDescription = "Configuration P2P")
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Ever Call Recording", fontWeight = FontWeight.Bold) },
+                    actions = {
+                        IconButton(onClick = { showP2p = true }, modifier = Modifier.size(52.dp)) {
+                            Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
+                )
+            },
+            containerColor = MaterialTheme.colorScheme.background
+        ) { innerPadding ->
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(innerPadding),
+                contentPadding = PaddingValues(bottom = 100.dp)
+            ) {
+                // ── Pairing status banner (when not paired) ─────────────────
+                if (!isPaired) {
+                    item {
+                        NotPairedBanner(onClick = { showP2p = true })
                     }
                 }
-            )
-        }
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item {
-                StatusCard(
-                    pairedPeer = peerName,
-                    enabled = enabled,
-                    lastStatus = lastStatus,
-                    onClick = onOpenP2p
-                )
-            }
 
-            item { SectionTitle("Journal d'appels du téléphone A") }
-            if (calls.isEmpty()) {
+                // ── Search bar ─────────────────────────────────────────────
                 item {
-                    EmptyHint(
-                        "Aucun appel reçu pour l'instant.\n" +
-                            "Appaire le téléphone A ci-dessous ⚙ puis laisse les deux téléphones sur le même WiFi."
-                    )
-                }
-            } else {
-                items(calls.size) { i ->
-                    val call = calls[i]
-                    CallRow(
-                        call = call,
-                        hasAudio = call.recording != null &&
-                            File(recordingsDir, call.recording).exists(),
-                        onClick = {
-                            call.recording?.let { name ->
-                                openRecording(context, File(recordingsDir, name))
-                            } ?: Toast.makeText(
-                                context,
-                                "Pas d'enregistrement pour cet appel",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                    Surface(
+                        onClick = {},
+                        modifier = Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 16.dp, vertical = 8.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.Search, null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                placeholder = { Text("Rechercher…") },
+                                singleLine = true,
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    unfocusedBorderColor = Color.Transparent,
+                                    focusedBorderColor = Color.Transparent,
+                                    cursorColor = MaterialTheme.colorScheme.primary
+                                ),
+                                modifier = Modifier.fillMaxSize()
+                            )
                         }
-                    )
+                    }
                 }
-            }
 
-            item { SectionTitle("Enregistrements reçus (${recordings.size})") }
-            if (recordings.isEmpty()) {
+                // ── Call log section ───────────────────────────────────────
                 item {
-                    EmptyHint(
-                        "Les enregistrements arrivent ici automatiquement " +
-                            "dès que le téléphone A est en ligne."
+                    DateGroupHeader(label = "Journal d'appels du téléphone A")
+                }
+
+                val filteredCalls = if (searchQuery.isBlank()) calls else {
+                    val q = searchQuery.trim().lowercase()
+                    calls.filter {
+                        it.number.lowercase().contains(q) ||
+                            (it.contactName?.lowercase()?.contains(q) == true)
+                    }
+                }
+
+                if (filteredCalls.isEmpty()) {
+                    item {
+                        EmptyState(
+                            title = "Aucun appel reçu",
+                            body = if (!isPaired)
+                                "Configure la synchronisation P2P pour recevoir les appels du téléphone A."
+                            else
+                                "Les appels arrivent ici automatiquement quand le téléphone A est en ligne."
+                        )
+                    }
+                } else {
+                    // Group calls by date
+                    val grouped = filteredCalls.groupBy { groupLabel(it.date) }
+                    grouped.forEach { (dateLabel, callsInGroup) ->
+                        item(key = "header_$dateLabel") {
+                            DateGroupHeader(label = dateLabel)
+                        }
+                        item(key = "group_$dateLabel") {
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                shape = RoundedCornerShape(20.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                                ),
+                                elevation = CardDefaults.cardElevation(0.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                    callsInGroup.forEachIndexed { index, call ->
+                                        val hasAudio = call.recording != null &&
+                                            File(context.filesDir, "EverSync/recordings/${call.recording}").exists()
+                                        CallLogRow(
+                                            call = call,
+                                            hasAudio = hasAudio,
+                                            onClick = {
+                                                call.recording?.let { name ->
+                                                    openRecording(
+                                                        context,
+                                                        File(context.filesDir, "EverSync/recordings/$name")
+                                                    )
+                                                } ?: Toast.makeText(
+                                                    context,
+                                                    "Pas d'enregistrement pour cet appel",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        )
+                                        if (index < callsInGroup.lastIndex) {
+                                            HorizontalDivider(
+                                                modifier = Modifier.padding(horizontal = 16.dp),
+                                                thickness = 0.5.dp,
+                                                color = MaterialTheme.colorScheme.outlineVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Recordings section ─────────────────────────────────────
+                item {
+                    DateGroupHeader(
+                        label = "Enregistrements reçus (${recordings.size})"
                     )
                 }
-            } else {
-                items(recordings.size) { i ->
-                    val file = recordings[i]
-                    RecordingRow(file = file, onClick = { openRecording(context, file) })
+
+                val filteredRecordings = if (searchQuery.isBlank()) recordings else {
+                    val q = searchQuery.trim().lowercase()
+                    recordings.filter { it.name.lowercase().contains(q) }
+                }
+
+                if (filteredRecordings.isEmpty()) {
+                    item {
+                        EmptyState(
+                            title = "Aucun enregistrement",
+                            body = if (!isPaired)
+                                "Configure la synchronisation P2P pour recevoir les enregistrements du téléphone A."
+                            else
+                                "Les enregistrements arrivent ici automatiquement quand le téléphone A est en ligne."
+                        )
+                    }
+                } else {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                            shape = RoundedCornerShape(20.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                            ),
+                            elevation = CardDefaults.cardElevation(0.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                filteredRecordings.forEachIndexed { index, file ->
+                                    RecordingRow(
+                                        file = file,
+                                        onClick = { openRecording(context, file) }
+                                    )
+                                    if (index < filteredRecordings.lastIndex) {
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(horizontal = 16.dp),
+                                            thickness = 0.5.dp,
+                                            color = MaterialTheme.colorScheme.outlineVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-/* ── Full-screen P2P settings (matches Ever Dialer SyncSettingsScreen) ── */
+/* ── Not-paired banner (invites user to configure) ────────────────────── */
+
+@Composable
+private fun NotPairedBanner(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFFB71C1C),
+        tonalElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Outlined.ErrorOutline, null,
+                tint = Color.White, modifier = Modifier.size(22.dp)
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Synchronisation non configurée",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White
+                )
+                Text(
+                    "Appaire avec le téléphone A pour recevoir appels et enregistrements.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.9f)
+                )
+            }
+            Icon(
+                Icons.Outlined.ChevronRight, null,
+                tint = Color.White.copy(alpha = 0.8f)
+            )
+        }
+    }
+}
+
+/* ── Full-screen P2P settings ─────────────────────────────────────────── */
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -259,7 +363,7 @@ private fun P2pScreen(
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = {
                     Text(
                         "Synchronisation P2P",
@@ -272,27 +376,28 @@ private fun P2pScreen(
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-
             // ── Status card ──────────────────────────────────────────────
             Card(
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = if (enabled && isReceiver)
                         MaterialTheme.colorScheme.primaryContainer
-                    else MaterialTheme.colorScheme.surfaceVariant
-                )
+                    else MaterialTheme.colorScheme.surfaceContainerLow
+                ),
+                elevation = CardDefaults.cardElevation(0.dp)
             ) {
                 Column(Modifier.padding(14.dp)) {
                     Text(
@@ -323,7 +428,7 @@ private fun P2pScreen(
             }
 
             // ── Toggle ──────────────────────────────────────────────────
-            Card(shape = RoundedCornerShape(16.dp)) {
+            Card(shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -338,81 +443,53 @@ private fun P2pScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
-                        checked = enabled,
-                        onCheckedChange = onToggle
-                    )
+                    Switch(checked = enabled, onCheckedChange = onToggle)
                 }
             }
 
             // ── Pairing code generator ───────────────────────────────────
-            Card(shape = RoundedCornerShape(16.dp)) {
+            Card(shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                 Column(Modifier.padding(14.dp)) {
                     Text("Code de jumelage", fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Sur le téléphone A, ouvre Ever Dialer+ → Réglages → " +
-                            "Synchronisation P2P → génère et copie le code, puis colle-le ici.",
+                        "Sur le téléphone A, ouvre Ever Dialer+ → Réglages → Synchronisation P2P → génère et copie le code, puis colle-le ici.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(10.dp))
-
-                    if (!enabled || pairingCode != null) {
-                        Button(
-                            onClick = {
-                                pairingCode = SyncManager.generateReceiverPairingCode(context)
-                                ReceiveService.start(context)
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.QrCode2, null, Modifier.size(18.dp))
-                            Spacer(Modifier.size(8.dp))
-                            Text(
-                                if (pairingCode == null) "Générer le code de jumelage"
-                                else "Régénérer le code"
-                            )
-                        }
-                    } else {
-                        Button(
-                            onClick = {
-                                pairingCode = SyncManager.generateReceiverPairingCode(context)
-                                ReceiveService.start(context)
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.QrCode2, null, Modifier.size(18.dp))
-                            Spacer(Modifier.size(8.dp))
-                            Text("Générer le code de jumelage")
-                        }
+                    Button(
+                        onClick = {
+                            pairingCode = SyncManager.generateReceiverPairingCode(context)
+                            ReceiveService.start(context)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.QrCode2, null, Modifier.size(18.dp))
+                        Spacer(Modifier.size(8.dp))
+                        Text(if (pairingCode == null) "Générer le code de jumelage" else "Régénérer le code")
                     }
                 }
             }
 
-            // ── Display generated pairing code ───────────────────────────
+            // ── Display pairing code ─────────────────────────────────────
             pairingCode?.let { code ->
                 Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                    elevation = CardDefaults.cardElevation(0.dp)
                 ) {
                     Column(Modifier.padding(14.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "Code généré ✔",
-                                style = MaterialTheme.typography.labelLarge
-                            )
+                            Text("Code généré ✔", style = MaterialTheme.typography.labelLarge)
                             Spacer(Modifier.weight(1f))
                             IconButton(onClick = {
                                 val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                                     as android.content.ClipboardManager
-                                cm.setPrimaryClip(
-                                    android.content.ClipData.newPlainText("ever-pairing", code)
-                                )
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("ever-pairing", code))
                                 Toast.makeText(context, "Code copié", Toast.LENGTH_SHORT).show()
                             }) {
-                                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copier le code")
+                                Icon(Icons.Outlined.ContentCopy, "Copier le code")
                             }
                         }
                         Spacer(Modifier.height(4.dp))
@@ -433,7 +510,7 @@ private fun P2pScreen(
                 }
             }
 
-            // ── Manual push button ───────────────────────────────────────
+            // ── Refresh button ───────────────────────────────────────────
             OutlinedButton(
                 onClick = onRefreshLists,
                 modifier = Modifier.fillMaxWidth()
@@ -441,7 +518,7 @@ private fun P2pScreen(
 
             // ── Logs ─────────────────────────────────────────────────────
             if (logs.isNotEmpty()) {
-                Card(shape = RoundedCornerShape(16.dp)) {
+                Card(shape = RoundedCornerShape(20.dp), elevation = CardDefaults.cardElevation(0.dp)) {
                     Column(Modifier.padding(14.dp)) {
                         Text("Journal", style = MaterialTheme.typography.labelLarge)
                         logs.take(12).forEach { line ->
@@ -462,94 +539,138 @@ private fun P2pScreen(
     }
 }
 
-/* ── List pieces ────────────────────────────────────────────────────────── */
+/* ── Call log row (matches Ever Call Recorder RecordingRow) ─────────────── */
 
 @Composable
-private fun StatusCard(
-    pairedPeer: String,
-    enabled: Boolean,
-    lastStatus: String,
-    onClick: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = if (enabled) MaterialTheme.colorScheme.primaryContainer
-            else MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Column(Modifier.padding(14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.PhoneInTalk, null, Modifier.size(20.dp))
-                Spacer(Modifier.size(8.dp))
-                Text(
-                    if (enabled) "Réception active" else "Non jumelé — configure ⚙",
-                    fontWeight = FontWeight.SemiBold
+private fun CallLogRow(call: CallMeta, hasAudio: Boolean, onClick: () -> Unit) {
+    val isIncoming = call.direction == "INCOMING"
+    val accentColor = if (isIncoming) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+    val directionIcon = if (isIncoming) Icons.Rounded.CallReceived else Icons.Rounded.CallMade
+    val directionLabel = if (isIncoming) "Entrant" else "Sortant"
+    val timeStr = dateFmtShort.format(Date(call.date))
+
+    ListItem(
+        modifier = Modifier.clickable(onClick = onClick),
+        leadingContent = {
+            Box(
+                modifier = Modifier.size(44.dp).clip(CircleShape)
+                    .background(accentColor.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                val initial = call.contactName?.firstOrNull()?.uppercaseChar()?.toString()
+                    ?: call.number.firstOrNull { it.isDigit() }?.toString() ?: "?"
+                Text(initial, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = accentColor)
+            }
+        },
+        headlineContent = {
+            Text(
+                call.contactName?.takeIf { it.isNotBlank() } ?: call.number.ifBlank { "Numéro inconnu" },
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+        },
+        supportingContent = {
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(directionIcon, null, tint = accentColor, modifier = Modifier.size(11.dp))
+                Text(directionLabel, style = MaterialTheme.typography.labelSmall, color = accentColor)
+                Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(timeStr, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(formatDuration(call.durationSec), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (hasAudio) {
+                    Text("·", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(Icons.Rounded.GraphicEq, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(12.dp))
+                }
+            }
+        },
+        trailingContent = {
+            if (hasAudio) {
+                Icon(
+                    Icons.Rounded.GraphicEq, null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
                 )
             }
-            if (pairedPeer.isNotBlank()) {
-                Text("Téléphone A : $pairedPeer", style = MaterialTheme.typography.bodySmall)
-            }
-            if (lastStatus.isNotBlank()) {
-                Text(
-                    lastStatus,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
+        },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+    )
 }
 
-@Composable
-private fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-}
-
-@Composable
-private fun EmptyHint(text: String) {
-    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-}
-
-@Composable
-private fun CallRow(call: CallMeta, hasAudio: Boolean, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(directionIcon(call.direction), null, Modifier.size(22.dp), tint = directionColor(call.direction))
-            Spacer(Modifier.size(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    call.contactName?.takeIf { it.isNotBlank() } ?: call.number.ifBlank { "Numéro inconnu" },
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    "${formatDate(call.date)} · ${directionLabel(call.direction)} · ${formatDuration(call.durationSec)}" +
-                        (call.contactName?.takeIf { it.isNotBlank() }?.let { " · ${call.number}" } ?: ""),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (hasAudio) Icon(Icons.Outlined.GraphicEq, contentDescription = "Audio disponible", Modifier.size(18.dp))
-        }
-    }
-}
+/* ── Recording row ────────────────────────────────────────────────────── */
 
 @Composable
 private fun RecordingRow(file: File, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick)) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.GraphicEq, null, Modifier.size(22.dp))
-            Spacer(Modifier.size(12.dp))
-            Column {
-                Text(file.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    "${formatDate(file.lastModified())} · ${formatBytes(file.length())}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+    ListItem(
+        modifier = Modifier.clickable(onClick = onClick),
+        leadingContent = {
+            Box(
+                modifier = Modifier.size(44.dp).clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Rounded.GraphicEq, null,
+                    tint = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.size(22.dp)
                 )
             }
+        },
+        headlineContent = {
+            Text(
+                file.name,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
+        },
+        supportingContent = {
+            Text(
+                "${dateFmtShort.format(Date(file.lastModified()))} · ${formatBytes(file.length())}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+    )
+}
+
+/* ── Shared UI pieces ─────────────────────────────────────────────────── */
+
+@Composable
+private fun DateGroupHeader(label: String) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
+    )
+}
+
+@Composable
+private fun EmptyState(title: String, body: String) {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 48.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier.size(64.dp).clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Outlined.MicNone, null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(32.dp)
+                )
+            }
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
     }
 }
@@ -579,8 +700,32 @@ private fun openRecording(context: android.content.Context, file: File) {
     }
 }
 
-private val dateFmt = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.FRANCE)
-private fun formatDate(ts: Long) = dateFmt.format(Date(ts))
+private val dateFmtShort = SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE)
+
+private fun groupLabel(date: Long): String {
+    val now = Calendar.getInstance()
+    val cal = Calendar.getInstance().apply { timeInMillis = date }
+    return when {
+        isSameDay(now, cal) -> "Aujourd'hui"
+        isYesterday(now, cal) -> "Hier"
+        isSameWeek(now, cal) -> SimpleDateFormat("EEEE", Locale.FRANCE).format(Date(date))
+        isSameYear(now, cal) -> SimpleDateFormat("d MMMM", Locale.FRANCE).format(Date(date))
+        else -> SimpleDateFormat("d MMMM yyyy", Locale.FRANCE).format(Date(date))
+    }
+}
+
+private fun isSameDay(a: Calendar, b: Calendar) =
+    a.get(Calendar.YEAR) == b.get(Calendar.YEAR) && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
+
+private fun isYesterday(now: Calendar, b: Calendar): Boolean {
+    val y = (now.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, -1) }
+    return isSameDay(y, b)
+}
+
+private fun isSameWeek(now: Calendar, b: Calendar) =
+    now.get(Calendar.YEAR) == b.get(Calendar.YEAR) && now.get(Calendar.WEEK_OF_YEAR) == b.get(Calendar.WEEK_OF_YEAR)
+
+private fun isSameYear(now: Calendar, b: Calendar) = now.get(Calendar.YEAR) == b.get(Calendar.YEAR)
 
 private fun formatDuration(sec: Long): String {
     val h = sec / 3600; val m = (sec % 3600) / 60; val s = sec % 60
@@ -591,24 +736,4 @@ private fun formatBytes(bytes: Long): String = when {
     bytes >= 1 shl 20 -> "%.1f Mo".format(bytes.toFloat() / (1 shl 20))
     bytes >= 1 shl 10 -> "%.0f Ko".format(bytes.toFloat() / (1 shl 10))
     else -> "$bytes o"
-}
-
-private fun directionLabel(direction: String) = when (direction) {
-    "INCOMING" -> "Entrant"; "OUTGOING" -> "Sortant"; "MISSED" -> "Manqué"
-    "REJECTED" -> "Refusé"; "BLOCKED" -> "Bloqué"; "ANSWERED_EXTERNALLY" -> "Décroché ailleurs"
-    else -> "Autre"
-}
-
-@Composable
-private fun directionIcon(direction: String) = when (direction) {
-    "INCOMING" -> Icons.Outlined.CallReceived
-    "OUTGOING" -> Icons.Outlined.CallMade
-    else -> Icons.Outlined.CallMissed
-}
-
-@Composable
-private fun directionColor(direction: String) = when (direction) {
-    "INCOMING" -> MaterialTheme.colorScheme.primary
-    "OUTGOING" -> MaterialTheme.colorScheme.tertiary
-    else -> MaterialTheme.colorScheme.error
 }
