@@ -454,15 +454,19 @@ private fun P2pScreen(
                     Text("Code de jumelage", fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Sur le téléphone A, ouvre Ever Dialer+ → Réglages → Synchronisation P2P → génère et copie le code, puis colle-le ici.",
+                        "Génère un code de jumelage pour CE téléphone (B). Ensuite, colle-le sur le téléphone A : Ever Dialer+ → Réglages → Synchronisation P2P.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(10.dp))
                     Button(
                         onClick = {
-                            pairingCode = SyncManager.generateReceiverPairingCode(context)
-                            ReceiveService.start(context)
+                            runCatching {
+                                pairingCode = SyncManager.generateReceiverPairingCode(context)
+                                ReceiveService.start(context)
+                            }.onFailure { e ->
+                                Toast.makeText(context, "Erreur : ${e.message}", Toast.LENGTH_LONG).show()
+                            }
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -495,7 +499,7 @@ private fun P2pScreen(
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            "Copie ce code sur le téléphone A : Ever Dialer+ → Réglages → Synchronisation P2P.",
+                            "Copie ce code et colle-le sur le téléphone A : Ever Dialer+ → Réglages → Synchronisation P2P.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

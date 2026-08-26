@@ -55,13 +55,13 @@ jobs:
       - name: APK Téléphone B — debug
         uses: actions/upload-artifact@v4
         with:
-          name: Ever-Call-Recording-debug
+          name: Ever-client-debug
           path: receiver/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
       - name: APK Téléphone B — release signé
         uses: actions/upload-artifact@v4
         with:
-          name: Ever-Call-Recording-release-signed
+          name: Ever-client-release-signed
           path: receiver/build/outputs/apk/release/*.apk
           if-no-files-found: error
