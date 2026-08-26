@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -214,7 +215,7 @@ private fun EverReceiverApp() {
                                 Column(modifier = Modifier.padding(vertical = 4.dp)) {
                                     callsInGroup.forEachIndexed { index, call ->
                                         val hasAudio = call.recording != null &&
-                                            File(context.filesDir, "EverSync/recordings/${call.recording}").exists()
+                                            java.io.File(context.filesDir, "EverSync/recordings/${call.recording}").exists()
                                         CallLogRow(
                                             call = call,
                                             hasAudio = hasAudio,
