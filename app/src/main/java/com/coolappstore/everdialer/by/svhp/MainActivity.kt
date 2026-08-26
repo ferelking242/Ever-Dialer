@@ -36,20 +36,19 @@ import com.coolappstore.evercallrecorder.by.svhp.ui.screens.HomeScreen
 import com.coolappstore.evercallrecorder.by.svhp.ui.screens.PermissionsScreen
 import com.coolappstore.evercallrecorder.by.svhp.ui.screens.PlaybackScreen
 import com.coolappstore.evercallrecorder.by.svhp.ui.screens.AppLockScreen
+import com.coolappstore.evercallrecorder.by.svhp.ui.screens.SettingsScreen
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.AppNavigationViewModel
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.AppLockViewModel
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.HomeViewModel
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.RecordingItem
+import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.SettingsViewModel
 import com.coolappstore.everdialer.by.svhp.sync.SyncManager
 import com.coolappstore.everdialer.by.svhp.sync.SyncRole
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.widget.Toast
 import androidx.lifecycle.viewmodel.compose.viewModel
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class MainActivity : FragmentActivity() {
 
@@ -100,7 +99,13 @@ private fun EverEmetteurApp() {
         label = "screen"
     ) { isSettings ->
         if (isSettings) {
-            EmitterSettingsPage(onBack = { showSettings = false })
+            // Real recorder SettingsScreen with P2P section injected at bottom
+            val settingsViewModel: SettingsViewModel = viewModel()
+            SettingsScreen(
+                viewModel = settingsViewModel,
+                onBack = { showSettings = false },
+                extraContent = { P2PSection() }
+            )
         } else {
             if (openPlayback != null) {
                 PlaybackScreen(
@@ -118,7 +123,7 @@ private fun EverEmetteurApp() {
     }
 }
 
-// ─── Recordings Page (main screen with gear icon top-right) ─────────────────
+// ─── Recordings Page (uses real HomeScreen from recorder module) ────────────
 
 @Composable
 private fun EmitterRecordingsPage(
@@ -131,7 +136,6 @@ private fun EmitterRecordingsPage(
     val appLockViewModel: AppLockViewModel = viewModel()
     val isAppLockUnlocked by appLockViewModel.isUnlocked.collectAsState()
     val preferences = remember { AppPreferences(context) }
-    val recordingsVM: HomeViewModel = viewModel()
 
     val isAppLocked = onboardingStatus.disclaimerAccepted && onboardingStatus.isComplete() &&
         preferences.isAppLockEnabled() && !isAppLockUnlocked
@@ -171,8 +175,6 @@ private fun EmitterRecordingsPage(
                     appVersion = appVersion,
                     onSettingsClick = onSettingsClick,
                     onRecordingClick = onRecordingClick,
-                    onSelectionModeChanged = {},
-                    onGlobalSearchClick = {},
                     onEverDialerSettingsClick = onSettingsClick
                 )
             }
@@ -180,245 +182,78 @@ private fun EmitterRecordingsPage(
     }
 }
 
-// ─── Settings Page (full-screen, accessed from gear icon) ───────────────────
+// ─── P2P Section (injected into real SettingsScreen) ───────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EmitterSettingsPage(onBack: () -> Unit) {
+private fun P2PSection() {
     val context = LocalContext.current
     val state by SyncManager.state.collectAsState()
-    val preferences = remember { AppPreferences(context) }
-    var showSyncSettings by remember { mutableStateOf(false) }
+    var showSyncPage by remember { mutableStateOf(false) }
 
-    if (showSyncSettings) {
-        SyncSettingsPage(onBack = { showSyncSettings = false })
+    if (showSyncPage) {
+        P2pSyncPage(onBack = { showSyncPage = false })
         return
     }
 
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text("Réglages", fontWeight = FontWeight.SemiBold) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Spacer(Modifier.height(8.dp))
+
+        // Synchronisation P2P header
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
         ) {
-            // ── Shizuku Embarqué ─────────────────────────────────────────
-            Card(shape = RoundedCornerShape(16.dp)) {
-                Column(Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.PhoneAndroid, null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Shizuku Embarqué", fontWeight = FontWeight.SemiBold)
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Le serveur Shizuku est intégré directement. " +
-                        "Pour activer l'enregistrement d'appels sans bruit, activez le Débogage sans fil dans " +
-                        "Paramètres → Système → Options pour développeurs, puis appairer ici.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedButton(
-                        onClick = {
-                            try {
-                                val intent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
-                                context.startActivity(intent)
-                            } catch (_: Exception) {
-                                try {
-                                    context.startActivity(Intent(Settings.ACTION_SETTINGS))
-                                } catch (_: Exception) {}
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.Settings, null, Modifier.size(18.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("Ouvrir les Options Développeur")
-                    }
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.Sync, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Synchronisation P2P", fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "Envoyer les enregistrements et l'historique d'appels au téléphone B (Ever Client) " +
+                    "via le réseau local, sans serveur.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    when {
+                        state.role != SyncRole.SENDER -> "Non jumelé"
+                        !state.enabled -> "Désactivé"
+                        else -> "Jumelé · ${state.peerName.ifBlank { "Téléphone B" }}"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = if (state.enabled && state.role == SyncRole.SENDER)
+                        MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { showSyncPage = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp))
+                    Spacer(Modifier.size(8.dp))
+                    Text("Configurer la synchronisation")
                 }
             }
-
-            // ── Permissions ──────────────────────────────────────────────
-            Card(shape = RoundedCornerShape(16.dp)) {
-                Column(Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Security, null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Permissions", fontWeight = FontWeight.SemiBold)
-                    }
-                    Spacer(Modifier.height(6.dp))
-
-                    val perms = listOf(
-                        "État du téléphone" to (ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED),
-                        "Journal d'appels" to (ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED),
-                        "Notifications" to (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED),
-                        "Microphone" to (ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED),
-                    )
-                    perms.forEach { (name, granted) ->
-                        Row(
-                            Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                if (granted) Icons.Default.CheckCircle else Icons.Outlined.Cancel,
-                                null,
-                                tint = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                            Text(
-                                if (granted) "Accordé" else "Manquant",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = if (granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                data = android.net.Uri.fromParts("package", context.packageName, null)
-                            }
-                            context.startActivity(intent)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.OpenInNew, null, Modifier.size(18.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("Gérer les permissions")
-                    }
-                }
-            }
-
-            // ── Format Audio ─────────────────────────────────────────────
-            Card(shape = RoundedCornerShape(16.dp)) {
-                Column(Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.AudioFile, null, tint = MaterialTheme.colorScheme.tertiary)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Format d'enregistrement", fontWeight = FontWeight.SemiBold)
-                    }
-                    Spacer(Modifier.height(6.dp))
-
-                    val currentCodecKey = remember { preferences.getAudioCodec() }
-                    val currentSourceKey = remember { preferences.getAudioSource() }
-                    val codecLabel = when (currentCodecKey) {
-                        "opus" -> "Opus (recommandé, ~16 kbps)"
-                        "aac" -> "AAC (~64 kbps)"
-                        else -> "Opus (recommandé, ~16 kbps)"
-                    }
-                    val sourceLabel = when (currentSourceKey) {
-                        "voice-call" -> "Voice Call (toute la ligne)"
-                        "voice-call-uplink" -> "Uplink (ma voix)"
-                        "voice-call-downlink" -> "Downlink (l'autre personne)"
-                        else -> "Voice Call (toute la ligne)"
-                    }
-
-                    Text(
-                        "Codec : $codecLabel",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "Source : $sourceLabel",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedButton(
-                        onClick = {
-                            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                                data = android.net.Uri.fromParts("package", context.packageName, null)
-                            }
-                            context.startActivity(intent)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.Tune, null, Modifier.size(18.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("Configurer le format")
-                    }
-                }
-            }
-
-            // ── Synchronisation P2P ──────────────────────────────────────
-            Card(shape = RoundedCornerShape(16.dp)) {
-                Column(Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Sync, null, tint = MaterialTheme.colorScheme.tertiary)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Synchronisation P2P", fontWeight = FontWeight.SemiBold)
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Envoyer les enregistrements et l'historique d'appels au téléphone B (Ever Client) " +
-                        "via le réseau local, sans serveur.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        when {
-                            state.role != SyncRole.SENDER -> "Non jumelé"
-                            !state.enabled -> "Désactivé"
-                            else -> "Jumelé · ${state.peerName.ifBlank { "Téléphone B" }}"
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = if (state.enabled && state.role == SyncRole.SENDER)
-                            MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Button(
-                        onClick = { showSyncSettings = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp))
-                        Spacer(Modifier.size(8.dp))
-                        Text("Configurer la synchronisation")
-                    }
-                }
-            }
-
-            // ── Version ──────────────────────────────────────────────────
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "Ever Émetteur v${try { context.packageManager.getPackageInfo(context.packageName, 0).versionName } catch (_: Exception) { "?" }}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.CenterHorizontally)
-            )
         }
     }
 }
 
-// ─── Sync Settings (full-screen) ────────────────────────────────────────────
+// ─── P2P Sync Page (full-screen, accessed from settings) ───────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SyncSettingsPage(onBack: () -> Unit) {
+private fun P2pSyncPage(onBack: () -> Unit) {
     val context = LocalContext.current
     val state by SyncManager.state.collectAsState()
     val logs by SyncManager.logs.collectAsState()
     var pairingInput by remember { mutableStateOf("") }
     var emitterPairingCode by remember { mutableStateOf<String?>(null) }
-    val dateFormat = remember { SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE) }
+    val dateFormat = remember { java.text.SimpleDateFormat("dd/MM HH:mm", java.util.Locale.FRANCE) }
 
     Scaffold(
         topBar = {
@@ -440,7 +275,6 @@ private fun SyncSettingsPage(onBack: () -> Unit) {
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-
             // Status
             Card(
                 shape = RoundedCornerShape(16.dp),
@@ -461,7 +295,7 @@ private fun SyncSettingsPage(onBack: () -> Unit) {
                     )
                     if (state.lastSyncAt > 0) {
                         Text(
-                            "Dernier envoi : ${dateFormat.format(Date(state.lastSyncAt))}" +
+                            "Dernier envoi : ${dateFormat.format(java.util.Date(state.lastSyncAt))}" +
                                 (state.lastStatus.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -568,7 +402,7 @@ private fun SyncSettingsPage(onBack: () -> Unit) {
                                 cm.setPrimaryClip(ClipData.newPlainText("ever-pairing", code))
                                 Toast.makeText(context, "Code copié", Toast.LENGTH_SHORT).show()
                             }) {
-                                Icon(Icons.Outlined.QrCode2, "Copier")
+                                Icon(Icons.Outlined.ContentCopy, "Copier")
                             }
                         }
                         Spacer(Modifier.height(4.dp))

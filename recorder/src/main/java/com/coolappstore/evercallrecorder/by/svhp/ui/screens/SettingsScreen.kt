@@ -76,7 +76,7 @@ import org.xmlpull.v1.XmlPullParser
 import java.util.Locale
 
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit = {}, onOpenWebView: (url: String, enableDownloads: Boolean, extraBottomDp: Int) -> Unit = { _, _, _ -> }, modifier: Modifier = Modifier) {
+fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit = {}, onOpenWebView: (url: String, enableDownloads: Boolean, extraBottomDp: Int) -> Unit = { _, _, _ -> }, modifier: Modifier = Modifier, extraContent: (@Composable () -> Unit)? = null) {
     val context = LocalContext.current
     val updateTrigger by viewModel.updateTrigger.collectAsState()
     val contactPickerViewModel: ContactPickerViewModel = viewModel()
@@ -109,7 +109,8 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit = {}, onOpen
         onExportLogs = { exportLogLauncher.launch("evercallrecorder_bug_report.log") },
         onBack = onBack,
         onOpenWebView = onOpenWebView,
-        modifier = modifier
+        modifier = modifier,
+        extraContent = extraContent
     )
 
     if (showStorageChoiceDialog) {
@@ -143,7 +144,8 @@ fun SettingsContent(
     onExportLogs: () -> Unit,
     onBack: () -> Unit = {},
     onOpenWebView: (url: String, enableDownloads: Boolean, extraBottomDp: Int) -> Unit = { _, _, _ -> },
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    extraContent: (@Composable () -> Unit)? = null
 ) {
     var showLicensesDialog by remember { mutableStateOf(false) }
 
@@ -183,6 +185,7 @@ fun SettingsContent(
                     LanguagesSection(preferences, updateTrigger, actions)
                     AboutSection(versionString = actions.getAppVersion(), onShowLicenses = { showLicensesDialog = true })
                     DebugSection(preferences, updateTrigger, actions, onExportLogs)
+                    extraContent?.invoke()
                     Spacer(Modifier.height(8.dp))
                 }
             }
