@@ -97,7 +97,7 @@ object SyncClient {
     }
 
     private fun pushFile(context: Context, channel: EncryptedChannel, name: String) {
-        val input: InputStream = SyncSource.openFile(context, name)
+        val input: InputStream = SyncSource.openFile?.invoke(context, name)
             ?: throw IOException("enregistrement introuvable côté A: $name")
         input.use { stream ->
             val digest = MessageDigest.getInstance("SHA-256")
