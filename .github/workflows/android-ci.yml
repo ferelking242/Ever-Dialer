@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build APKs (debug + release signé)
+    name: Build APKs (dialer + receiver, debug & release signé)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -31,19 +31,35 @@ jobs:
       - name: Permission d'exécution pour gradlew
         run: chmod +x gradlew
 
-      - name: Assemble debug + release
+      # Racine = assembleDebug/assembleRelease de TOUS les modules Android :
+      # :app (Ever Dialer+, téléphone A) et :receiver (Ever Call Recording, téléphone B).
+      - name: Assemble debug + release (tous modules)
         run: ./gradlew --no-daemon --stacktrace assembleDebug assembleRelease
 
-      - name: Upload APK debug
+      - name: Upload APK dialer debug (:app)
         uses: actions/upload-artifact@v4
         with:
           name: ever-dialer-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      - name: Upload APK release (signé avec le keystore du repo)
+      - name: Upload APK dialer release signé (:app)
         uses: actions/upload-artifact@v4
         with:
           name: ever-dialer-release-signed
           path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Upload APK receiver debug (:receiver)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ever-call-recording-debug
+          path: receiver/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload APK receiver release signé (:receiver)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ever-call-recording-release-signed
+          path: receiver/build/outputs/apk/release/*.apk
           if-no-files-found: error

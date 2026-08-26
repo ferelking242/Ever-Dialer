@@ -17,6 +17,16 @@ class RivoApp : ShizuApplication() {
             modules(appModule)
         }
         restoreSavedAppIcon()
+
+        // P2P sync engine: phone A acts as SENDER and feeds it from this app's
+        // recording storage + call log (see sync/CallLogCollector).
+        com.coolappstore.everdialer.by.svhp.sync.SyncSource.install(
+            collectFn = { ctx ->
+                val snapshot = com.coolappstore.everdialer.by.svhp.sync.CallLogCollector.collect(ctx)
+                snapshot.files to snapshot.calls
+            },
+            openFileFn = { ctx, name -> com.coolappstore.everdialer.by.svhp.sync.CallLogCollector.openRecording(ctx, name) }
+        )
         com.coolappstore.everdialer.by.svhp.sync.SyncManager.init(this)
         com.coolappstore.everdialer.by.svhp.controller.FakeCallConnectionService.ensureRegistered(this)
     }

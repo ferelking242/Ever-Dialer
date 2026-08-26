@@ -11,6 +11,8 @@ import android.net.Uri
 import android.provider.CallLog
 import androidx.documentfile.provider.DocumentFile
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
+import java.io.File
+import java.io.FileInputStream
 import java.io.InputStream
 import java.security.MessageDigest
 
@@ -76,26 +78,41 @@ object CallLogCollector {
         return runCatching { DocumentFile.fromTreeUri(context, uri) }.getOrNull()
     }
 
+    /** App-private recordings dir used when no SAF folder is selected (or as an extra source). */
+    private fun privateRecordingsDir(context: Context): File {
+        val dir = File(context.filesDir, "EverRecordings")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
     fun listRecordings(context: Context): List<FileEntry> = runCatching {
-        val root = recordingsRoot(context) ?: return emptyList()
-        root.listFiles()
-            .filter { it.isFile }
-            .mapNotNull { doc ->
-                val fileName = doc.name ?: return@mapNotNull null
+        val out = LinkedHashMap<String, FileEntry>()
+
+        // Source 1: user-selected SAF folder (legacy/default picker location).
+        recordingsRoot(context)?.listFiles()
+            ?.filter { it.isFile }
+            ?.forEach { doc ->
+                val fileName = doc.name ?: return@forEach
                 val length = doc.length()
-                if (fileName.isBlank() || length !in 1..MAX_FILE_BYTES) return@mapNotNull null
-                // SHA-256 is verified during the transfer itself (streamed), so the
-                // manifest only carries name+size and the receiver diffs on those.
-                FileEntry(name = fileName, size = length, sha256 = "")
+                if (fileName.isBlank() || length !in 1..MAX_FILE_BYTES) return@forEach
+                out[fileName] = FileEntry(name = fileName, size = length, sha256 = "")
             }
-            .sortedBy { it.name }
+
+        // Source 2: app-private recordings dir — always scanned so recordings
+        // saved without SAF are synced too ("private folder ou dossier normal").
+        privateRecordingsDir(context).listFiles()
+            ?.filter { it.isFile && it.length() in 1..MAX_FILE_BYTES }
+            ?.forEach { f -> out.putIfAbsent(f.name, FileEntry(name = f.name, size = f.length(), sha256 = "")) }
+
+        out.values.sortedBy { it.name }
     }.getOrDefault(emptyList())
 
-    /** Streams a recording by name, hashing on the fly. Returns null if missing. */
+    /** Streams a recording by name (SAF first, then private dir). Returns null if missing. */
     fun openRecording(context: Context, name: String): InputStream? =
         runCatching {
-            val root = recordingsRoot(context) ?: return null
-            root.findFile(name)?.let { context.contentResolver.openInputStream(it.uri) }
+            recordingsRoot(context)?.findFile(name)?.let {
+                context.contentResolver.openInputStream(it.uri)
+            } ?: FileInputStream(privateRecordingsDir(context).resolve(name))
         }.getOrNull()
 
     fun sha256Of(stream: InputStream): Pair<String, Long> {

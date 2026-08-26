@@ -61,9 +61,10 @@ object SyncClient {
     }
 
     private fun session(context: Context, channel: EncryptedChannel): String {
-        val snapshot = CallLogCollector.collect(context)
-        channel.sendControl(SyncJson.encodeToString(MsgManifest(entries = snapshot.files)))
-        channel.sendControl(SyncJson.encodeToString(MsgCalls(entries = snapshot.calls)))
+        val (files, calls) = SyncSource.collect?.invoke(context)
+            ?: error("aucune source de données configurée sur cet appareil")
+        channel.sendControl(SyncJson.encodeToString(MsgManifest(entries = files)))
+        channel.sendControl(SyncJson.encodeToString(MsgCalls(entries = calls)))
 
         var sent = 0
         try {
@@ -89,14 +90,14 @@ object SyncClient {
             channel.close()
         }
         return if (sent == 0) {
-            "Déjà à jour (${snapshot.files.size} enregistrements connus), ${snapshot.calls.size} appels"
+            "Déjà à jour (${files.size} enregistrements connus), ${calls.size} appels"
         } else {
-            "$sent nouveau(x) enregistrement(s) envoyé(s), ${snapshot.calls.size} appels"
+            "$sent nouveau(x) enregistrement(s) envoyé(s), ${calls.size} appels"
         }
     }
 
     private fun pushFile(context: Context, channel: EncryptedChannel, name: String) {
-        val input: InputStream = CallLogCollector.openRecording(context, name)
+        val input: InputStream = SyncSource.openFile(context, name)
             ?: throw IOException("enregistrement introuvable côté A: $name")
         input.use { stream ->
             val digest = MessageDigest.getInstance("SHA-256")

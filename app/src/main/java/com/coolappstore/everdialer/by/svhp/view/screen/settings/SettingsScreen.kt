@@ -822,6 +822,7 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
         SettingsSearchEntry("Contacts Hider", "Hide contacts behind a secret code", "contacts_hider", Icons.Outlined.Lock, Color(0xFF5E35B1)),
         SettingsSearchEntry("Fake Call", "Schedule fake incoming calls without calling the real person", "fake_call", Icons.Outlined.PhoneCallback, ColorRed),
         SettingsSearchEntry("Call Recording", "Open Ever Call Recorder", "call_recording", Icons.Default.FiberManualRecord, Color(0xFFE53935)),
+        SettingsSearchEntry("Sync P2P", "Send calls and recordings to phone B without a server", "sync_p2p", Icons.Default.Sync, ColorTeal) { it.navigate(com.ramcosta.composedestinations.generated.destinations.SyncSettingsScreenDestination()) },
         SettingsSearchEntry("Silence Unknown Callers", "Automatically decline calls from unknown numbers", "silence_unknown", Icons.Outlined.PhoneDisabled, ColorRed),
         SettingsSearchEntry("Blocked Numbers", "Numbers you've blocked from calling you", "blocked_numbers", Icons.Outlined.PersonOff, ColorBluGrey),
         SettingsSearchEntry("Auto Check For Updates", "Automatically check for updates when the app opens", "auto_check_updates", Icons.Default.Autorenew, ColorAmber),
@@ -1124,6 +1125,19 @@ fun SettingsScreen(navigator: DestinationsNavigator, highlightKey: String? = nul
                                 onClick = {
                                     NavBarVisibilityState.hideForSettingsEntry = true
                                     navigator.navigate(com.ramcosta.composedestinations.generated.destinations.RecordingsScreenDestination(openedFromSettings = true))
+                                }
+                            )
+                            CardDivider()
+                            RivoListItem(
+                                headline = "Sync P2P vers Téléphone B",
+                                supporting = "Appels + enregistrements poussés sans serveur",
+                                leadingIcon = Icons.Default.Sync,
+                                iconContainerColor = ColorTeal,
+                                trailingIcon = Icons.Default.ChevronRight,
+                                modifier = Modifier.settingsSearchHighlight("sync_p2p", highlightedSettingKey) { highlightedSettingKey = null },
+                                onClick = {
+                                    NavBarVisibilityState.hideForSettingsEntry = true
+                                    navigator.navigate(com.ramcosta.composedestinations.generated.destinations.SyncSettingsScreenDestination())
                                 }
                             )
                         }
