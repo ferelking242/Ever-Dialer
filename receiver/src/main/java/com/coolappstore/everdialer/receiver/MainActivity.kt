@@ -2,6 +2,9 @@
  * Ever Call Recording (phone B) — the whole app lives on ONE screen:
  *   • everything received from phone A (recordings + call log),
  *   • a single ⚙ gear that opens the P2P configuration (pairing + status).
+ *
+ * The P2P page is a full-screen Scaffold (same layout as Ever Dialer's
+ * SyncSettingsScreen) — NOT a bottom sheet.
  */
 package com.coolappstore.everdialer.receiver
 
@@ -13,11 +16,8 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,8 +27,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.CallReceived
@@ -36,17 +39,14 @@ import androidx.compose.material.icons.outlined.CallMade
 import androidx.compose.material.icons.outlined.CallMissed
 import androidx.compose.material.icons.outlined.PhoneInTalk
 import androidx.compose.material.icons.outlined.QrCode2
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -116,18 +116,62 @@ private fun EverReceiverApp() {
     }
 
     LaunchedEffect(Unit) { reload() }
-    // New data just landed from phone A → refresh the lists.
     LaunchedEffect(syncState.lastSyncAt) { if (syncState.lastSyncAt > 0) reload() }
     LaunchedEffect(reloadTick) { reload() }
 
+    if (showP2p) {
+        // Full-screen P2P settings page (matches Ever Dialer SyncSettingsScreen layout)
+        P2pScreen(
+            enabled = syncState.enabled,
+            peerName = syncState.peerName,
+            myName = syncState.myName,
+            lastSyncAt = syncState.lastSyncAt,
+            lastStatus = syncState.lastStatus,
+            isReceiver = syncState.role == SyncRole.RECEIVER,
+            logs = logs,
+            onBack = { showP2p = false },
+            onToggle = { enable ->
+                SyncManager.setEnabled(context, enable)
+                if (enable) ReceiveService.start(context) else ReceiveService.stop(context)
+            },
+            onRefreshLists = { reloadTick++ }
+        )
+    } else {
+        // Main screen: call log + recordings list
+        MainScreen(
+            peerName = syncState.peerName,
+            enabled = syncState.enabled && syncState.role == SyncRole.RECEIVER,
+            lastStatus = syncState.lastStatus,
+            calls = calls,
+            recordings = recordings,
+            recordingsDir = File(context.filesDir, "EverSync/recordings"),
+            context = context,
+            onOpenP2p = { showP2p = true }
+        )
+    }
+}
+
+/* ── Main screen ─────────────────────────────────────────────────────── */
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MainScreen(
+    peerName: String,
+    enabled: Boolean,
+    lastStatus: String,
+    calls: List<CallMeta>,
+    recordings: List<File>,
+    recordingsDir: File,
+    context: android.content.Context,
+    onOpenP2p: () -> Unit
+) {
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Text("Ever Call Recording", fontWeight = FontWeight.SemiBold) },
                 actions = {
-                    // THE single settings control of this app: P2P only.
-                    IconButton(onClick = { showP2p = true }) {
-                        Icon(Icons.Outlined.Settings, contentDescription = "Configuration P2P")
+                    IconButton(onClick = onOpenP2p) {
+                        Icon(Icons.Outlined.PhoneInTalk, contentDescription = "Configuration P2P")
                     }
                 }
             )
@@ -140,25 +184,36 @@ private fun EverReceiverApp() {
         ) {
             item {
                 StatusCard(
-                    pairedPeer = syncState.peerName,
-                    enabled = syncState.enabled && syncState.role == SyncRole.RECEIVER,
-                    lastStatus = syncState.lastStatus
+                    pairedPeer = peerName,
+                    enabled = enabled,
+                    lastStatus = lastStatus,
+                    onClick = onOpenP2p
                 )
             }
 
             item { SectionTitle("Journal d'appels du téléphone A") }
             if (calls.isEmpty()) {
-                item { EmptyHint("Aucun appel reçu pour l'instant.\nAppaire le téléphone A ci-dessus ⚙ puis laisse les deux téléphones sur le même WiFi.") }
+                item {
+                    EmptyHint(
+                        "Aucun appel reçu pour l'instant.\n" +
+                            "Appaire le téléphone A ci-dessous ⚙ puis laisse les deux téléphones sur le même WiFi."
+                    )
+                }
             } else {
                 items(calls.size) { i ->
                     val call = calls[i]
                     CallRow(
                         call = call,
-                        hasAudio = call.recording != null && File(context.filesDir, "EverSync/recordings/${call.recording}").exists(),
+                        hasAudio = call.recording != null &&
+                            File(recordingsDir, call.recording).exists(),
                         onClick = {
                             call.recording?.let { name ->
-                                openRecording(context, File(context.filesDir, "EverSync/recordings/$name"))
-                            } ?: Toast.makeText(context, "Pas d'enregistrement pour cet appel", Toast.LENGTH_SHORT).show()
+                                openRecording(context, File(recordingsDir, name))
+                            } ?: Toast.makeText(
+                                context,
+                                "Pas d'enregistrement pour cet appel",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
                     )
                 }
@@ -166,7 +221,12 @@ private fun EverReceiverApp() {
 
             item { SectionTitle("Enregistrements reçus (${recordings.size})") }
             if (recordings.isEmpty()) {
-                item { EmptyHint("Les enregistrements arrivent ici automatiquement dès que le téléphone A est en ligne.") }
+                item {
+                    EmptyHint(
+                        "Les enregistrements arrivent ici automatiquement " +
+                            "dès que le téléphone A est en ligne."
+                    )
+                }
             } else {
                 items(recordings.size) { i ->
                     val file = recordings[i]
@@ -175,134 +235,229 @@ private fun EverReceiverApp() {
             }
         }
     }
-
-    if (showP2p) {
-        ModalBottomSheet(onDismissRequest = { showP2p = false }) {
-            P2pPanel(
-                enabled = syncState.enabled && syncState.role == SyncRole.RECEIVER,
-                peerName = syncState.peerName,
-                myName = syncState.myName,
-                lastStatus = syncState.lastStatus,
-                logs = logs.take(8),
-                onToggle = { enable ->
-                    SyncManager.setEnabled(context, enable)
-                    if (enable) ReceiveService.start(context) else ReceiveService.stop(context)
-                },
-                onRefreshLists = { reloadTick++ }
-            )
-        }
-    }
 }
 
-/* ── P2P panel (the only settings this app has) ─────────────────────────── */
+/* ── Full-screen P2P settings (matches Ever Dialer SyncSettingsScreen) ── */
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun P2pPanel(
+private fun P2pScreen(
     enabled: Boolean,
     peerName: String,
     myName: String,
+    lastSyncAt: Long,
     lastStatus: String,
+    isReceiver: Boolean,
     logs: List<String>,
+    onBack: () -> Unit,
     onToggle: (Boolean) -> Unit,
     onRefreshLists: () -> Unit
 ) {
     val context = LocalContext.current
     var pairingCode by remember { mutableStateOf<String?>(null) }
-    var importField by remember { mutableStateOf("") }
+    val dateFormat = remember { SimpleDateFormat("dd/MM HH:mm", Locale.FRANCE) }
 
-    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
-
-        Text("Synchronisation P2P", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Cet appareil (B) reçoit automatiquement appels + enregistrements du téléphone A dès que les deux sont en ligne sur le même WiFi. Aucun serveur.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(16.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Réception automatique", fontWeight = FontWeight.Medium)
-                Text(
-                    if (enabled) "Activée${if (peerName.isNotBlank()) " · jumelé avec $peerName" else ""}" else "Désactivée",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(checked = enabled, onCheckedChange = onToggle)
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        if (!enabled) {
-            Button(
-                onClick = { pairingCode = SyncManager.generateReceiverPairingCode(context); ReceiveService.start(context) },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Outlined.QrCode2, null, Modifier.size(18.dp))
-                Spacer(Modifier.size(8.dp))
-                Text("Générer le code de jumelage")
-            }
-        }
-
-        pairingCode?.let { code ->
-            Spacer(Modifier.height(12.dp))
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                Column(Modifier.padding(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Étape 1 — Sur CE téléphone c'est fait ✔", style = MaterialTheme.typography.labelLarge)
-                        Spacer(Modifier.weight(1f))
-                        IconButton(onClick = {
-                            val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                            cm.setPrimaryClip(android.content.ClipData.newPlainText("ever-pairing", code))
-                            Toast.makeText(context, "Code copié", Toast.LENGTH_SHORT).show()
-                        }) { Icon(Icons.Outlined.ContentCopy, contentDescription = "Copier le code") }
-                    }
-                    Text("Étape 2 — Sur le TÉLÉPHONE A : Ever Dialer+ → Réglages → Synchronisation P2P → colle ce code.", style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(8.dp))
+    Scaffold(
+        topBar = {
+            CenterAlignedTopAppBar(
+                title = {
                     Text(
-                        code,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 6,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.primary
+                        "Synchronisation P2P",
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+
+            // ── Status card ──────────────────────────────────────────────
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (enabled && isReceiver)
+                        MaterialTheme.colorScheme.primaryContainer
+                    else MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(Modifier.padding(14.dp)) {
+                    Text(
+                        when {
+                            !isReceiver -> "Non jumelé"
+                            !enabled -> "Synchronisation désactivée"
+                            else -> "Jumelé avec ${peerName.ifBlank { "Téléphone A" }}"
+                        },
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (lastSyncAt > 0) {
+                        Text(
+                            "Dernière réception : ${dateFormat.format(Date(lastSyncAt))}" +
+                                (lastStatus.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 3, overflow = TextOverflow.Ellipsis
+                        )
+                    } else if (lastStatus.isNotBlank()) {
+                        Text(
+                            lastStatus,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 3, overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            // ── Toggle ──────────────────────────────────────────────────
+            Card(shape = RoundedCornerShape(16.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Réception automatique", fontWeight = FontWeight.Medium)
+                        Text(
+                            if (enabled)
+                                "Activée${if (peerName.isNotBlank()) " · jumelé avec $peerName" else ""}"
+                            else "Désactivée",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = enabled,
+                        onCheckedChange = onToggle
                     )
                 }
             }
-        }
 
-        if (!peerName.isBlank()) {
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = importField,
-                onValueChange = { importField = it },
-                label = { Text("Coller un nouveau code de jumelage") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = {
-                // Receiver side never imports: codes flow B → A. Keep a hint instead.
-                Toast.makeText(context, "Le code se colle sur le téléphone A, pas ici.", Toast.LENGTH_LONG).show()
-            }, modifier = Modifier.fillMaxWidth()) { Text("Aide") }
-        }
+            // ── Pairing code generator ───────────────────────────────────
+            Card(shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.padding(14.dp)) {
+                    Text("Code de jumelage", fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Sur le téléphone A, ouvre Ever Dialer+ → Réglages → " +
+                            "Synchronisation P2P → génère et copie le code, puis colle-le ici.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
 
-        if (lastStatus.isNotBlank()) {
-            Spacer(Modifier.height(12.dp))
-            Text("Dernier événement : $lastStatus", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-
-        OutlinedButton(onClick = onRefreshLists, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-            Text("Rafraîchir la liste")
-        }
-
-        if (logs.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            Text("Journal", style = MaterialTheme.typography.labelLarge)
-            logs.forEach { line ->
-                Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (!enabled || pairingCode != null) {
+                        Button(
+                            onClick = {
+                                pairingCode = SyncManager.generateReceiverPairingCode(context)
+                                ReceiveService.start(context)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.QrCode2, null, Modifier.size(18.dp))
+                            Spacer(Modifier.size(8.dp))
+                            Text(
+                                if (pairingCode == null) "Générer le code de jumelage"
+                                else "Régénérer le code"
+                            )
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                pairingCode = SyncManager.generateReceiverPairingCode(context)
+                                ReceiveService.start(context)
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.QrCode2, null, Modifier.size(18.dp))
+                            Spacer(Modifier.size(8.dp))
+                            Text("Générer le code de jumelage")
+                        }
+                    }
+                }
             }
+
+            // ── Display generated pairing code ───────────────────────────
+            pairingCode?.let { code ->
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Code généré ✔",
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            Spacer(Modifier.weight(1f))
+                            IconButton(onClick = {
+                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                    as android.content.ClipboardManager
+                                cm.setPrimaryClip(
+                                    android.content.ClipData.newPlainText("ever-pairing", code)
+                                )
+                                Toast.makeText(context, "Code copié", Toast.LENGTH_SHORT).show()
+                            }) {
+                                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copier le code")
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Copie ce code sur le téléphone A : Ever Dialer+ → Réglages → Synchronisation P2P.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            code,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 6,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+
+            // ── Manual push button ───────────────────────────────────────
+            OutlinedButton(
+                onClick = onRefreshLists,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Rafraîchir la liste") }
+
+            // ── Logs ─────────────────────────────────────────────────────
+            if (logs.isNotEmpty()) {
+                Card(shape = RoundedCornerShape(16.dp)) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Journal", style = MaterialTheme.typography.labelLarge)
+                        logs.take(12).forEach { line ->
+                            Text(
+                                line,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(24.dp))
         }
     }
 }
@@ -310,14 +465,25 @@ private fun P2pPanel(
 /* ── List pieces ────────────────────────────────────────────────────────── */
 
 @Composable
-private fun StatusCard(pairedPeer: String, enabled: Boolean, lastStatus: String) {
-    Card(colors = CardDefaults.cardColors(containerColor = if (enabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant)) {
+private fun StatusCard(
+    pairedPeer: String,
+    enabled: Boolean,
+    lastStatus: String,
+    onClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = if (enabled) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.PhoneInTalk, null, Modifier.size(20.dp))
                 Spacer(Modifier.size(8.dp))
                 Text(
-                    if (enabled) "Réception active" else "Non jumelé — ouvre ⚙",
+                    if (enabled) "Réception active" else "Non jumelé — configure ⚙",
                     fontWeight = FontWeight.SemiBold
                 )
             }
@@ -325,7 +491,11 @@ private fun StatusCard(pairedPeer: String, enabled: Boolean, lastStatus: String)
                 Text("Téléphone A : $pairedPeer", style = MaterialTheme.typography.bodySmall)
             }
             if (lastStatus.isNotBlank()) {
-                Text(lastStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    lastStatus,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
