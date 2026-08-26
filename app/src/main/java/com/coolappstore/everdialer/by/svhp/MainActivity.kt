@@ -41,8 +41,6 @@ import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.AppNavigationView
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.AppLockViewModel
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.HomeViewModel
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.RecordingItem
-import com.coolappstore.evercallrecorder.by.svhp.integrations.scrcpy.ScrcpyAudioCodec
-import com.coolappstore.evercallrecorder.by.svhp.integrations.scrcpy.ScrcpyAudioSource
 import com.coolappstore.everdialer.by.svhp.sync.SyncManager
 import com.coolappstore.everdialer.by.svhp.sync.SyncRole
 import android.content.ClipData
