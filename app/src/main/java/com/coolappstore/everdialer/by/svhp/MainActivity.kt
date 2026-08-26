@@ -317,17 +317,17 @@ private fun EmitterSettingsPage(onBack: () -> Unit) {
                     }
                     Spacer(Modifier.height(6.dp))
 
-                    val currentCodec = remember { preferences.getAudioCodec() }
-                    val currentSource = remember { preferences.getAudioSource() }
-                    val codecLabel = when (currentCodec) {
-                        ScrcpyAudioCodec.OPUS -> "Opus (recommandé, ~16 kbps)"
-                        ScrcpyAudioCodec.AAC -> "AAC (~64 kbps)"
+                    val currentCodecKey = remember { preferences.getAudioCodec() }
+                    val currentSourceKey = remember { preferences.getAudioSource() }
+                    val codecLabel = when (currentCodecKey) {
+                        "opus" -> "Opus (recommandé, ~16 kbps)"
+                        "aac" -> "AAC (~64 kbps)"
                         else -> "Opus (recommandé, ~16 kbps)"
                     }
-                    val sourceLabel = when (currentSource) {
-                        ScrcpyAudioSource.VOICE_CALL -> "Voice Call (toute la ligne)"
-                        ScrcpyAudioSource.VOICE_CALL_UPLINK -> "Uplink (ma voix)"
-                        ScrcpyAudioSource.VOICE_CALL_DOWNLINK -> "Downlink (l'autre personne)"
+                    val sourceLabel = when (currentSourceKey) {
+                        "voice-call" -> "Voice Call (toute la ligne)"
+                        "voice-call-uplink" -> "Uplink (ma voix)"
+                        "voice-call-downlink" -> "Downlink (l'autre personne)"
                         else -> "Voice Call (toute la ligne)"
                     }
 
