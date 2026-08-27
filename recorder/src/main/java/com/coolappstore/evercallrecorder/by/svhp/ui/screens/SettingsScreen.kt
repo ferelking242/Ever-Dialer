@@ -826,13 +826,12 @@ private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, act
     val autoManageShizuku    = remember(updateTrigger) { preferences.isShizukuAutoManageEnabled() }
     val shizukuStartOnRecord = remember(updateTrigger) { preferences.isShizukuStartOnRecordEnabled() }
     val shizukuKeepAlive     = remember(updateTrigger) { preferences.isShizukuKeepAliveEnabled() }
-    val shizukuAuthKey       = remember(updateTrigger) { preferences.getShizukuAuthKey() }
     SettingsSection(title = stringResource(R.string.settings_section_security), icon = Icons.Outlined.Shield) {
         // Pairing entry point — opens the embedded Shizuku pairing screen
         SectionListItem(
             icon = Icons.Outlined.Link,
-            headline = "Gérer le pairing Shizuku",
-            supporting = "Appairage privilégié embarqué (débogage sans fil)",
+            headline = stringResource(R.string.settings_shizuku_auto_manage),
+            supporting = stringResource(R.string.settings_shizuku_auto_manage_desc),
             onClick = {
                 runCatching {
                     val intent = android.content.Intent(context, com.coolappstore.evercallrecorder.by.svhp.privileged.PairingActivity::class.java)
@@ -841,26 +840,8 @@ private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, act
                 }
             }
         )
-        ToggleListItem(label = stringResource(R.string.settings_shizuku_auto_manage), checked = autoManageShizuku, onCheckedChange = { actions.setShizukuAutoManageEnabled(it) }, description = stringResource(R.string.settings_shizuku_auto_manage_desc))
-        AnimatedVisibility(visible = autoManageShizuku, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
-            Column {
-                var textState by remember(shizukuAuthKey) { mutableStateOf(shizukuAuthKey) }
-                val keyboardController = LocalSoftwareKeyboardController.current
-                var isFocused by remember { mutableStateOf(false) }
-                OutlinedTextField(
-                    value = textState,
-                    onValueChange = { textState = it },
-                    label = { Text(stringResource(R.string.settings_shizuku_auth_key)) },
-                    modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp).onFocusChanged { isFocused = it.isFocused },
-                    singleLine = true,
-                    visualTransformation = if (isFocused) VisualTransformation.None else PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, keyboardType = KeyboardType.Password, showKeyboardOnFocus = true),
-                    keyboardActions = KeyboardActions(onDone = { actions.setShizukuAuthKey(textState); keyboardController?.hide() })
-                )
-                ToggleListItem(label = stringResource(R.string.settings_shizuku_start_on_record), checked = shizukuStartOnRecord, onCheckedChange = { actions.setShizukuStartOnRecordEnabled(it) }, description = stringResource(R.string.settings_shizuku_start_on_record_desc))
-                ToggleListItem(label = stringResource(R.string.settings_shizuku_keep_alive), checked = shizukuKeepAlive, onCheckedChange = { actions.setShizukuKeepAliveEnabled(it) }, description = stringResource(R.string.settings_shizuku_keep_alive_desc))
-            }
-        }
+        ToggleListItem(label = stringResource(R.string.settings_shizuku_start_on_record), checked = shizukuStartOnRecord, onCheckedChange = { actions.setShizukuStartOnRecordEnabled(it) }, description = stringResource(R.string.settings_shizuku_start_on_record_desc))
+        ToggleListItem(label = stringResource(R.string.settings_shizuku_keep_alive), checked = shizukuKeepAlive, onCheckedChange = { actions.setShizukuKeepAliveEnabled(it) }, description = stringResource(R.string.settings_shizuku_keep_alive_desc))
     }
 }
 
