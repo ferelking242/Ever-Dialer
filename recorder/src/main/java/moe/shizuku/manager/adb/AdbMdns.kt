@@ -63,16 +63,27 @@ class AdbMdns(
         // bound — so the old isPortAvailable() check (which returned true only when
         // the port was FREE) caused mDNS to silently discard every service it found.
         // We now only verify the host belongs to a local network interface.
-        if (running && NetworkInterface.getNetworkInterfaces()
-                .asSequence()
-                .any { networkInterface ->
-                    networkInterface.inetAddresses
-                        .asSequence()
-                        .any { host == it.hostAddress }
-                }
-        ) {
-            serviceName = resolvedService.serviceName
-            observer(host to resolvedService.port)
+        try {
+            if (running && NetworkInterface.getNetworkInterfaces()
+                    .asSequence()
+                    .any { networkInterface ->
+                        networkInterface.inetAddresses
+                            .asSequence()
+                            .any { host == it.hostAddress }
+                    }
+            ) {
+                serviceName = resolvedService.serviceName
+                observer(host to resolvedService.port)
+            }
+        } catch (e: Throwable) {
+            // NetworkInterface.getNetworkInterfaces() can throw on some devices.
+            // If we can't verify the host, accept the service anyway — the user
+            // explicitly enabled wireless debugging, so trust the mDNS result.
+            Log.w(TAG, "NetworkInterface check failed (${e.message}), accepting service")
+            if (running) {
+                serviceName = resolvedService.serviceName
+                observer(host to resolvedService.port)
+            }
         }
     }
 

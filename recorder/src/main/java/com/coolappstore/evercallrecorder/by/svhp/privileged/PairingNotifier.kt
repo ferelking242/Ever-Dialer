@@ -1,13 +1,13 @@
 /* Ever Dialer+ — privileged runtime (Phase 2).
- * Monitors mDNS for the Android wireless-debugging pairing service and shows
- * a persistent notification prompting the user to pair — mirroring the real
- * Shizuku manager behaviour.
+ * Two-phase notification mirroring the real Shizuku manager:
  *
- * IMPORTANT: The notification is shown AFTER the user opens Developer Options
- * and taps "Wireless debugging → Pair with pairing code". At that point the
- * system starts broadcasting _adb-tls-pairing._tcp via mDNS, which triggers
- * this notifier. The user sees both the Android system dialog (with the 6-digit
- * code) AND our notification (which opens PairingActivity for code entry).
+ *   Phase 1 — user taps "Gérer le pairing" → opens Dev Settings AND shows
+ *   an immediate notification "En attente du débogage sans fil…".
+ *
+ *   Phase 2 — mDNS discovers `_adb-tls-pairing._tcp` → notification is
+ *   updated to "Débogage sans fil détecté" and opens PairingActivity.
+ *
+ *   Phase 3 — after successful pairing, notification is dismissed.
  */
 package com.coolappstore.evercallrecorder.by.svhp.privileged
 
@@ -33,22 +33,18 @@ object PairingNotifier {
     private const val CHANNEL_DESC = "Notifications pour le pairing du moteur privilégié"
 
     private var mdnsWatcher: AdbMdns? = null
+    private var isWatching = false
+
+    // ── Public API ──────────────────────────────────────────────────────
 
     /**
-     * Start monitoring for wireless-debugging pairing availability.
-     * When a `_adb-tls-pairing._tcp` service is found and the device is NOT
-     * yet paired, a persistent notification appears. Tapping it opens the
-     * [PairingActivity] so the user can enter the 6-digit code.
-     *
-     * Safe to call multiple times — duplicates are avoided.
+     * Phase 1 — called when user taps "Gérer le pairing" in Settings.
+     * Shows an IMMEDIATE notification "En attente du débogage sans fil…"
+     * AND starts the mDNS watcher for Phase 2.
      */
-    fun startWatching(context: Context) {
-        if (mdnsWatcher != null) return
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-
+    fun showWaitingNotification(context: Context) {
         val appContext = context.applicationContext
-
-        // Already paired → no need to notify.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         if (PrivilegedRuntime.isPaired(appContext)) {
             cancelNotification(appContext)
             return
@@ -56,20 +52,42 @@ object PairingNotifier {
 
         ensureChannel(appContext)
 
-        Log.d(TAG, "Starting mDNS watcher for wireless-debugging pairing")
+        // Show immediate "waiting" notification
+        showNotification(
+            appContext,
+            title = "En attente du débogage sans fil…",
+            text = "Active le débogage sans fil puis tape « Associer avec un code »",
+            bigText = "Ouvre les Options Développeur → Débogage sans fil → Associer avec un code. " +
+                "Quand le code à 6 chiffres apparaîtra, cette notification s'activera pour te laisser entrer le code.",
+            priority = NotificationCompat.PRIORITY_DEFAULT,
+            ongoing = true
+        )
 
-        mdnsWatcher = AdbMdns(appContext, AdbMdns.TLS_PAIRING) { (host, port) ->
-            if (port > 0 && !PrivilegedRuntime.isPaired(appContext)) {
-                Log.i(TAG, "Pairing service detected on $host:$port — showing notification")
-                showPairingNotification(appContext)
-            }
-        }.also { it.start() }
+        // Start mDNS watcher for Phase 2
+        startMdnsWatcher(appContext)
+    }
+
+    /**
+     * Start monitoring for wireless-debugging pairing availability via mDNS.
+     * When a `_adb-tls-pairing._tcp` service is found, the notification is
+     * updated (Phase 2). Safe to call multiple times.
+     */
+    fun startWatching(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val appContext = context.applicationContext
+        if (PrivilegedRuntime.isPaired(appContext)) {
+            cancelNotification(appContext)
+            return
+        }
+        ensureChannel(appContext)
+        startMdnsWatcher(appContext)
     }
 
     /** Stop monitoring and dismiss any visible notification. */
     fun stopWatching(context: Context) {
         runCatching { mdnsWatcher?.stop() }
         mdnsWatcher = null
+        isWatching = false
         cancelNotification(context.applicationContext)
     }
 
@@ -79,12 +97,46 @@ object PairingNotifier {
         stopWatching(context)
     }
 
-    // ── Notification ──────────────────────────────────────────────────────
+    // ── Internal ────────────────────────────────────────────────────────
 
-    private fun showPairingNotification(context: Context) {
+    private fun startMdnsWatcher(appContext: Context) {
+        if (isWatching) return
+        isWatching = true
+
+        Log.d(TAG, "Starting mDNS watcher for _adb-tls-pairing._tcp")
+
+        mdnsWatcher = AdbMdns(appContext, AdbMdns.TLS_PAIRING) { (host, port) ->
+            if (port > 0 && !PrivilegedRuntime.isPaired(appContext)) {
+                Log.i(TAG, "Pairing service detected on $host:$port — updating notification")
+                // Phase 2: update notification to "pairing detected"
+                showNotification(
+                    appContext,
+                    title = "Débogage sans fil détecté !",
+                    text = "Appuie ici pour entrer le code à 6 chiffres",
+                    bigText = "Débogage sans fil disponible sur le port $port. " +
+                        "Appuie sur cette notification pour ouvrir l'écran de pairing et saisir le code à 6 chiffres.",
+                    priority = NotificationCompat.PRIORITY_HIGH,
+                    ongoing = false,
+                    openPairingScreen = true
+                )
+            }
+        }.also { runCatching { it.start() } }
+    }
+
+    // ── Notification helpers ────────────────────────────────────────────
+
+    private fun showNotification(
+        context: Context,
+        title: String,
+        text: String,
+        bigText: String,
+        priority: Int,
+        ongoing: Boolean,
+        openPairingScreen: Boolean = false
+    ) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        // Android 13+ requires POST_NOTIFICATIONS — check runtime permission.
+        // Android 13+ requires runtime POST_NOTIFICATIONS permission
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(
                     context, Manifest.permission.POST_NOTIFICATIONS
@@ -95,29 +147,33 @@ object PairingNotifier {
             }
         }
 
-        // Make sure the channel exists.
         ensureChannel(context)
 
-        val intent = Intent(context, PairingActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val intent = if (openPairingScreen) {
+            Intent(context, PairingActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+        } else {
+            // "Waiting" notification: open Dev Settings so user can enable wireless debugging
+            Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
         }
+
         val pending = PendingIntent.getActivity(
-            context, 0, intent,
+            context, if (openPairingScreen) 1 else 0, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("Appairage privilégié disponible")
-            .setContentText("Appuie ici pour entrer le code de débogage sans fil")
-            .setStyle(
-                NotificationCompat.BigTextStyle()
-                    .bigText("Débogage sans fil détecté. Ouvre l'app pour saisir le code à 6 chiffres et activer l'enregistrement.")
-            )
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
+            .setPriority(priority)
+            .setAutoCancel(!ongoing)
+            .setOngoing(ongoing)
             .setContentIntent(pending)
-            .setOngoing(false)
             .build()
 
         nm.notify(NOTIFICATION_ID, notification)
