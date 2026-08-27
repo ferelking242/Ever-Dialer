@@ -200,13 +200,13 @@ object PairingNotifier {
             .build()
 
         val replyAction = NotificationCompat.Action.Builder(
-            android.R.drawable.stat_sys_send,
+            android.R.drawable.ic_menu_send,
             "Envoyer",
             replyPending
-        )
-            .addRemoteInput(remoteInput)
-            .setAllowGeneratedReplies(false)
-            .build()
+        ).apply {
+            addRemoteInput(remoteInput)
+            setAllowGeneratedReplies(false)
+        }.build()
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
@@ -331,7 +331,9 @@ class PairingReplyReceiver : BroadcastReceiver() {
 
         Thread {
             try {
-                val result = PrivilegedRuntime.pairWithCode(context, host, port, code)
+                val result = kotlinx.coroutines.runBlocking {
+                    PrivilegedRuntime.pairWithCode(context, host, port, code)
+                }
                 if (result.isSuccess) {
                     Log.i(TAG, "Pairing succeeded from notification reply!")
                     PairingNotifier.onPairingSucceeded(context)
