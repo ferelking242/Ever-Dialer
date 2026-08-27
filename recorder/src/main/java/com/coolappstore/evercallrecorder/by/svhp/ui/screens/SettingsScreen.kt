@@ -827,27 +827,25 @@ private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, act
     val shizukuStartOnRecord = remember(updateTrigger) { preferences.isShizukuStartOnRecordEnabled() }
     val shizukuKeepAlive     = remember(updateTrigger) { preferences.isShizukuKeepAliveEnabled() }
     SettingsSection(title = stringResource(R.string.settings_section_security), icon = Icons.Outlined.Shield) {
-        // Pairing entry point — opens Developer Settings AND shows notification
-        // (like real Shizuku: immediate "waiting" notification + mDNS detection)
+        // Pairing entry point — opens PairingActivity (like real Shizuku)
+        // PairingActivity opens Dev Settings AND shows its own notification
         SectionListItem(
             icon = Icons.Outlined.Link,
             headline = stringResource(R.string.settings_shizuku_auto_manage),
             supporting = stringResource(R.string.settings_shizuku_auto_manage_desc),
             onClick = {
-                // Show immediate "waiting" notification (Phase 1)
+                // Open PairingActivity directly (has code input + mDNS auto-detect)
+                runCatching {
+                    val intent = android.content.Intent(
+                        context,
+                        com.coolappstore.evercallrecorder.by.svhp.privileged.PairingActivity::class.java
+                    )
+                    context.startActivity(intent)
+                }
+                // Also try to show notification (may need POST_NOTIFICATIONS)
                 runCatching {
                     com.coolappstore.evercallrecorder.by.svhp.privileged.PairingNotifier
                         .showWaitingNotification(context)
-                }
-                // Open Dev Settings
-                runCatching {
-                    val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
-                    context.startActivity(intent)
-                }.onFailure {
-                    runCatching {
-                        val intent = android.content.Intent(android.provider.Settings.ACTION_SETTINGS)
-                        context.startActivity(intent)
-                    }
                 }
             }
         )

@@ -3,20 +3,27 @@
  *
  * Minimalist flow like the real Shizuku manager:
  *   1. Badge shows current status (Not paired / Paired / Running / Failed)
- *   2. Code input — the 6-digit code from the system wireless-debugging notification
- *   3. "Pair" button — performs SPAKE2p handshake
- *   4. Green badge when paired & running
+ *   2. Button opens Developer Settings directly
+ *   3. Port auto-detected via mDNS, but always editable manually
+ *   4. Code input always visible — enter the 6-digit code from the system dialog
+ *   5. "Pair" button performs SPAKE2p handshake
+ *   6. Green badge when paired & running
  *
- * The "Manage pairing" button in Settings opens Developer Options directly.
- * This screen is launched by the PairingNotification or when the user re-pairs.
+ * The "Manage pairing" button in Settings opens this screen AND Dev Settings.
+ * Notifications are supplementary — pairing works without them.
  */
 package com.coolappstore.evercallrecorder.by.svhp.privileged
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -63,13 +70,41 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 
 class PairingActivity : ComponentActivity() {
+
+    private val requestNotifPerm = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        Log.d(TAG, "POST_NOTIFICATIONS granted=$granted")
+        if (granted) {
+            // Try to show notification now
+            PairingNotifier.showWaitingNotification(this)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         PrivilegedRuntime.refreshState()
+
+        // Request POST_NOTIFICATIONS if not granted (Android 13+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    this, Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.d(TAG, "Requesting POST_NOTIFICATIONS permission")
+                requestNotifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+
         setContent { MaterialTheme { PairingScreen() } }
+    }
+
+    companion object {
+        private const val TAG = "PairingActivity"
     }
 }
 
@@ -83,11 +118,15 @@ private fun PairingScreen() {
     var pairingCode by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
+    var portDetected by remember { mutableStateOf(false) }
 
     // Auto-detect pairing port via mDNS
     DisposableEffect(Unit) {
+        Log.d(TAG, "Starting mDNS watcher for pairing port")
         val mdns = PrivilegedRuntime.observePairingPort(context) { port ->
-            if (pairingPort.isBlank()) pairingPort = port.toString()
+            Log.d(TAG, "mDNS detected port: $port")
+            pairingPort = port.toString()
+            portDetected = true
         }
         onDispose { mdns?.stop() }
     }
@@ -119,28 +158,39 @@ private fun PairingScreen() {
 
         // ── Main content ────────────────────────────────
         if (isPaired) {
-            // Already paired — show success card
             SuccessCard(runtimeState, context)
         } else {
-            // Not paired — show pairing card
-            PairingCard(
+            PairingContent(
                 port = pairingPort,
+                onPortChange = { pairingPort = it.filter { c -> c.isDigit() }.take(5) },
                 code = pairingCode,
                 onCodeChange = { pairingCode = it.filter { c -> c.isDigit() }.take(6) },
+                portDetected = portDetected,
                 busy = busy,
                 errorMsg = errorMsg,
                 onPair = {
+                    val port = pairingPort.toIntOrNull() ?: 0
+                    if (port <= 0) {
+                        errorMsg = "Port invalide — active le débogage sans fil d'abord"
+                        return@PairingContent
+                    }
+                    if (pairingCode.length != 6) {
+                        errorMsg = "Le code doit faire 6 chiffres"
+                        return@PairingContent
+                    }
                     scope.launch {
                         busy = true
                         errorMsg = null
                         PrivilegedRuntime.pairWithCode(
                             context,
                             "127.0.0.1",
-                            pairingPort.toIntOrNull() ?: 0,
+                            port,
                             pairingCode
                         ).onSuccess {
-                            // LaunchedEffect will auto-start server
+                            Log.d(TAG, "Pairing succeeded!")
+                            PairingNotifier.onPairingSucceeded(context)
                         }.onFailure { e ->
+                            Log.e(TAG, "Pairing failed", e)
                             errorMsg = e.message ?: "Échec de l'appairage"
                             busy = false
                         }
@@ -163,10 +213,12 @@ private fun PairingScreen() {
 }
 
 @Composable
-private fun PairingCard(
+private fun PairingContent(
     port: String,
+    onPortChange: (String) -> Unit,
     code: String,
     onCodeChange: (String) -> Unit,
+    portDetected: Boolean,
     busy: Boolean,
     errorMsg: String?,
     onPair: () -> Unit,
@@ -177,16 +229,14 @@ private fun PairingCard(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.fillMaxWidth()
     ) {
-        // Info text
+        // Step 1: Open Dev Settings
         Text(
-            "Active le débogage sans fil dans les options développeur, " +
-            " puis tape « Associer avec un code ».",
+            "1. Active le débogage sans fil puis tape « Associer avec un code »",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
         )
 
-        // Open Dev Settings button
         OutlinedButton(
             onClick = onOpenDevSettings,
             modifier = Modifier.fillMaxWidth(),
@@ -195,101 +245,102 @@ private fun PairingCard(
             Text("Ouvrir les options développeur")
         }
 
-        // mDNS waiting indicator
-        AnimatedVisibility(
-            visible = port.isBlank(),
-            enter = fadeIn(),
-            exit = fadeOut()
+        // Step 2: Port (auto-detected OR manual)
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            ),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(top = 4.dp)
+            Column(
+                Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                CircularProgressIndicator(
-                    Modifier.size(16.dp),
-                    strokeWidth = 2.dp,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    "En attente du débogage sans fil…",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        // Code input + pair button (visible once port detected)
-        AnimatedVisibility(
-            visible = port.isNotBlank(),
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut()
-        ) {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                ),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(
-                    Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                // Port status indicator
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // Port detected indicator
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Box(
-                            Modifier
-                                .size(8.dp)
-                                .background(Color(0xFF2E7D32), CircleShape)
-                        )
-                        Text(
-                            "Port détecté : $port",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    // 6-digit code field
-                    OutlinedTextField(
-                        value = code,
-                        onValueChange = onCodeChange,
-                        label = { Text("Code à 6 chiffres") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.NumberPassword
-                        ),
-                        textStyle = MaterialTheme.typography.headlineMedium.copy(
-                            textAlign = TextAlign.Center,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = MaterialTheme.typography.headlineMedium.letterSpacing
-                        ),
-                        isError = errorMsg != null,
-                        supportingText = errorMsg?.let {
-                            { Text(it, color = MaterialTheme.colorScheme.error) }
-                        }
-                    )
-
-                    // Pair button
-                    Button(
-                        onClick = onPair,
-                        enabled = !busy && code.length == 6,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        if (busy) {
-                            CircularProgressIndicator(
-                                Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                                color = ButtonDefaults.buttonColors().contentColor
+                    Box(
+                        Modifier
+                            .size(8.dp)
+                            .background(
+                                if (portDetected) Color(0xFF2E7D32) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                CircleShape
                             )
-                        } else {
-                            Text("Associer")
-                        }
+                    )
+                    Text(
+                        if (portDetected) "Port détecté automatiquement"
+                        else "Port de pairing",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (portDetected) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                // Port input (always visible, auto-filled by mDNS)
+                OutlinedTextField(
+                    value = port,
+                    onValueChange = onPortChange,
+                    label = { Text("Port (auto-détecté ou manuel)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = !busy,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                        textAlign = TextAlign.Center
+                    ),
+                    isError = errorMsg != null && port.isBlank(),
+                    placeholder = { Text("ex: 37329", textAlign = TextAlign.Center) }
+                )
+
+                // Step 2 info
+                Text(
+                    "2. Quand le code à 6 chiffres apparaît, entre-le ci-dessous",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+
+                // 6-digit code field (ALWAYS visible)
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = onCodeChange,
+                    label = { Text("Code à 6 chiffres") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = !busy,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.NumberPassword
+                    ),
+                    textStyle = MaterialTheme.typography.headlineMedium.copy(
+                        textAlign = TextAlign.Center,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = MaterialTheme.typography.headlineMedium.letterSpacing
+                    ),
+                    isError = errorMsg != null && code.length != 6,
+                    supportingText = errorMsg?.let {
+                        { Text(it, color = MaterialTheme.colorScheme.error) }
+                    },
+                    placeholder = { Text("000000", textAlign = TextAlign.Center) }
+                )
+
+                // Pair button
+                Button(
+                    onClick = onPair,
+                    enabled = !busy && code.length == 6 && port.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    if (busy) {
+                        CircularProgressIndicator(
+                            Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = ButtonDefaults.buttonColors().contentColor
+                        )
+                    } else {
+                        Text("Associer")
                     }
                 }
             }
