@@ -1,9 +1,9 @@
 /*
  * Ever Dialer+ — privileged runtime (Phase 2).
  * Clean pairing screen, Shizuku-manager style:
- *   1. User taps "Appairer" → system dev settings open
- *   2. PairingNotifier detects mDNS and pops a notification
- *   3. User enters the 6-digit code here
+ *   1. Single screen with status + one button to open Developer Options
+ *   2. mDNS auto-detects the pairing port
+ *   3. User enters the 6-digit code shown in the system notification
  *   4. App pairs and starts the embedded server automatically
  */
 package com.coolappstore.evercallrecorder.by.svhp.privileged
@@ -36,17 +36,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -65,7 +63,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class PairingActivity : ComponentActivity() {
@@ -85,10 +82,11 @@ private fun PairingScreen() {
     var pairingPort by remember { mutableStateOf("") }
     var pairingCode by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var step by remember { mutableStateOf(0) } // 0=welcome, 1=waiting for code, 2=done
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
-    // Auto-fill the pairing port via mDNS
+    // Auto-fill the pairing port via mDNS — once the user opens Developer
+    // Options → Wireless Debugging → Pair with pairing code, Android starts
+    // broadcasting _adb-tls-pairing._tcp and the port appears here.
     DisposableEffect(Unit) {
         val mdns = PrivilegedRuntime.observePairingPort(context) { port ->
             if (pairingPort.isBlank()) pairingPort = port.toString()
@@ -98,12 +96,11 @@ private fun PairingScreen() {
 
     // Auto-start server after successful pairing
     LaunchedEffect(runtimeState) {
-        if (runtimeState == PrivilegedRuntime.State.PAIRED_IDLE && step == 1) {
+        if (runtimeState == PrivilegedRuntime.State.PAIRED_IDLE) {
             busy = true
             PrivilegedRuntime.ensureServerStarted(context) { }
                 .onFailure { /* silent */ }
             busy = false
-            step = 2
         }
     }
 
@@ -122,94 +119,88 @@ private fun PairingScreen() {
             fontWeight = FontWeight.Bold
         )
         Text(
-            "Configuration unique : le moteur d'enregistrement se connecte\n" +
-            "directement au débogage sans fil de l'appareil (Android 11+).",
+            "Le moteur d'enregistrement a besoin de se connecter au débogage\n" +
+            "sans fil de l'appareil (Android 11+).",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        // ── Status ──────────────────────────────────────────
+        // ── Status badge ────────────────────────────────────
         StatusBadge(runtimeState)
 
-        // ── Step 1: Open dev settings ───────────────────────
-        if (step == 0) {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                )
-            ) {
-                Column(
-                    Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        "1. Active le débogage sans fil",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        "Ouvre les options développeur et active « Débogage sans fil », " +
-                        "puis touche « Associer l'appareil avec un code d'appairage ».",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Button(
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
-                                )
-                            }.onFailure {
-                                runCatching {
-                                    context.startActivity(Intent(Settings.ACTION_SETTINGS))
-                                }
-                            }
-                            step = 1
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Ouvrir les options développeur")
-                    }
-                }
-            }
-        }
-
-        // ── Step 2: Enter the 6-digit code ──────────────────
-        AnimatedVisibility(
-            visible = step >= 1,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut()
+        // ── Main card ───────────────────────────────────────
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            )
         ) {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (step == 2)
-                        Color(0xFF2E7D32).copy(alpha = 0.12f)
-                    else MaterialTheme.colorScheme.surfaceContainerLow
-                )
+            Column(
+                Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Column(
-                    Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                // The big button: opens Developer Options
+                Text(
+                    "Étape 1 — Active le débogage sans fil",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    "Ouvre les options développeur, puis active « Débogage sans fil » " +
+                    "et touche « Associer l'appareil avec un code d'appairage ».",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                            )
+                        }.onFailure {
+                            runCatching {
+                                context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
-                    if (step == 1) {
+                    Text("Ouvrir les options développeur")
+                }
+
+                // ── Code input (visible once mDNS finds the port) ─────
+                AnimatedVisibility(
+                    visible = pairingPort.isNotBlank(),
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        HorizontalDividerThin()
+
                         Text(
-                            "2. Saisis le code à 6 chiffres",
+                            "Étape 2 — Saisis le code à 6 chiffres",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold
                         )
                         Text(
-                            "Quand la notification « Appairage disponible » apparaît, " +
-                            "note le code à 6 chiffres affiché dans la popup système, " +
-                            "puis colle-le ici.",
+                            "Quand tu appuies sur « Associer l'appareil avec un code », " +
+                            "une notification système apparaît avec un code à 6 chiffres. " +
+                            "Note-le et colle-le ici.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
 
-                        // Port field (auto-filled by mDNS)
-                        if (pairingPort.isNotBlank()) {
+                        // Port auto-detected
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .background(Color(0xFF2E7D32), CircleShape)
+                            )
                             Text(
                                 "Port détecté : $pairingPort",
                                 style = MaterialTheme.typography.labelMedium,
@@ -217,7 +208,7 @@ private fun PairingScreen() {
                             )
                         }
 
-                        // Code input — big, centered, 6 digits
+                        // 6-digit code field
                         OutlinedTextField(
                             value = pairingCode,
                             onValueChange = {
@@ -236,74 +227,108 @@ private fun PairingScreen() {
                                 letterSpacing = MaterialTheme.typography.headlineMedium.letterSpacing
                             ),
                             isError = errorMsg != null,
-                            supportingText = errorMsg?.let { { Text(it, color = MaterialTheme.colorScheme.error) } }
+                            supportingText = errorMsg?.let {
+                                { Text(it, color = MaterialTheme.colorScheme.error) }
+                            }
                         )
 
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(
-                                onClick = {
-                                    scope.launch {
-                                        busy = true
-                                        errorMsg = null
-                                        PrivilegedRuntime.pairWithCode(
-                                            context,
-                                            "127.0.0.1",
-                                            pairingPort.toIntOrNull() ?: 0,
-                                            pairingCode
-                                        ).onSuccess {
-                                            // LaunchedEffect will auto-start server
-                                        }.onFailure { e ->
-                                            errorMsg = e.message ?: "Échec de l'appairage"
-                                            busy = false
-                                        }
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    errorMsg = null
+                                    PrivilegedRuntime.pairWithCode(
+                                        context,
+                                        "127.0.0.1",
+                                        pairingPort.toIntOrNull() ?: 0,
+                                        pairingCode
+                                    ).onSuccess {
+                                        // LaunchedEffect will auto-start server
+                                    }.onFailure { e ->
+                                        errorMsg = e.message ?: "Échec de l'appairage"
+                                        busy = false
                                     }
-                                },
-                                enabled = !busy && pairingCode.length == 6 && pairingPort.isNotBlank(),
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                if (busy) {
-                                    CircularProgressIndicator(
-                                        Modifier.size(18.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.onPrimary
-                                    )
-                                } else {
-                                    Text("Associer")
                                 }
-                            }
-                            OutlinedButton(
-                                onClick = { step = 0; pairingCode = ""; errorMsg = null },
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text("Retour")
+                            },
+                            enabled = !busy && pairingCode.length == 6,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (busy) {
+                                CircularProgressIndicator(
+                                    Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                            } else {
+                                Text("Associer")
                             }
                         }
                     }
+                }
 
-                    if (step == 2) {
-                        // Success!
-                        Text(
-                            "✔ Appairé et actif",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF2E7D32)
+                // ── Waiting hint while no port detected ──────
+                AnimatedVisibility(
+                    visible = pairingPort.isBlank(),
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) {
+                        CircularProgressIndicator(
+                            Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            "Le moteur privilégié est en cours d'exécution. " +
-                            "L'enregistrement des appels est prêt.",
+                            "En attente du débogage sans fil…",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        TextButton(onClick = { (context as? ComponentActivity)?.finish() }) {
-                            Text("Fermer")
-                        }
                     }
                 }
             }
         }
 
-        // ── Note ────────────────────────────────────────────
+        // ── Done badge ──────────────────────────────────────
+        AnimatedVisibility(
+            visible = runtimeState == PrivilegedRuntime.State.RUNNING,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF2E7D32).copy(alpha = 0.12f)
+                )
+            ) {
+                Column(
+                    Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "✔ Appairé et actif",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF2E7D32)
+                    )
+                    Text(
+                        "Le moteur privilégié est en cours d'exécution. " +
+                        "L'enregistrement des appels est prêt.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(onClick = { (context as? ComponentActivity)?.finish() }) {
+                        Text("Fermer")
+                    }
+                }
+            }
+        }
+
+        // ── Help text ───────────────────────────────────────
         Text(
             "Après un redémarrage, si l'enregistrement ne fonctionne plus, " +
             "reviens ici — la reconnexion est automatique si le débogage sans fil est encore activé.",
@@ -336,4 +361,13 @@ private fun StatusBadge(state: PrivilegedRuntime.State) {
             Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = color)
         }
     }
+}
+
+@Composable
+private fun HorizontalDividerThin() {
+    androidx.compose.material3.HorizontalDivider(
+        modifier = Modifier.padding(vertical = 4.dp),
+        thickness = 0.5.dp,
+        color = MaterialTheme.colorScheme.outlineVariant
+    )
 }

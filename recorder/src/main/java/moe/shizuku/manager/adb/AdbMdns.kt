@@ -12,10 +12,7 @@ import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
-import java.io.IOException
-import java.net.InetSocketAddress
 import java.net.NetworkInterface
-import java.net.ServerSocket
 
 @RequiresApi(Build.VERSION_CODES.R)
 class AdbMdns(
@@ -62,6 +59,10 @@ class AdbMdns(
 
     private fun onServiceResolved(resolvedService: NsdServiceInfo) {
         val host = resolvedService.host?.hostAddress ?: return
+        // When adbd is actively offering wireless-debugging pairing, its port IS
+        // bound — so the old isPortAvailable() check (which returned true only when
+        // the port was FREE) caused mDNS to silently discard every service it found.
+        // We now only verify the host belongs to a local network interface.
         if (running && NetworkInterface.getNetworkInterfaces()
                 .asSequence()
                 .any { networkInterface ->
@@ -69,20 +70,10 @@ class AdbMdns(
                         .asSequence()
                         .any { host == it.hostAddress }
                 }
-            && isPortAvailable(host, resolvedService.port)
         ) {
             serviceName = resolvedService.serviceName
             observer(host to resolvedService.port)
         }
-    }
-
-    private fun isPortAvailable(host: String, port: Int) = try {
-        ServerSocket().use {
-            it.bind(InetSocketAddress(host, port), 1)
-            false
-        }
-    } catch (e: IOException) {
-        true
     }
 
     internal class DiscoveryListener(private val adbMdns: AdbMdns) : NsdManager.DiscoveryListener {

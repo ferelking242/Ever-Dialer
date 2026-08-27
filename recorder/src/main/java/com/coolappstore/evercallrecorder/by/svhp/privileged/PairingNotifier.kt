@@ -2,17 +2,26 @@
  * Monitors mDNS for the Android wireless-debugging pairing service and shows
  * a persistent notification prompting the user to pair — mirroring the real
  * Shizuku manager behaviour.
+ *
+ * IMPORTANT: The notification is shown AFTER the user opens Developer Options
+ * and taps "Wireless debugging → Pair with pairing code". At that point the
+ * system starts broadcasting _adb-tls-pairing._tcp via mDNS, which triggers
+ * this notifier. The user sees both the Android system dialog (with the 6-digit
+ * code) AND our notification (which opens PairingActivity for code entry).
  */
 package com.coolappstore.evercallrecorder.by.svhp.privileged
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import moe.shizuku.manager.adb.AdbMdns
 
 object PairingNotifier {
@@ -75,10 +84,19 @@ object PairingNotifier {
     private fun showPairingNotification(context: Context) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        // Android 13+ requires POST_NOTIFICATIONS — silently skip if not granted.
+        // Android 13+ requires POST_NOTIFICATIONS — check runtime permission.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (nm.getNotificationChannel(CHANNEL_ID) == null) return
+            if (ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                Log.w(TAG, "POST_NOTIFICATIONS not granted — cannot show pairing notification")
+                return
+            }
         }
+
+        // Make sure the channel exists.
+        ensureChannel(context)
 
         val intent = Intent(context, PairingActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
