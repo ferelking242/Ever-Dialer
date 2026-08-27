@@ -68,6 +68,12 @@
             <intent-filter tools:node="removeAll" />
         </activity>
 
+        <!-- Embedded Shizuku pairing screen (wireless-debugging pairing) -->
+        <activity
+            android:name="com.coolappstore.evercallrecorder.by.svhp.privileged.PairingActivity"
+            android:exported="false"
+            android:theme="@style/Theme.RivoPhone" />
+
     </application>
 
 </manifest>

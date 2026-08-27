@@ -88,7 +88,14 @@ class MainActivity : FragmentActivity() {
 @Composable
 private fun EverEmetteurApp() {
     var showSettings by remember { mutableStateOf(false) }
+    var showSyncPage by remember { mutableStateOf(false) }
     var openPlayback by remember { mutableStateOf<RecordingItem?>(null) }
+
+    // When P2P sync page is open, show it full-screen (NOT inside a LazyColumn)
+    if (showSyncPage) {
+        P2pSyncPage(onBack = { showSyncPage = false })
+        return
+    }
 
     AnimatedContent(
         targetState = showSettings,
@@ -101,7 +108,7 @@ private fun EverEmetteurApp() {
             SettingsScreen(
                 viewModel = settingsViewModel,
                 onBack = { showSettings = false },
-                extraContent = { P2PSection() }
+                extraContent = { P2PSection(onOpenSync = { showSyncPage = true }) }
             )
         } else {
             if (openPlayback != null) {
@@ -182,15 +189,9 @@ private fun EmitterRecordingsPage(
 // ─── P2P Section (injected into real SettingsScreen) ───────────────────────
 
 @Composable
-private fun P2PSection() {
+private fun P2PSection(onOpenSync: () -> Unit = {}) {
     val context = LocalContext.current
     val state by SyncManager.state.collectAsState()
-    var showSyncPage by remember { mutableStateOf(false) }
-
-    if (showSyncPage) {
-        P2pSyncPage(onBack = { showSyncPage = false })
-        return
-    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Spacer(Modifier.height(8.dp))
@@ -228,7 +229,7 @@ private fun P2PSection() {
                 )
                 Spacer(Modifier.height(8.dp))
                 OutlinedButton(
-                    onClick = { showSyncPage = true },
+                    onClick = onOpenSync,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Outlined.ChevronRight, null, Modifier.size(18.dp))
