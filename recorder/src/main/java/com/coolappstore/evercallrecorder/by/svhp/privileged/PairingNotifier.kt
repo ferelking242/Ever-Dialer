@@ -114,6 +114,18 @@ object PairingNotifier {
         startMdnsWatcher(appContext)
     }
 
+    /**
+     * Start monitoring for wireless-debugging pairing availability via mDNS.
+     * Called at app startup from RivoApp. Shows Phase 2 notification when
+     * a `_adb-tls-pairing._tcp` service is found.
+     */
+    fun startWatching(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val appContext = context.applicationContext
+        ensureChannel(appContext)
+        startMdnsWatcher(appContext)
+    }
+
     /** Stop monitoring and dismiss any visible notification. */
     fun stopWatching(context: Context) {
         runCatching { mdnsWatcher?.stop() }
