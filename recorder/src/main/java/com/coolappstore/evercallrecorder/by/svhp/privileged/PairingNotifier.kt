@@ -144,7 +144,7 @@ object PairingNotifier {
 
         // Open PairingActivity with auto-filled port (like Shizuku's AdbPairDialogFragment)
         val pairingIntent = Intent(appCtx, PairingActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or FLAG_ACTIVITY_CLEAR_TOP)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(EXTRA_PAIRING_PORT, detectedPort)
             putExtra(EXTRA_PAIRING_HOST, detectedHost)
         }
