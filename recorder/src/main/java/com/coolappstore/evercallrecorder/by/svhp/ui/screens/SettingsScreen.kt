@@ -827,16 +827,20 @@ private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, act
     val shizukuStartOnRecord = remember(updateTrigger) { preferences.isShizukuStartOnRecordEnabled() }
     val shizukuKeepAlive     = remember(updateTrigger) { preferences.isShizukuKeepAliveEnabled() }
     SettingsSection(title = stringResource(R.string.settings_section_security), icon = Icons.Outlined.Shield) {
-        // Pairing entry point — opens the embedded Shizuku pairing screen
+        // Pairing entry point — opens Developer Settings directly (like real Shizuku)
         SectionListItem(
             icon = Icons.Outlined.Link,
             headline = stringResource(R.string.settings_shizuku_auto_manage),
             supporting = stringResource(R.string.settings_shizuku_auto_manage_desc),
             onClick = {
                 runCatching {
-                    val intent = android.content.Intent(context, com.coolappstore.evercallrecorder.by.svhp.privileged.PairingActivity::class.java)
-                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
                     context.startActivity(intent)
+                }.onFailure {
+                    runCatching {
+                        val intent = android.content.Intent(android.provider.Settings.ACTION_SETTINGS)
+                        context.startActivity(intent)
+                    }
                 }
             }
         )
