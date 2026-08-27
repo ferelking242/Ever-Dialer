@@ -72,7 +72,8 @@
         <activity
             android:name="com.coolappstore.evercallrecorder.by.svhp.privileged.PairingActivity"
             android:exported="false"
-            android:theme="@style/Theme.RivoPhone" />
+            android:theme="@style/Theme.RivoPhone"
+            tools:replace="android:theme" />
 
     </application>
 
