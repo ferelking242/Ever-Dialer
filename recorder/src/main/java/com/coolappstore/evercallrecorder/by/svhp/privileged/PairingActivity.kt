@@ -104,8 +104,7 @@ class PairingActivity : ComponentActivity() {
 
         setContent { MaterialTheme { PairingScreen() } }
     }
-
-
+}
 
 @Composable
 private fun PairingScreen() {
