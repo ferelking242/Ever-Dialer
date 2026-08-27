@@ -73,6 +73,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 
+private const val TAG = "PairingActivity"
+
 class PairingActivity : ComponentActivity() {
 
     private val requestNotifPerm = registerForActivityResult(
@@ -103,10 +105,7 @@ class PairingActivity : ComponentActivity() {
         setContent { MaterialTheme { PairingScreen() } }
     }
 
-    companion object {
-        private const val TAG = "PairingActivity"
-    }
-}
+
 
 @Composable
 private fun PairingScreen() {
