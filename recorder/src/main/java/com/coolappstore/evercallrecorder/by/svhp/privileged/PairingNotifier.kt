@@ -1,17 +1,20 @@
 /* Ever Dialer+ — privileged runtime notification manager.
  *
- * Three-phase notification flow mirroring the real Shizuku manager:
+ * Three-phase notification flow matching the real Shizuku manager:
  *
  *   Phase 1 — user taps "Gérer le pairing" → opens Dev Settings AND shows
- *   an immediate ongoing notification "Recherche du service d'association…".
+ *   an ongoing notification "Recherche du service d'association…".
  *
  *   Phase 2 — mDNS discovers `_adb-tls-pairing._tcp` → notification is
  *   REPLACED with "Service d'association trouvé" + action button
- *   "Entrer le code d'association" that expands to a RemoteInput text field
- *   where the user types the 6-digit pairing code and taps "Envoyer".
+ *   "Entrer le code d'association" that opens PairingActivity
+ *   (matching Shizuku's AdbPairDialogFragment: port auto-filled + code input).
  *
  *   Phase 3 — after successful pairing, notification is replaced with
  *   "✔ Appairé — démarrage du moteur…" and auto-dismissed.
+ *
+ * Like real Shizuku, the notification opens a Dialog/Activity for code entry,
+ * NOT a RemoteInput (which doesn't work reliably on all devices).
  */
 package com.coolappstore.evercallrecorder.by.svhp.privileged
 
@@ -26,7 +29,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
 import moe.shizuku.manager.adb.AdbMdns
 
@@ -43,7 +45,6 @@ object PairingNotifier {
     private var mdnsWatcher: AdbMdns? = null
     private var isWatching = false
 
-    /** Stored when mDNS detects the port, so the BroadcastReceiver can use it. */
     @Volatile var detectedPort: Int = 0
         private set
     @Volatile var detectedHost: String = "127.0.0.1"
@@ -51,24 +52,17 @@ object PairingNotifier {
 
     // ── Public API ──────────────────────────────────────────────────────
 
-    /**
-     * Phase 1 — called when user taps "Gérer le pairing" in Settings.
-     * Shows an IMMEDIATE notification "Recherche du service d'association…"
-     * AND starts the mDNS watcher for Phase 2.
-     */
     fun showWaitingNotification(context: Context) {
         val appCtx = context.applicationContext
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
 
         if (!ensureNotificationPermission(appCtx)) {
-            Log.w(TAG, "POST_NOTIFICATIONS not granted — starting mDNS only")
             startMdnsWatcher(appCtx)
             return
         }
 
         ensureChannel(appCtx)
 
-        // Phase 1: ongoing "searching" notification
         val devSettingsIntent = Intent(
             android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS
         ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -142,53 +136,43 @@ object PairingNotifier {
         }
     }
 
-    // ── Phase 2: notification with RemoteInput ───────────────────────────
+    // ── Phase 2: notification opens PairingActivity ──────────────────────
 
     private fun showPhase2(appCtx: Context) {
         if (!ensureNotificationPermission(appCtx)) return
         ensureChannel(appCtx)
 
-        // PendingIntent for the reply BroadcastReceiver — MUST be MUTABLE for RemoteInput
-        val replyIntent = Intent(appCtx, PairingReplyReceiver::class.java).apply {
+        // Open PairingActivity with auto-filled port (like Shizuku's AdbPairDialogFragment)
+        val pairingIntent = Intent(appCtx, PairingActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or FLAG_ACTIVITY_CLEAR_TOP)
             putExtra(EXTRA_PAIRING_PORT, detectedPort)
             putExtra(EXTRA_PAIRING_HOST, detectedHost)
         }
-        val replyPending = PendingIntent.getBroadcast(
-            appCtx, 2, replyIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        val pairingPending = PendingIntent.getActivity(
+            appCtx, 1, pairingIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-
-        // RemoteInput: inline text field shown when user taps the action button
-        val remoteInput = RemoteInput.Builder(PairingReplyReceiver.KEY_PAIRING_CODE)
-            .setLabel("Code d'association")
-            .setAllowFreeFormInput(false)
-            .build()
-
-        // Action button: "Entrer le code d'association"
-        val enterCodeAction = NotificationCompat.Action.Builder(
-            android.R.drawable.ic_menu_send,
-            "Entrer le code d'association",
-            replyPending
-        ).apply {
-            addRemoteInput(remoteInput)
-        }.build()
 
         val n = NotificationCompat.Builder(appCtx, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle("Service d'association trouvé")
-            .setContentText("Port : $detectedPort")
+            .setContentText("Port : $detectedPort — Appuie pour entrer le code")
             .setStyle(NotificationCompat.BigTextStyle().bigText(
                 "Service de pairing détecté sur le port $detectedPort. " +
-                    "Tape « Entrer le code d'association » puis entre le code à 6 chiffres."
+                    "Appuie ci-dessous pour ouvrir l'écran de pairing et entrer le code à 6 chiffres."
             ))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            // NOT ongoing — so action buttons are visible and user can interact
             .setOngoing(false)
-            .setAutoCancel(false)
-            .addAction(enterCodeAction)
+            .setAutoCancel(true)
+            .setContentIntent(pairingPending)
+            .addAction(
+                android.R.drawable.ic_menu_send,
+                "Entrer le code d'association",
+                pairingPending
+            )
             .build()
 
-        post(appCtx, n, "Phase 2: code input")
+        post(appCtx, n, "Phase 2: opens PairingActivity")
     }
 
     // ── Phase 3: success ────────────────────────────────────────────────
@@ -251,58 +235,5 @@ object PairingNotifier {
                 vibrationPattern = longArrayOf(0, 200, 100, 200)
             }
         )
-    }
-}
-
-/**
- * BroadcastReceiver that handles the RemoteInput reply from the Phase 2 notification.
- * The user types the 6-digit code inline in the notification and taps "Envoyer".
- */
-class PairingReplyReceiver : BroadcastReceiver() {
-
-    companion object {
-        const val KEY_PAIRING_CODE = "pairing_code"
-        private const val TAG = "PairingReplyReceiver"
-    }
-
-    override fun onReceive(context: Context, intent: Intent) {
-        val port = intent.getIntExtra(PairingNotifier.EXTRA_PAIRING_PORT, 0)
-        val host = intent.getStringExtra(PairingNotifier.EXTRA_PAIRING_HOST) ?: "127.0.0.1"
-        val code = RemoteInput.getResultsFromIntent(intent)
-            ?.getCharSequence(KEY_PAIRING_CODE)?.toString()
-
-        if (code.isNullOrBlank() || code.length != 6) {
-            Log.w(TAG, "Invalid pairing code from notification: '$code'")
-            return
-        }
-        if (port <= 0) {
-            Log.w(TAG, "No pairing port available")
-            return
-        }
-
-        Log.i(TAG, "Pairing code received from notification — port=$port")
-
-        // goAsync() gives ~30s to complete the SPAKE2p handshake
-        val pendingResult = goAsync()
-        Thread {
-            try {
-                val result = kotlinx.coroutines.runBlocking {
-                    PrivilegedRuntime.pairWithCode(context, host, port, code)
-                }
-                if (result.isSuccess) {
-                    Log.i(TAG, "Pairing succeeded from notification!")
-                    PairingNotifier.onPairingSucceeded(context)
-                } else {
-                    Log.e(TAG, "Pairing failed: ${result.exceptionOrNull()?.message}")
-                    PairingNotifier.onPairingFailed(
-                        context, result.exceptionOrNull()?.message ?: "Erreur"
-                    )
-                }
-            } catch (e: Throwable) {
-                Log.e(TAG, "Pairing error: ${e.message}", e)
-            } finally {
-                pendingResult.finish()
-            }
-        }.start()
     }
 }

@@ -109,22 +109,32 @@ class PairingActivity : ComponentActivity() {
 @Composable
 private fun PairingScreen() {
     val context = LocalContext.current
+    val activity = context as? ComponentActivity
     val scope = rememberCoroutineScope()
     val runtimeState by PrivilegedRuntime.state.collectAsState()
 
-    var pairingPort by remember { mutableStateOf("") }
+    // Read port/host from intent extras (passed by notification)
+    val intentPort = activity?.intent?.getIntExtra(PairingNotifier.EXTRA_PAIRING_PORT, 0) ?: 0
+    val intentHost = activity?.intent?.getStringExtra(PairingNotifier.EXTRA_PAIRING_HOST) ?: "127.0.0.1"
+
+    var pairingPort by remember { mutableStateOf(if (intentPort > 0) intentPort.toString() else "") }
     var pairingCode by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
-    var portDetected by remember { mutableStateOf(false) }
+    var portDetected by remember { mutableStateOf(intentPort > 0) }
 
-    // Auto-detect pairing port via mDNS
+    // Auto-detect pairing port via mDNS (if not already provided by intent)
     DisposableEffect(Unit) {
-        Log.d(TAG, "Starting mDNS watcher for pairing port")
-        val mdns = PrivilegedRuntime.observePairingPort(context) { port ->
-            Log.d(TAG, "mDNS detected port: $port")
-            pairingPort = port.toString()
-            portDetected = true
+        var mdns: moe.shizuku.manager.adb.AdbMdns? = null
+        if (intentPort <= 0) {
+            Log.d(TAG, "Starting mDNS watcher for pairing port")
+            mdns = PrivilegedRuntime.observePairingPort(context) { port ->
+                Log.d(TAG, "mDNS detected port: $port")
+                pairingPort = port.toString()
+                portDetected = true
+            }
+        } else {
+            Log.d(TAG, "Port from intent: $intentPort")
         }
         onDispose { mdns?.stop() }
     }
