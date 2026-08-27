@@ -1,15 +1,17 @@
-/* Ever Dialer+ — privileged runtime (Phase 2).
- * Two-phase notification mirroring the real Shizuku manager:
+/* Ever Dialer+ — privileged runtime notification manager.
+ *
+ * Three-phase notification flow mirroring the real Shizuku manager:
  *
  *   Phase 1 — user taps "Gérer le pairing" → opens Dev Settings AND shows
- *   an immediate notification "En attente du débogage sans fil…".
+ *   an immediate ongoing notification "En attente du débogage sans fil…".
  *
  *   Phase 2 — mDNS discovers `_adb-tls-pairing._tcp` → notification is
- *   updated to "Débogage sans fil détecté" and opens PairingActivity.
+ *   REPLACED with "Débogage sans fil disponible" + an inline text input
+ *   (RemoteInput) where the user types the 6-digit pairing code and taps
+ *   "Envoyer". No Activity needed — everything happens in the notification.
  *
- *   Phase 3 — after successful pairing, notification is dismissed.
- *
- * Notifications are supplementary — the PairingActivity works without them.
+ *   Phase 3 — after successful pairing, notification is replaced with
+ *   "✔ Appairé — démarrage du moteur…" and auto-dismissed.
  */
 package com.coolappstore.evercallrecorder.by.svhp.privileged
 
@@ -17,12 +19,14 @@ import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
 import moe.shizuku.manager.adb.AdbMdns
 
@@ -33,9 +37,20 @@ object PairingNotifier {
     private const val NOTIFICATION_ID = 0x5E1A
     private const val CHANNEL_NAME = "Privilèges système"
     private const val CHANNEL_DESC = "Notifications pour le pairing du moteur privilégié"
+    const val EXTRA_PAIRING_PORT = "pairing_port"
+    const val EXTRA_PAIRING_HOST = "pairing_host"
 
     private var mdnsWatcher: AdbMdns? = null
     private var isWatching = false
+
+    /** Stored when mDNS detects the port, so the BroadcastReceiver can use it. */
+    @Volatile
+    var detectedPort: Int = 0
+        private set
+
+    @Volatile
+    var detectedHost: String = "127.0.0.1"
+        private set
 
     // ── Public API ──────────────────────────────────────────────────────
 
@@ -43,9 +58,6 @@ object PairingNotifier {
      * Phase 1 — called when user taps "Gérer le pairing" in Settings.
      * Shows an IMMEDIATE notification "En attente du débogage sans fil…"
      * AND starts the mDNS watcher for Phase 2.
-     *
-     * This method does NOT check isPaired() — it always tries to show
-     * the notification. The PairingActivity handles the paired state.
      */
     fun showWaitingNotification(context: Context) {
         val appContext = context.applicationContext
@@ -61,7 +73,6 @@ object PairingNotifier {
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
                 Log.w(TAG, "POST_NOTIFICATIONS not granted at runtime — notification won't show")
-                // Still start mDNS watcher — PairingActivity will handle it
                 startMdnsWatcher(appContext)
                 return
             }
@@ -69,32 +80,37 @@ object PairingNotifier {
 
         ensureChannel(appContext)
 
-        // Show immediate "waiting" notification
-        showNotification(
-            appContext,
-            title = "En attente du débogage sans fil…",
-            text = "Active le débogage sans fil puis tape « Associer avec un code »",
-            bigText = "Ouvre les Options Développeur → Débogage sans fil → Associer avec un code. " +
-                "Quand le code à 6 chiffres apparaîtra, cette notification s'activera pour te laisser entrer le code.",
-            priority = NotificationCompat.PRIORITY_DEFAULT,
-            ongoing = true
+        // Phase 1: immediate "waiting" notification
+        val devSettingsIntent = Intent(
+            android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS
+        ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val pendingDevSettings = PendingIntent.getActivity(
+            appContext, 0, devSettingsIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("En attente du débogage sans fil…")
+            .setContentText("Active le débogage sans fil puis tape « Associer avec un code »")
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    "Ouvre les Options Développeur → Débogage sans fil → Associer avec un code. " +
+                        "Quand le service de pairing sera disponible, cette notification se mettra à jour " +
+                        "pour te laisser entrer le code directement."
+                )
+            )
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(false)
+            .setOngoing(true)
+            .setContentIntent(pendingDevSettings)
+            .build()
+
+        postNotification(appContext, notification, "Phase 1: waiting")
+
         Log.d(TAG, "Phase 1 notification shown — starting mDNS watcher")
-
-        // Start mDNS watcher for Phase 2
-        startMdnsWatcher(appContext)
-    }
-
-    /**
-     * Start monitoring for wireless-debugging pairing availability via mDNS.
-     * When a `_adb-tls-pairing._tcp` service is found, the notification is
-     * updated (Phase 2). Safe to call multiple times.
-     */
-    fun startWatching(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-        val appContext = context.applicationContext
-        ensureChannel(appContext)
         startMdnsWatcher(appContext)
     }
 
@@ -106,14 +122,23 @@ object PairingNotifier {
         cancelNotification(context.applicationContext)
     }
 
-    /** Call after successful pairing to dismiss the notification. */
+    /** Call after successful pairing to show success then dismiss. */
     fun onPairingSucceeded(context: Context) {
-        Log.d(TAG, "Pairing succeeded — dismissing notification")
-        cancelNotification(context.applicationContext)
+        Log.d(TAG, "Pairing succeeded — showing Phase 3 notification")
+        showPhase3Notification(context.applicationContext)
         stopWatching(context)
     }
 
-    // ── Internal ────────────────────────────────────────────────────────
+    /** Call on pairing failure — shows error toast via notification. */
+    fun onPairingFailed(context: Context, error: String) {
+        Log.w(TAG, "Pairing failed: $error")
+        // Re-show Phase 2 so user can try again
+        if (detectedPort > 0) {
+            showPhase2Notification(context.applicationContext)
+        }
+    }
+
+    // ── Phase 2: mDNS watcher ───────────────────────────────────────────
 
     private fun startMdnsWatcher(appContext: Context) {
         if (isWatching) {
@@ -128,18 +153,10 @@ object PairingNotifier {
             mdnsWatcher = AdbMdns(appContext, AdbMdns.TLS_PAIRING) { (host, port) ->
                 Log.d(TAG, "mDNS service resolved: host=$host port=$port")
                 if (port > 0) {
-                    // Phase 2: update notification to "pairing detected"
-                    Log.i(TAG, "Pairing service detected on $host:$port — updating notification")
-                    showNotification(
-                        appContext,
-                        title = "Débogage sans fil détecté !",
-                        text = "Appuie ici pour entrer le code à 6 chiffres",
-                        bigText = "Débogage sans fil disponible sur le port $port. " +
-                            "Appuie sur cette notification pour ouvrir l'écran de pairing et saisir le code à 6 chiffres.",
-                        priority = NotificationCompat.PRIORITY_HIGH,
-                        ongoing = false,
-                        openPairingScreen = true
-                    )
+                    detectedHost = host.ifBlank { "127.0.0.1" }
+                    detectedPort = port
+                    Log.i(TAG, "Pairing service detected — showing Phase 2 notification")
+                    showPhase2Notification(appContext)
                 }
             }.also {
                 val started = runCatching { it.start() }.isSuccess
@@ -151,62 +168,103 @@ object PairingNotifier {
         }
     }
 
-    // ── Notification helpers ────────────────────────────────────────────
+    // ── Phase 2: notification with inline code input ────────────────────
 
-    private fun showNotification(
-        context: Context,
-        title: String,
-        text: String,
-        bigText: String,
-        priority: Int,
-        ongoing: Boolean,
-        openPairingScreen: Boolean = false
-    ) {
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        // Android 13+ requires runtime POST_NOTIFICATIONS permission
+    private fun showPhase2Notification(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(
                     context, Manifest.permission.POST_NOTIFICATIONS
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
-                Log.w(TAG, "POST_NOTIFICATIONS not granted — cannot show notification: $title")
+                Log.w(TAG, "POST_NOTIFICATIONS not granted — cannot show Phase 2")
                 return
             }
         }
 
         ensureChannel(context)
 
-        val intent = if (openPairingScreen) {
-            Intent(context, PairingActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            }
-        } else {
-            // "Waiting" notification: open Dev Settings so user can enable wireless debugging
-            Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
+        // PendingIntent for the reply BroadcastReceiver (MUTABLE for RemoteInput)
+        val replyIntent = Intent(context, PairingReplyReceiver::class.java).apply {
+            putExtra(EXTRA_PAIRING_PORT, detectedPort)
+            putExtra(EXTRA_PAIRING_HOST, detectedHost)
         }
-
-        val pending = PendingIntent.getActivity(
-            context, if (openPairingScreen) 1 else 0, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val replyPending = PendingIntent.getBroadcast(
+            context, 2, replyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
         )
+
+        // RemoteInput: inline text field in the notification
+        val remoteInput = RemoteInput.Builder(PairingReplyReceiver.KEY_PAIRING_CODE)
+            .setLabel("Code à 6 chiffres")
+            .setAllowFreeFormInput(false)
+            .build()
+
+        val replyAction = NotificationCompat.Action.Builder(
+            android.R.drawable.stat_sys_send,
+            "Envoyer",
+            replyPending
+        )
+            .addRemoteInput(remoteInput)
+            .setAllowGeneratedReplies(false)
+            .build()
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(bigText))
-            .setPriority(priority)
-            .setAutoCancel(!ongoing)
-            .setOngoing(ongoing)
-            .setContentIntent(pending)
+            .setContentTitle("Débogage sans fil disponible !")
+            .setContentText("Entre le code à 6 chiffres puis tape « Envoyer »")
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    "Service de pairing détecté sur le port $detectedPort. " +
+                        "Entre le code à 6 chiffres affiché par Android puis tape « Envoyer »."
+                )
+            )
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(false)
+            .setOngoing(true)
+            .addAction(replyAction)
             .build()
 
+        postNotification(context, notification, "Phase 2: inline code input")
+    }
+
+    // ── Phase 3: pairing success notification ───────────────────────────
+
+    private fun showPhase3Notification(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    context, Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) return
+        }
+
+        ensureChannel(context)
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("✔ Appairé et actif")
+            .setContentText("Le moteur privilégié démarre…")
+            .setStyle(
+                NotificationCompat.BigTextStyle().bigText(
+                    "Appairage réussi ! Le moteur privilégié démarre automatiquement. " +
+                        "L'enregistrement des appels est prêt."
+                )
+            )
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setOngoing(false)
+            .setTimeoutAfter(10_000L) // auto-dismiss after 10s
+            .build()
+
+        postNotification(context, notification, "Phase 3: paired + starting")
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────
+
+    private fun postNotification(context: Context, notification: android.app.Notification, label: String) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         try {
             nm.notify(NOTIFICATION_ID, notification)
-            Log.d(TAG, "Notification posted: $title (id=$NOTIFICATION_ID)")
+            Log.d(TAG, "Notification posted: $label (id=$NOTIFICATION_ID)")
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException posting notification: ${e.message}")
         } catch (e: Exception) {
@@ -238,5 +296,60 @@ object PairingNotifier {
         }
         nm.createNotificationChannel(channel)
         Log.d(TAG, "Notification channel created: $CHANNEL_ID")
+    }
+}
+
+/**
+ * BroadcastReceiver that handles the inline reply from the Phase 2 notification.
+ * The user types the 6-digit code directly in the notification and taps "Envoyer".
+ */
+class PairingReplyReceiver : BroadcastReceiver() {
+
+    companion object {
+        const val KEY_PAIRING_CODE = "pairing_code"
+        private const val TAG = "PairingReplyReceiver"
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        val port = intent.getIntExtra(PairingNotifier.EXTRA_PAIRING_PORT, 0)
+        val host = intent.getStringExtra(PairingNotifier.EXTRA_PAIRING_HOST) ?: "127.0.0.1"
+
+        val code = extractCode(intent)
+        if (code.isNullOrBlank() || code.length != 6) {
+            Log.w(TAG, "Invalid or missing pairing code from notification reply")
+            return
+        }
+        if (port <= 0) {
+            Log.w(TAG, "No pairing port available — mDNS may not have detected the service yet")
+            return
+        }
+
+        Log.i(TAG, "Received pairing code from notification reply — port=$port code=***")
+
+        // goAsync() gives us ~30s to complete the SPAKE2p handshake
+        val pendingResult = goAsync()
+
+        Thread {
+            try {
+                val result = PrivilegedRuntime.pairWithCode(context, host, port, code)
+                if (result.isSuccess) {
+                    Log.i(TAG, "Pairing succeeded from notification reply!")
+                    PairingNotifier.onPairingSucceeded(context)
+                } else {
+                    val err = result.exceptionOrNull()
+                    Log.e(TAG, "Pairing failed from notification reply: ${err?.message}")
+                    PairingNotifier.onPairingFailed(context, err?.message ?: "Erreur inconnue")
+                }
+            } catch (e: Throwable) {
+                Log.e(TAG, "Unexpected error during pairing: ${e.message}", e)
+            } finally {
+                pendingResult.finish()
+            }
+        }.start()
+    }
+
+    private fun extractCode(intent: Intent): String? {
+        val results = RemoteInput.getResultsFromIntent(intent)
+        return results?.getCharSequence(KEY_PAIRING_CODE)?.toString()
     }
 }

@@ -198,6 +198,11 @@
         </service>
 
         <receiver
+            android:name=".privileged.PairingReplyReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <receiver
             android:name=".privileged.PrivilegedBroadcastReceiver"
             android:enabled="true"
             android:exported="true">
