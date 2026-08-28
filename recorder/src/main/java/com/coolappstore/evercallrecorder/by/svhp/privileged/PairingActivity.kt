@@ -198,7 +198,8 @@ private fun PairingScreen() {
                             PairingNotifier.onPairingSucceeded(context)
                         }.onFailure { e ->
                             Log.e(TAG, "Pairing failed", e)
-                            errorMsg = friendlyErrorMessage(e)
+                            val root = e.cause ?: e
+                            errorMsg = friendlyErrorMessage(e) + "\n(${root.javaClass.simpleName}: ${root.message?.take(60) ?: "?"})"
                             busy = false
                         }
                     }

@@ -256,9 +256,19 @@ class AdbKey(private val adbKeyStore: AdbKeyStore, name: String) {
 
     @delegate:RequiresApi(Build.VERSION_CODES.R)
     val sslContext: SSLContext by lazy {
-        val sslContext = SSLContext.getInstance("TLSv1.3")
-        sslContext.init(arrayOf(keyManager), arrayOf(trustManager), SecureRandom())
-        sslContext
+        val ctx = try {
+            Log.d(TAG, "Creating SSLContext with TLSv1.3")
+            val c = SSLContext.getInstance("TLSv1.3")
+            c.init(arrayOf(keyManager), arrayOf(trustManager), SecureRandom())
+            c
+        } catch (e: Throwable) {
+            Log.w(TAG, "TLSv1.3 not available, falling back to TLSv1.2: ${e.message}")
+            val c = SSLContext.getInstance("TLSv1.2")
+            c.init(arrayOf(keyManager), arrayOf(trustManager), SecureRandom())
+            c
+        }
+        Log.d(TAG, "SSLContext ready: ${ctx.protocol}")
+        ctx
     }
 }
 

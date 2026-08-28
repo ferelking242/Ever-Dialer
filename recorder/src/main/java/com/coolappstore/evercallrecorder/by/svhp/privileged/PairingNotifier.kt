@@ -103,6 +103,11 @@ object PairingNotifier {
         cancel(context.applicationContext)
     }
 
+    fun onPairingStarted(context: Context) {
+        Log.i(TAG, "Pairing started — showing progress notification")
+        showProgressNotification(context.applicationContext)
+    }
+
     fun onPairingSucceeded(context: Context) {
         Log.i(TAG, "Pairing succeeded — showing Phase 3")
         showPhase3(context.applicationContext)
@@ -111,6 +116,7 @@ object PairingNotifier {
 
     fun onPairingFailed(context: Context, error: String) {
         Log.w(TAG, "Pairing failed: $error")
+        showFailedNotification(context.applicationContext, error)
         if (detectedPort > 0) showPhase2(context.applicationContext)
     }
 
@@ -203,6 +209,48 @@ object PairingNotifier {
         post(appCtx, n, "Phase 3: paired")
     }
 
+    // ── Progress notification (shown while SPAKE2+ handshake runs) ────
+
+    private fun showProgressNotification(appCtx: Context) {
+        if (!ensureNotificationPermission(appCtx)) return
+        ensureChannel(appCtx)
+
+        val n = NotificationCompat.Builder(appCtx, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("Pairing en cours…")
+            .setContentText("Handshake SPAKE2+ en cours")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(
+                "Connexion au port de pairing en cours. " +
+                    "Le handshake SPAKE2+ ne prend que quelques secondes…"
+            ))
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+
+        post(appCtx, n, "Progress: SPAKE2+ handshake")
+    }
+
+    private fun showFailedNotification(appCtx: Context, error: String) {
+        if (!ensureNotificationPermission(appCtx)) return
+        ensureChannel(appCtx)
+
+        val n = NotificationCompat.Builder(appCtx, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("Échec du pairing")
+            .setContentText(error)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(
+                "Le pairing a échoué : $error\n\n" +
+                    "Vérifie que le débogage sans fil est actif, " +
+                    "puis réessaie."
+            ))
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setTimeoutAfter(15_000L)
+            .build()
+
+        post(appCtx, n, "Failed: $error")
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private fun ensureNotificationPermission(appCtx: Context): Boolean {
@@ -274,11 +322,13 @@ class PairingReplyReceiver : BroadcastReceiver() {
 
         Log.i(TAG, "Pairing code received: host=$host port=$port")
 
+        // Show "Pairing en cours…" notification immediately
+        PairingNotifier.onPairingStarted(context)
+
         // goAsync() gives up to ~30s but we cap at 20s ourselves
         val pendingResult = goAsync()
         Thread {
             try {
-                // Use withTimeoutOrNull to prevent indefinite hangs
                 val result = kotlinx.coroutines.runBlocking {
                     kotlinx.coroutines.withTimeoutOrNull(PAIRING_TIMEOUT_MS) {
                         PrivilegedRuntime.pairWithCode(context, host, port, code)
@@ -291,8 +341,13 @@ class PairingReplyReceiver : BroadcastReceiver() {
                     Log.i(TAG, "Pairing succeeded!")
                     PairingNotifier.onPairingSucceeded(context)
                 } else {
-                    val errorMsg = result.exceptionOrNull()?.message ?: "Erreur inconnue"
-                    Log.e(TAG, "Pairing failed: $errorMsg")
+                    // Get the FULL error message including root cause
+                    val throwable = result.exceptionOrNull()
+                    val errorMsg = throwable?.let {
+                        val root = it.cause ?: it
+                        "${it.message ?: "Erreur"} (${root.javaClass.simpleName})"
+                    } ?: "Erreur inconnue"
+                    Log.e(TAG, "Pairing failed: $errorMsg", throwable)
                     PairingNotifier.onPairingFailed(context, errorMsg)
                 }
             } catch (e: Throwable) {
