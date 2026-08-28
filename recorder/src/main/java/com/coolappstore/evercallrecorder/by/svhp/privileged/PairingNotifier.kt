@@ -152,9 +152,10 @@ object PairingNotifier {
         )
 
         // RemoteInput: inline text field in the notification
+        // NOTE: do NOT call setAllowFreeFormInput(false) — the default is true
+        // and false with no choices hides the input field entirely.
         val remoteInput = RemoteInput.Builder(PairingReplyReceiver.KEY_PAIRING_CODE)
             .setLabel("Code d'association")
-            .setAllowFreeFormInput(false)
             .build()
 
         // Action with RemoteInput attached
