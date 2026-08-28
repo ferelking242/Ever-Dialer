@@ -54,12 +54,13 @@ object PairingNotifier {
         val appCtx = context.applicationContext
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
 
+        ensureChannel(appCtx)
+
         if (!ensureNotificationPermission(appCtx)) {
+            Log.w(TAG, "POST_NOTIFICATIONS not granted — starting mDNS watcher only")
             startMdnsWatcher(appCtx)
             return
         }
-
-        ensureChannel(appCtx)
 
         // Open Dev Settings on tap (Phase 1)
         val devSettingsIntent = Intent(
@@ -152,8 +153,6 @@ object PairingNotifier {
         )
 
         // RemoteInput: inline text field in the notification
-        // NOTE: do NOT call setAllowFreeFormInput(false) — the default is true
-        // and false with no choices hides the input field entirely.
         val remoteInput = RemoteInput.Builder(PairingReplyReceiver.KEY_PAIRING_CODE)
             .setLabel("Code d'association")
             .build()
@@ -174,7 +173,6 @@ object PairingNotifier {
                     "Tape « Code d'association » puis entre le code à 6 chiffres et envoie."
             ))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            // NOT ongoing — action buttons must be visible for RemoteInput
             .setOngoing(false)
             .setAutoCancel(false)
             .addAction(action)
@@ -249,13 +247,14 @@ object PairingNotifier {
 /**
  * BroadcastReceiver that handles the RemoteInput reply from Phase 2 notification.
  * The user types the 6-digit code inline in the notification and taps "Envoyer".
- * NO Activity opens — everything happens in the notification.
+ * Includes a 20-second timeout so the pairing attempt doesn't hang forever.
  */
 class PairingReplyReceiver : BroadcastReceiver() {
 
     companion object {
         const val KEY_PAIRING_CODE = "pairing_code"
         private const val TAG = "PairingReplyReceiver"
+        private const val PAIRING_TIMEOUT_MS = 20_000L // 20s max for SPAKE2+ handshake
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -265,34 +264,40 @@ class PairingReplyReceiver : BroadcastReceiver() {
             ?.getCharSequence(KEY_PAIRING_CODE)?.toString()
 
         if (code.isNullOrBlank() || code.length != 6) {
-            Log.w(TAG, "Invalid pairing code: '$code'")
+            Log.w(TAG, "Invalid pairing code: '${code?.take(3)}...'")
             return
         }
         if (port <= 0) {
-            Log.w(TAG, "No pairing port available")
+            Log.w(TAG, "No pairing port available (port=$port)")
             return
         }
 
-        Log.i(TAG, "Pairing code received: port=$port")
+        Log.i(TAG, "Pairing code received: host=$host port=$port")
 
-        // goAsync() gives ~30s to complete the SPAKE2p handshake
+        // goAsync() gives up to ~30s but we cap at 20s ourselves
         val pendingResult = goAsync()
         Thread {
             try {
+                // Use withTimeoutOrNull to prevent indefinite hangs
                 val result = kotlinx.coroutines.runBlocking {
-                    PrivilegedRuntime.pairWithCode(context, host, port, code)
+                    kotlinx.coroutines.withTimeoutOrNull(PAIRING_TIMEOUT_MS) {
+                        PrivilegedRuntime.pairWithCode(context, host, port, code)
+                    } ?: Result.failure(java.util.concurrent.TimeoutException(
+                        "Le pairing a pris trop de temps (>${PAIRING_TIMEOUT_MS / 1000}s). " +
+                            "Vérifie que le débogage sans fil est actif et réessaie."
+                    ))
                 }
                 if (result.isSuccess) {
                     Log.i(TAG, "Pairing succeeded!")
                     PairingNotifier.onPairingSucceeded(context)
                 } else {
-                    Log.e(TAG, "Pairing failed: ${result.exceptionOrNull()?.message}")
-                    PairingNotifier.onPairingFailed(
-                        context, result.exceptionOrNull()?.message ?: "Erreur"
-                    )
+                    val errorMsg = result.exceptionOrNull()?.message ?: "Erreur inconnue"
+                    Log.e(TAG, "Pairing failed: $errorMsg")
+                    PairingNotifier.onPairingFailed(context, errorMsg)
                 }
             } catch (e: Throwable) {
                 Log.e(TAG, "Pairing error: ${e.message}", e)
+                PairingNotifier.onPairingFailed(context, e.message ?: "Erreur fatale")
             } finally {
                 pendingResult.finish()
             }

@@ -14,6 +14,7 @@ import androidx.annotation.RequiresApi
 import java.io.Closeable
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -199,20 +200,31 @@ class AdbPairingClient(private val host: String, private val port: Int, private 
     }
 
     private fun setupTlsConnection() {
-        socket = Socket(host, port)
+        Log.d(TAG, "Connecting to $host:$port")
+        socket = Socket()
         socket.tcpNoDelay = true
+        socket.soTimeout = 15_000 // 15s read timeout to prevent hangs
+        socket.connect(java.net.InetSocketAddress(host, port), 10_000) // 10s connect timeout
+        Log.d(TAG, "TCP connected.")
 
         val sslContext = key.sslContext
 
         val sslSocket = sslContext.socketFactory.createSocket(socket, host, port, true) as SSLSocket
+        sslSocket.soTimeout = 15_000
         sslSocket.startHandshake()
-        Log.d(TAG, "Handshake succeeded.")
+        Log.d(TAG, "TLS handshake succeeded.")
 
         inputStream = DataInputStream(sslSocket.inputStream)
         outputStream = DataOutputStream(sslSocket.outputStream)
 
         val pairCodeBytes = pairCode.toByteArray()
-        val keyMaterial = ConscryptCompat.exportKeyingMaterial(sslSocket, kExportedKeyLabel, null, kExportedKeySize)
+        val keyMaterial = try {
+            ConscryptCompat.exportKeyingMaterial(sslSocket, kExportedKeyLabel, null, kExportedKeySize)
+        } catch (e: Throwable) {
+            Log.e(TAG, "exportKeyingMaterial failed: ${e.message}", e)
+            throw IllegalStateException("Keying material export failed — Conscrypt unavailable", e)
+        }
+        Log.d(TAG, "Exported ${keyMaterial.size} bytes of keying material.")
 
         val passwordBytes = ByteArray(pairCode.length + keyMaterial.size)
         pairCodeBytes.copyInto(passwordBytes)
@@ -245,17 +257,29 @@ class AdbPairingClient(private val host: String, private val port: Int, private 
     private fun doExchangeMsgs(): Boolean {
         val msg = pairingContext.msg
         val size = msg.size
+        Log.d(TAG, "doExchangeMsgs: sending our SPAKE2 message ($size bytes)")
 
         val ourHeader = createHeader(PairingPacketHeader.Type.SPAKE2_MSG, size)
         writeHeader(ourHeader, msg)
 
-        val theirHeader = readHeader() ?: return false
-        if (theirHeader.type != PairingPacketHeader.Type.SPAKE2_MSG.value) return false
+        val theirHeader = readHeader() ?: run {
+            Log.e(TAG, "doExchangeMsgs: failed to read server header")
+            return false
+        }
+        if (theirHeader.type != PairingPacketHeader.Type.SPAKE2_MSG.value) {
+            Log.e(TAG, "doExchangeMsgs: unexpected type ${theirHeader.type}")
+            return false
+        }
 
         val theirMessage = ByteArray(theirHeader.payload)
         inputStream.readFully(theirMessage)
+        Log.d(TAG, "doExchangeMsgs: received ${theirMessage.size} bytes")
 
-        if (!pairingContext.initCipher(theirMessage)) return false
+        if (!pairingContext.initCipher(theirMessage)) {
+            Log.e(TAG, "doExchangeMsgs: initCipher failed — wrong code?")
+            return false
+        }
+        Log.d(TAG, "doExchangeMsgs: cipher initialized OK")
         return true
     }
 
@@ -263,7 +287,10 @@ class AdbPairingClient(private val host: String, private val port: Int, private 
         val buf = ByteBuffer.allocate(kMaxPeerInfoSize).order(ByteOrder.BIG_ENDIAN)
         peerInfo.writeTo(buf)
 
-        val outbuf = pairingContext.encrypt(buf.array()) ?: return false
+        val outbuf = pairingContext.encrypt(buf.array()) ?: run {
+            Log.e(TAG, "doExchangePeerInfo: encrypt failed")
+            return false
+        }
 
         val ourHeader = createHeader(PairingPacketHeader.Type.PEER_INFO, outbuf.size)
         writeHeader(ourHeader, outbuf)

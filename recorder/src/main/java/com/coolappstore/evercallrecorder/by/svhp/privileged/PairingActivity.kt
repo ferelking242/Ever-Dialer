@@ -8,9 +8,6 @@
  *   4. Code input always visible — enter the 6-digit code from the system dialog
  *   5. "Pair" button performs SPAKE2p handshake
  *   6. Green badge when paired & running
- *
- * The "Manage pairing" button in Settings opens this screen AND Dev Settings.
- * Notifications are supplementary — pairing works without them.
  */
 package com.coolappstore.evercallrecorder.by.svhp.privileged
 
@@ -72,6 +69,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.util.concurrent.TimeoutException
 
 private const val TAG = "PairingActivity"
 
@@ -82,7 +82,6 @@ class PairingActivity : ComponentActivity() {
     ) { granted ->
         Log.d(TAG, "POST_NOTIFICATIONS granted=$granted")
         if (granted) {
-            // Try to show notification now
             PairingNotifier.showWaitingNotification(this)
         }
     }
@@ -199,7 +198,7 @@ private fun PairingScreen() {
                             PairingNotifier.onPairingSucceeded(context)
                         }.onFailure { e ->
                             Log.e(TAG, "Pairing failed", e)
-                            errorMsg = e.message ?: "Échec de l'appairage"
+                            errorMsg = friendlyErrorMessage(e)
                             busy = false
                         }
                     }
@@ -217,6 +216,29 @@ private fun PairingScreen() {
                 }
             )
         }
+    }
+}
+
+/** Convert technical exceptions to user-friendly French messages. */
+private fun friendlyErrorMessage(e: Throwable): String {
+    return when {
+        e is TimeoutException -> "Délai dépassé — vérifie que le débogage sans fil est actif"
+        e is SocketTimeoutException -> "Connexion expirée — réessaie avec un nouveau code"
+        e is ConnectException -> "Impossible de se connecter au port — active le débogage sans fil"
+        e.message?.contains("wrong code", true) == true ||
+        e.message?.contains("Code invalide", true) == true ->
+            "Code incorrect — vérifie le code à 6 chiffres affiché par Android"
+        e.message?.contains("PairingContext", true) == true ->
+            "Erreur interne du moteur SPAKE2 — réessaie"
+        e.message?.contains("exportKeyingMaterial", true) == true ->
+            "Erreur TLS — le périphérique ne supporte pas le pairing"
+        e.message?.contains("Conscrypt", true) == true ->
+            "Erreur crypto — mets à jour Android et réessaie"
+        e.message?.contains("socket", true) == true ->
+            "Erreur de connexion — vérifie le débogage sans fil"
+        e.message?.contains("Pairing failed", true) == true ->
+            "Échec du pairing — vérifie le code et le port"
+        else -> "Erreur : ${e.message?.take(80) ?: "inconnue"}"
     }
 }
 
