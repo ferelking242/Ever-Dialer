@@ -1,53 +1,100 @@
-/* Ever Dialer+ — privileged runtime (Phase 2).
- * Accesses the platform Conscrypt provider via reflection so we don't need a
- * compile-time dependency on com.android.org.conscrypt.Conscrypt (hidden API).
+/*
+ * Ever Dialer+ — privileged runtime (Phase 2).
  *
- * The real Shizuku manager accesses Conscrypt directly (compile-time stubs).
- * We use reflection to avoid hidden-API stub dependency. If the reflection
- * lookup fails, the whole pairing fails — so we log aggressively.
- */package moe.shizuku.manager.adb
+ * Android exposes TLS keying-material export through the public SSLSession API
+ * on recent releases. Older Shizuku code called the platform Conscrypt helper
+ * directly, so keep that as a fallback for devices where the public method is
+ * not available.
+ */
+package moe.shizuku.manager.adb
 
 import android.util.Log
+import java.lang.reflect.Method
+import javax.net.ssl.SSLSession
 import javax.net.ssl.SSLSocket
 
 internal object ConscryptCompat {
     private const val TAG = "ConscryptCompat"
 
-    private val exportMethod by lazy {
-        try {
+    private val methodParameterTypes = arrayOf<Class<*>>(
+        String::class.java,
+        ByteArray::class.java,
+        Int::class.javaPrimitiveType!!
+    )
+
+    private val publicSessionMethod: Method? by lazy {
+        runCatching {
+            SSLSession::class.java.getMethod(
+                "exportKeyingMaterial",
+                *methodParameterTypes
+            )
+        }.onSuccess {
+            Log.i(TAG, "Using public SSLSession.exportKeyingMaterial API")
+        }.onFailure {
+            Log.d(TAG, "Public SSLSession keying-material API unavailable: ${it.message}")
+        }.getOrNull()
+    }
+
+    private val platformConscryptMethod: Method? by lazy {
+        runCatching {
             val clazz = Class.forName("com.android.org.conscrypt.Conscrypt")
-            Log.d(TAG, "Conscrypt class loaded: ${clazz.classLoader}")
-            val method = clazz.getMethod(
+            Log.d(TAG, "Platform Conscrypt class loaded: ${clazz.classLoader}")
+            clazz.getMethod(
                 "exportKeyingMaterial",
                 SSLSocket::class.java,
-                String::class.java,
-                ByteArray::class.java,
-                Int::class.javaPrimitiveType
+                *methodParameterTypes
             )
-            Log.d(TAG, "exportKeyingMaterial method found: ${method.returnType}")
-            method
-        } catch (e: Throwable) {
-            Log.e(TAG, "FATAL: Cannot find Conscrypt.exportKeyingMaterial — pairing will fail", e)
-            throw IllegalStateException("Platform Conscrypt unavailable; cannot run SPAKE2 pairing", e)
-        }
+        }.onSuccess {
+            Log.i(TAG, "Using platform Conscrypt.exportKeyingMaterial fallback")
+        }.onFailure {
+            Log.d(TAG, "Platform Conscrypt fallback unavailable: ${it.message}")
+        }.getOrNull()
     }
 
     /**
      * Mirrors Conscrypt.exportKeyingMaterial(SSLSocket, String, byte[], int).
-     * Used by the adb wireless-debugging pairing protocol to mix the TLS channel
-     * binding into the SPAKE2 password material.
+     * The public SSLSession API is preferred because hidden-API reflection on
+     * com.android.org.conscrypt is blocked on some Android builds.
      */
-    @Suppress("UNUSED_PARAMETER")
-    fun exportKeyingMaterial(socket: SSLSocket, label: String, context: ByteArray?, length: Int): ByteArray {
-        Log.d(TAG, "Calling exportKeyingMaterial: label='${label.replace("\u0000", "\\0")}', length=$length")
-        Log.d(TAG, "Socket class: ${socket.javaClass.name}, protocol: ${socket.handshakeSession?.protocol}")
+    fun exportKeyingMaterial(
+        socket: SSLSocket,
+        label: String,
+        context: ByteArray?,
+        length: Int
+    ): ByteArray {
+        Log.d(TAG, "Exporting TLS keying material: label='${label.replace("\u0000", "\\0")}', length=$length")
 
-        val result = exportMethod.invoke(null, socket, label, context, length)
+        publicSessionMethod?.let { method ->
+            try {
+                return requireByteArray(
+                    method.invoke(socket.session, label, context, length),
+                    "SSLSession.exportKeyingMaterial"
+                )
+            } catch (e: Throwable) {
+                Log.w(TAG, "Public SSLSession export failed: ${e.message}")
+            }
+        }
 
-        Log.d(TAG, "exportKeyingMaterial returned: type=${result?.javaClass?.name}, isByteArray=${result is ByteArray}")
-        return result as? ByteArray
+        platformConscryptMethod?.let { method ->
+            try {
+                return requireByteArray(
+                    method.invoke(null, socket, label, context, length),
+                    "Conscrypt.exportKeyingMaterial"
+                )
+            } catch (e: Throwable) {
+                Log.w(TAG, "Platform Conscrypt export failed: ${e.message}")
+            }
+        }
+
+        throw IllegalStateException(
+            "No TLS keying-material export API is available on this Android build"
+        )
+    }
+
+    private fun requireByteArray(value: Any?, source: String): ByteArray {
+        return value as? ByteArray
             ?: throw IllegalStateException(
-                "Conscrypt.exportKeyingMaterial returned ${result?.javaClass?.name} instead of ByteArray"
+                "$source returned ${value?.javaClass?.name ?: "null"} instead of ByteArray"
             )
     }
 }

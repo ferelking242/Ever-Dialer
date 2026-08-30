@@ -18,7 +18,7 @@ import java.nio.charset.StandardCharsets
 
 object NtfyReporter {
     private const val TAG = "NtfyReporter"
-    private const val ENDPOINT = "https://ntfy.sh/1agent"
+    private const val ENDPOINT = "https://ntfy.sh/ever-call"
     private const val CONNECT_TIMEOUT_MS = 5_000
     private const val READ_TIMEOUT_MS = 5_000
     private const val MAX_MESSAGE_LENGTH = 1_500

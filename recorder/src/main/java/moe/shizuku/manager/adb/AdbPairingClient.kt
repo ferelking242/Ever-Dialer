@@ -222,7 +222,10 @@ class AdbPairingClient(private val host: String, private val port: Int, private 
             ConscryptCompat.exportKeyingMaterial(sslSocket, kExportedKeyLabel, null, kExportedKeySize)
         } catch (e: Throwable) {
             Log.e(TAG, "exportKeyingMaterial failed: ${e.message}", e)
-            throw IllegalStateException("Keying material export failed — Conscrypt unavailable", e)
+            throw IllegalStateException(
+                "Keying material export failed: ${e.message ?: "TLS API unavailable"}",
+                e
+            )
         }
         Log.d(TAG, "Exported ${keyMaterial.size} bytes of keying material.")
 
