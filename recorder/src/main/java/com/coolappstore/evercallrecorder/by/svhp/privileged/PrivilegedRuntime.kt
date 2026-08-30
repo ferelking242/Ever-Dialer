@@ -16,6 +16,7 @@ package com.coolappstore.evercallrecorder.by.svhp.privileged
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import com.coolappstore.evercallrecorder.by.svhp.BuildConfig
 import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
@@ -77,9 +78,34 @@ object PrivilegedRuntime {
         if (startingJobCount > 0) return
         _state.value = when {
             ShizukuConnectionManager.isAvailable() -> State.RUNNING
-            _state.value != State.FAILED -> _state.value
-            else -> State.FAILED
+            else -> State.NOT_PAIRED
         }
+    }
+
+    /** Reads the live binder state for UI indicators and click guards. */
+    fun isConnected(): Boolean = ShizukuConnectionManager.isAvailable()
+
+    /**
+     * Opens the same wireless-debugging flow as the Shizuku manager.
+     *
+     * @return false when the embedded Shizuku binder is already active.
+     */
+    fun openManagement(context: Context): Boolean {
+        if (isConnected()) return false
+
+        val appContext = context.applicationContext
+        runCatching { PairingNotifier.showWaitingNotification(appContext) }
+        runCatching {
+            appContext.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }.onFailure {
+            appContext.startActivity(
+                Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+        return true
     }
 
     // ─────────────────────────── Pairing ───────────────────────────

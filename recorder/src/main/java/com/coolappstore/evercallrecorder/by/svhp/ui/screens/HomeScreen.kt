@@ -46,6 +46,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.*
 import java.text.SimpleDateFormat
 import java.util.*
@@ -93,11 +94,14 @@ fun HomeScreen(
         mutableStateOf(com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences(context).isCallRecordingEnabled())
     }
     val lifecycleOwner = LocalLifecycleOwner.current
+    var shizukuConnected by remember { mutableStateOf(PrivilegedRuntime.isConnected()) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 vm.refresh()
                 recordingEnabledState = com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences(context).isCallRecordingEnabled()
+                shizukuConnected = PrivilegedRuntime.isConnected()
+                PrivilegedRuntime.refreshState()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -114,6 +118,28 @@ fun HomeScreen(
                 actions = {
                     AnimatedVisibility(visible = !isSelectionMode, enter = fadeIn(), exit = fadeOut()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = {
+                                    if (!PrivilegedRuntime.openManagement(context)) {
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            "Shizuku est déjà connecté ✔",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                },
+                                modifier = Modifier.size(52.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Shield,
+                                    contentDescription = if (shizukuConnected)
+                                        "Shizuku connecté"
+                                    else
+                                        "Configurer Shizuku",
+                                    tint = if (shizukuConnected) Color(0xFF66BB6A)
+                                    else Color(0xFFE53935)
+                                )
+                            }
                             IconButton(onClick = onSettingsClick, modifier = Modifier.size(52.dp)) {
                                 Icon(Icons.Outlined.Settings, contentDescription = "Settings")
                             }

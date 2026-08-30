@@ -53,11 +53,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.coolappstore.evercallrecorder.by.svhp.R
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
 import com.coolappstore.evercallrecorder.by.svhp.integrations.scrcpy.ScrcpyAudioCodec
 import com.coolappstore.evercallrecorder.by.svhp.integrations.scrcpy.ScrcpyAudioSource
 import com.coolappstore.evercallrecorder.by.svhp.integrations.scrcpy.ScrcpyConfig
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.system.PersistentFolderPickerContract
 import com.coolappstore.evercallrecorder.by.svhp.system.copyToClipboard
 import com.coolappstore.evercallrecorder.by.svhp.system.openGithub
@@ -823,6 +827,18 @@ private fun AudioSection(preferences: AppPreferences, updateTrigger: Int, action
 @Composable
 private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, actions: SettingsActions) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var shizukuConnected by remember { mutableStateOf(PrivilegedRuntime.isConnected()) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                shizukuConnected = PrivilegedRuntime.isConnected()
+                PrivilegedRuntime.refreshState()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val autoManageShizuku    = remember(updateTrigger) { preferences.isShizukuAutoManageEnabled() }
     val shizukuStartOnRecord = remember(updateTrigger) { preferences.isShizukuStartOnRecordEnabled() }
     val shizukuKeepAlive     = remember(updateTrigger) { preferences.isShizukuKeepAliveEnabled() }
@@ -833,24 +849,29 @@ private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, act
             icon = Icons.Outlined.Link,
             headline = stringResource(R.string.settings_shizuku_auto_manage),
             supporting = stringResource(R.string.settings_shizuku_auto_manage_desc),
-            onClick = {
-                // Show waiting notification (Phase 1) — starts mDNS watcher
-                runCatching {
-                    com.coolappstore.evercallrecorder.by.svhp.privileged.PairingNotifier
-                        .showWaitingNotification(context)
-                }
-                // Open Dev Settings directly (no PairingActivity — all in notification)
-                runCatching {
-                    val intent = android.content.Intent(
-                        android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS
+            trailingContent = {
+                Surface(
+                    shape = CircleShape,
+                    color = if (shizukuConnected) Color(0xFF1B5E20).copy(alpha = 0.22f)
+                    else MaterialTheme.colorScheme.surfaceContainerHigh
+                ) {
+                    Text(
+                        text = if (shizukuConnected) "Actif" else "Non connecté",
+                        color = if (shizukuConnected) Color(0xFF81C784)
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                     )
-                    context.startActivity(intent)
-                }.onFailure {
-                    runCatching {
-                        context.startActivity(
-                            android.content.Intent(android.provider.Settings.ACTION_SETTINGS)
-                        )
-                    }
+                }
+            },
+            onClick = {
+                if (!PrivilegedRuntime.openManagement(context)) {
+                    android.widget.Toast.makeText(
+                        context,
+                        "Shizuku est déjà connecté ✔",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
         )
@@ -923,9 +944,16 @@ private fun SettingsSection(title: String, icon: ImageVector, content: @Composab
 }
 
 @Composable
-private fun SectionListItem(icon: ImageVector, headline: String, supporting: String? = null, supportingColor: Color = MaterialTheme.colorScheme.onSurfaceVariant, onClick: (() -> Unit)? = null) {
+private fun SectionListItem(
+    icon: ImageVector,
+    headline: String,
+    supporting: String? = null,
+    supportingColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    trailingContent: (@Composable () -> Unit)? = null,
+    onClick: (() -> Unit)? = null
+) {
     val mod = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
-    ListItem(modifier = mod, leadingContent = { Icon(imageVector = icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp)) }, headlineContent = { Text(headline, style = MaterialTheme.typography.bodyMedium) }, supportingContent = supporting?.let { { Text(it, color = supportingColor, style = MaterialTheme.typography.bodySmall) } }, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
+    ListItem(modifier = mod, leadingContent = { Icon(imageVector = icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp)) }, headlineContent = { Text(headline, style = MaterialTheme.typography.bodyMedium) }, supportingContent = supporting?.let { { Text(it, color = supportingColor, style = MaterialTheme.typography.bodySmall) } }, trailingContent = trailingContent, colors = ListItemDefaults.colors(containerColor = Color.Transparent))
 }
 
 @Composable

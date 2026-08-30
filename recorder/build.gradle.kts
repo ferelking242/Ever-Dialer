@@ -271,6 +271,9 @@ android {
             // Prebuilt libadb.so / libshizuku.so extracted by prepareShizukuEmbedded.
             // Plain string path: AGP rejects Provider instances in SourceSet APIs.
             jniLibs.srcDir("${layout.buildDirectory.get().asFile}/generated/shizuku/jniLibs")
+            // The embedded server APK must be packaged as an Android asset so
+            // Context.assets.open("shizuku/server.apk") can push it to adbd.
+            assets.srcDir("${layout.buildDirectory.get().asFile}/generated/shizuku/assets")
         }
     }
     packaging {
@@ -297,10 +300,10 @@ androidComponents {
             ExtractMetadataTask::outputDir
         )
 
-        variant.sources.assets?.addGeneratedSourceDirectory(
-            prepareShizukuEmbedded,
-            PrepareShizukuEmbeddedTask::outputDir
-        )
+        // prepareShizukuEmbedded is wired through preBuild below. Its output
+        // contains both assets/ and jniLibs/, so only the assets subdirectory
+        // is registered in sourceSets.main.assets above. Registering the
+        // output root here would package "assets/shizuku/server.apk".
     }
 }
 
