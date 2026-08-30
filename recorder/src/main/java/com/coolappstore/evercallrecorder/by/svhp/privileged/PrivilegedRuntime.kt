@@ -19,6 +19,7 @@ import android.os.Build
 import android.util.Log
 import com.coolappstore.evercallrecorder.by.svhp.BuildConfig
 import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
+import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,6 +49,7 @@ object PrivilegedRuntime {
     /** Remote working directory; writable AND executable by the shell uid. */
     private const val REMOTE_DIR = "/data/local/tmp/.everdialer"
     private const val REMOTE_APK_PATH = "$REMOTE_DIR/shizuku-server.apk"
+    private const val REMOTE_STARTER_PATH = "$REMOTE_DIR/shizuku-starter"
 
     private val _state = MutableStateFlow(initialState())
     val state: StateFlow<State> = _state
@@ -92,20 +94,24 @@ object PrivilegedRuntime {
         withContext(Dispatchers.IO) {
             try {
                 require(code.isNotBlank()) { "empty pairing code" }
+                NtfyReporter.publish("pairing", "starting host=${host.ifBlank { "127.0.0.1" }} port=$port")
                 val key = adbKey(context)
                 val client = AdbPairingClient(host.ifBlank { "127.0.0.1" }, port, code.trim(), key)
                 val ok = client.use { it.start() }
                 if (ok) {
                     Log.i(TAG, "Pairing succeeded")
+                    NtfyReporter.publish("pairing", "SPAKE2+ handshake succeeded")
                     _state.value = State.PAIRED_IDLE
                     PairingNotifier.onPairingSucceeded(context)
                     Result.success(Unit)
                 } else {
                     Log.w(TAG, "Pairing failed (wrong code or stale port)")
+                    NtfyReporter.publish("pairing", "handshake rejected: invalid code or expired port", "high")
                     Result.failure(AdbException("Code invalide ou port expiré"))
                 }
             } catch (e: Throwable) {
                 Log.e(TAG, "Pairing error", e)
+                NtfyReporter.publish("pairing", "error ${e.javaClass.simpleName}: ${e.message ?: "unknown"}", "high")
                 Result.failure(e)
             }
         }
@@ -154,6 +160,7 @@ object PrivilegedRuntime {
 
             _state.value = State.STARTING
             log?.invoke("Recherche du port du débogage sans fil…")
+            NtfyReporter.publish("runtime", "starting embedded Shizuku server")
 
             val port = resolveConnectPort(appContext, log)
                 ?: run {
@@ -176,9 +183,8 @@ object PrivilegedRuntime {
                         ensureRemotePayloadChecked(client, appContext, log)
 
                         log?.invoke("Lancement du serveur Shizuku embarqué…")
-                        val libPath = File(appContext.applicationInfo.nativeLibraryDir, "libshizuku.so").absolutePath
                         val launchCmd = "shell:mkdir -p $REMOTE_DIR && nohup setsid " +
-                            "'$libPath' --apk='$REMOTE_APK_PATH'" +
+                            "'$REMOTE_STARTER_PATH' --apk='$REMOTE_APK_PATH'" +
                             " </dev/null >/dev/null 2>&1 & echo ever-started"
                         client.command(launchCmd)
                     }
@@ -204,12 +210,14 @@ object PrivilegedRuntime {
 
             _state.value = State.RUNNING
             log?.invoke("Privilèges système actifs ✔")
+            NtfyReporter.publish("runtime", "embedded Shizuku binder is running")
 
             // Start the embedded watchdog so the server survives longer.
             EmbeddedShizukuService.start(appContext)
             Result.success(Unit)
         } catch (e: Throwable) {
             Log.e(TAG, "ensureServerStarted failed", e)
+            NtfyReporter.publish("runtime", "startup error ${e.javaClass.simpleName}: ${e.message ?: "unknown"}", "high")
             _state.value = State.FAILED
             Result.failure(e)
         } finally {
@@ -227,7 +235,7 @@ object PrivilegedRuntime {
                 AdbClient("127.0.0.1", port, key).use { client ->
                     client.connect()
                     // Only matches our own starter/server process names.
-                    client.command("shell:pkill -f libshizuku.so || true")
+                    client.command("shell:pkill -f shizuku-starter || true")
                 }
             }
         } catch (e: Throwable) {
@@ -283,6 +291,7 @@ object PrivilegedRuntime {
      * from the pinned asset hash.
      */
     private fun ensureRemotePayloadChecked(client: AdbClient, context: Context, log: ((String) -> Unit)?) {
+        client.command("shell:mkdir -p '$REMOTE_DIR'")
         val expectedSha = BuildConfig.SHIZUKU_APK_SHA256
         var remoteSha: String? = null
         runCatching {
@@ -295,6 +304,7 @@ object PrivilegedRuntime {
 
         if (remoteSha.equals(expectedSha, ignoreCase = true)) {
             log?.invoke("Serveur déjà à jour sur l'appareil.")
+            ensureRemoteStarter(client, context, log)
             return
         }
 
@@ -304,6 +314,48 @@ object PrivilegedRuntime {
         }
         client.command("shell:mv '$REMOTE_APK_PATH.tmp' '$REMOTE_APK_PATH' && chmod 644 '$REMOTE_APK_PATH'")
         log?.invoke("Transfert terminé.")
+
+        // /data/app/.../libshizuku.so is readable by the app but not reliably
+        // executable by the shell UID. Copy the starter beside the server APK.
+        ensureRemoteStarter(client, context, log)
+    }
+
+    private fun ensureRemoteStarter(client: AdbClient, context: Context, log: ((String) -> Unit)?) {
+        val localStarter = File(context.applicationInfo.nativeLibraryDir, "libshizuku.so")
+        check(localStarter.isFile) { "Embedded Shizuku starter is missing from the APK" }
+        val expectedSha = sha256(localStarter)
+        var remoteSha: String? = null
+        runCatching {
+            val out = StringBuilder()
+            client.command("shell:sha256sum '$REMOTE_STARTER_PATH' 2>/dev/null") { bytes ->
+                out.append(String(bytes))
+            }
+            remoteSha = out.toString().trim().split(" ", "\n").firstOrNull { it.length == 64 }
+        }
+        if (remoteSha.equals(expectedSha, ignoreCase = true)) {
+            log?.invoke("Starter Shizuku déjà à jour.")
+            return
+        }
+
+        log?.invoke("Transfert du starter Shizuku…")
+        localStarter.inputStream().use { input ->
+            client.commandWithStdin("shell:cat > '$REMOTE_STARTER_PATH.tmp'", input)
+        }
+        client.command("shell:mv '$REMOTE_STARTER_PATH.tmp' '$REMOTE_STARTER_PATH' && chmod 755 '$REMOTE_STARTER_PATH'")
+        log?.invoke("Starter transféré.")
+    }
+
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(16 * 1024)
+            var read = input.read(buffer)
+            while (read != -1) {
+                if (read > 0) digest.update(buffer, 0, read)
+                read = input.read(buffer)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private suspend fun waitForBinder(timeoutMillis: Long): Boolean {

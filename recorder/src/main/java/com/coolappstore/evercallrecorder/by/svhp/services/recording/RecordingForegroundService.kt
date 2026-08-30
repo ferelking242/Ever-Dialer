@@ -26,6 +26,9 @@ import com.coolappstore.evercallrecorder.by.svhp.data.recordings.RecordingMetada
 import com.coolappstore.evercallrecorder.by.svhp.utils.AppLogger
 import com.coolappstore.evercallrecorder.by.svhp.utils.PhoneNumberManager
 import com.coolappstore.evercallrecorder.by.svhp.utils.RecordingFileNameFormatter
+import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PairingNotifier
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -222,7 +225,7 @@ class RecordingForegroundService : Service() {
 
                 currentState = RecordingServiceState.Starting(currentMeta)
 
-                // If enabled in the user preferences, we try to start the Shizuku as we are now starting the recording.
+                // If enabled, start the embedded runtime; no external Shizuku auth key is needed.
                 tryStartShizukuServer()
 
                 serviceScope.launch {
@@ -289,19 +292,31 @@ class RecordingForegroundService : Service() {
     }
 
     /**
-     * Tries to start the Shizuku server if "Auto-manage Shizuku" is enabled in the user preferences.
-     * If the auth key is missing, shows an error notification and stops the service since we won't be able to record without Shizuku.
+     * Tries to start the embedded Shizuku server if auto-management is enabled.
+     * Pairing is persisted in the Android Keystore, so this path never asks for
+     * the old external Shizuku Intents authentication key.
      * **This does not check the user preference for if shizuku should only start when recording or directly at standby**.
      */
     private fun tryStartShizukuServer() {
-        if (appPreferences.isShizukuAutoManageEnabled()) {
-            val authKey = appPreferences.getShizukuAuthKey()
-            if (authKey.isNotBlank()) {
-                ShizukuConnectionManager.startServer(this, authKey)
-            } else {
-                notificationHelper.showErrorNotification(getString(R.string.recording_shizuku_auth_key_missing))
-                notificationHelper.showToast(getString(R.string.recording_shizuku_auth_key_missing))
-                stopRecordingSessionAndService()
+        if (!appPreferences.isShizukuAutoManageEnabled()) return
+
+        serviceScope.launch {
+            val result = PrivilegedRuntime.ensureServerStarted(this@RecordingForegroundService) { message ->
+                AppLogger.i(TAG, "Embedded Shizuku: $message")
+                NtfyReporter.publish("runtime", message)
+            }
+            result.onFailure { error ->
+                val message = if (!PrivilegedRuntime.isPaired(this@RecordingForegroundService)) {
+                    getString(R.string.recording_shizuku_pairing_required)
+                } else {
+                    "Impossible de démarrer le moteur privilégié : ${error.message ?: "erreur inconnue"}"
+                }
+                AppLogger.e(TAG, message, error)
+                NtfyReporter.publish("runtime", message, "high")
+                notificationHelper.showErrorNotification(message)
+                if (!PrivilegedRuntime.isPaired(this@RecordingForegroundService)) {
+                    PairingNotifier.showWaitingNotification(this@RecordingForegroundService)
+                }
             }
         }
     }
@@ -314,7 +329,10 @@ class RecordingForegroundService : Service() {
         stopRecordingSessionAndService()
         shizukuManager.unbind()
         if (appPreferences.isShizukuAutoManageEnabled() && !appPreferences.isShizukuKeepAliveEnabled()) {
-            ShizukuConnectionManager.stopServer(this, appPreferences.getShizukuAuthKey())
+            EmbeddedShizukuService.stop(this)
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                PrivilegedRuntime.stopServer(applicationContext)
+            }
         }
         super.onDestroy()
     }

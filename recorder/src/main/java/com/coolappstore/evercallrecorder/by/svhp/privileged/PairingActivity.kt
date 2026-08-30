@@ -190,7 +190,7 @@ private fun PairingScreen() {
                         errorMsg = null
                         PrivilegedRuntime.pairWithCode(
                             context,
-                            "127.0.0.1",
+                            intentHost,
                             port,
                             pairingCode
                         ).onSuccess {
@@ -199,7 +199,9 @@ private fun PairingScreen() {
                         }.onFailure { e ->
                             Log.e(TAG, "Pairing failed", e)
                             val root = e.cause ?: e
-                            errorMsg = friendlyErrorMessage(e) + "\n(${root.javaClass.simpleName}: ${root.message?.take(60) ?: "?"})"
+                            val friendly = friendlyErrorMessage(e)
+                            errorMsg = friendly + "\n(${root.javaClass.simpleName}: ${root.message?.take(60) ?: "?"})"
+                            PairingNotifier.onPairingFailed(context, friendly)
                             busy = false
                         }
                     }

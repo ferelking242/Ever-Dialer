@@ -55,6 +55,7 @@ class AdbClient(private val host: String, private val port: Int, private val key
         val socket = Socket()
         val address = InetSocketAddress(host, port)
         socket.connect(address, 5000)
+        socket.soTimeout = 15_000
         socket.tcpNoDelay = true
 
         plainInputStream = DataInputStream(socket.getInputStream())
@@ -177,6 +178,23 @@ class AdbClient(private val host: String, private val port: Int, private val key
 
         // Close our side: adbd forwards EOF to the shell command's stdin.
         write(A_CLSE, localId, remoteId)
+
+        // Drain the remote side before returning. Without this handshake,
+        // subsequent commands can consume the old A_CLSE and fail randomly.
+        while (true) {
+            val message = read()
+            when (message.command) {
+                A_WRTE -> {
+                    message.data?.let { listener?.invoke(it) }
+                    write(A_OKAY, localId, message.arg0)
+                }
+                A_CLSE -> {
+                    write(A_CLSE, localId, message.arg0)
+                    break
+                }
+                else -> throw AdbException("expected A_WRTE or A_CLSE after stdin close, got ${message.toStringShort()}")
+            }
+        }
     }
 
     private fun write(command: Int, arg0: Int, arg1: Int, data: ByteArray? = null) = write(AdbMessage(command, arg0, arg1, data))

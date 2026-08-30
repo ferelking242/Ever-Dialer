@@ -28,6 +28,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
+import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
 import moe.shizuku.manager.adb.AdbMdns
 
 object PairingNotifier {
@@ -53,6 +54,7 @@ object PairingNotifier {
     fun showWaitingNotification(context: Context) {
         val appCtx = context.applicationContext
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        NtfyReporter.publish("pairing", "waiting for wireless debugging pairing service")
 
         ensureChannel(appCtx)
 
@@ -105,17 +107,20 @@ object PairingNotifier {
 
     fun onPairingStarted(context: Context) {
         Log.i(TAG, "Pairing started — showing progress notification")
+        NtfyReporter.publish("pairing", "remote code submitted; starting handshake")
         showProgressNotification(context.applicationContext)
     }
 
     fun onPairingSucceeded(context: Context) {
         Log.i(TAG, "Pairing succeeded — showing Phase 3")
+        NtfyReporter.publish("pairing", "pairing completed")
         showPhase3(context.applicationContext)
         stopWatching(context)
     }
 
     fun onPairingFailed(context: Context, error: String) {
         Log.w(TAG, "Pairing failed: $error")
+        NtfyReporter.publish("pairing", "failed: $error", "high")
         showFailedNotification(context.applicationContext, error)
         if (detectedPort > 0) showPhase2(context.applicationContext)
     }
@@ -133,11 +138,17 @@ object PairingNotifier {
                 if (port > 0) {
                     detectedHost = host.ifBlank { "127.0.0.1" }
                     detectedPort = port
+                    NtfyReporter.publish("pairing", "service discovered host=$detectedHost port=$detectedPort")
                     showPhase2(appCtx)
                 }
             }.also { runCatching { it.start() } }
         } catch (e: Throwable) {
             Log.e(TAG, "mDNS watcher failed: ${e.message}", e)
+            NtfyReporter.publish(
+                "pairing",
+                "mDNS watcher error ${e.javaClass.simpleName}: ${e.message ?: "unknown"}",
+                "high"
+            )
             isWatching = false
         }
     }
