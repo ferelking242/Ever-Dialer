@@ -29,6 +29,7 @@ import com.coolappstore.evercallrecorder.by.svhp.utils.RecordingFileNameFormatte
 import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
 import com.coolappstore.evercallrecorder.by.svhp.privileged.PairingNotifier
 import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
+import com.coolappstore.evercallrecorder.by.svhp.privileged.EmbeddedShizukuService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
