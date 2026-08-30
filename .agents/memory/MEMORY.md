@@ -1,0 +1,1 @@
+- [Android build environment](android-build-environment.md) — local workspace may lack the SDK; use GitHub Actions as the authoritative Android build check.
