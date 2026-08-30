@@ -1,15 +1,19 @@
 /*
- * Ever Dialer+ — privileged runtime (Phase 2).
+ * Ever Dialer+ — TLS compatibility for wireless ADB pairing.
  *
- * Android exposes TLS keying-material export through the public SSLSession API
- * on recent releases. Older Shizuku code called the platform Conscrypt helper
- * directly, so keep that as a fallback for devices where the public method is
- * not available.
+ * The Android platform Conscrypt implementation is hidden or incomplete on
+ * some devices. The pairing protocol needs TLS exporter support, so use the
+ * bundled public Conscrypt provider when available and retain platform
+ * fallbacks for older installations.
  */
 package moe.shizuku.manager.adb
 
 import android.util.Log
+import org.conscrypt.Conscrypt
 import java.lang.reflect.Method
+import java.security.Provider
+import java.security.Security
+import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSession
 import javax.net.ssl.SSLSocket
 
@@ -21,6 +25,19 @@ internal object ConscryptCompat {
         ByteArray::class.java,
         Int::class.javaPrimitiveType!!
     )
+
+    private val bundledProvider: Provider? by lazy {
+        runCatching {
+            val provider = Conscrypt.newProvider()
+            if (Security.getProvider(provider.name) == null) {
+                Security.insertProviderAt(provider, 1)
+            }
+            Log.i(TAG, "Bundled Conscrypt provider ready: ${provider.name}")
+            provider
+        }.onFailure {
+            Log.e(TAG, "Bundled Conscrypt provider unavailable: ${it.message}", it)
+        }.getOrNull()
+    }
 
     private val publicSessionMethod: Method? by lazy {
         runCatching {
@@ -52,9 +69,23 @@ internal object ConscryptCompat {
     }
 
     /**
+     * Creates the TLS context used by both ADB connections and the pairing
+     * connection. Explicit provider selection ensures the bundled Conscrypt
+     * socket is the one passed to Conscrypt.exportKeyingMaterial below.
+     */
+    fun newSslContext(protocol: String): SSLContext {
+        val provider = bundledProvider
+        return if (provider != null) {
+            SSLContext.getInstance(protocol, provider)
+        } else {
+            SSLContext.getInstance(protocol)
+        }
+    }
+
+    /**
      * Mirrors Conscrypt.exportKeyingMaterial(SSLSocket, String, byte[], int).
-     * The public SSLSession API is preferred because hidden-API reflection on
-     * com.android.org.conscrypt is blocked on some Android builds.
+     * Bundled Conscrypt is preferred because hidden-API reflection can fail
+     * even after the platform TLS handshake succeeds.
      */
     fun exportKeyingMaterial(
         socket: SSLSocket,
@@ -63,6 +94,17 @@ internal object ConscryptCompat {
         length: Int
     ): ByteArray {
         Log.d(TAG, "Exporting TLS keying material: label='${label.replace("\u0000", "\\0")}', length=$length")
+
+        if (bundledProvider != null) {
+            try {
+                return requireByteArray(
+                    Conscrypt.exportKeyingMaterial(socket, label, context, length),
+                    "bundled Conscrypt.exportKeyingMaterial"
+                )
+            } catch (e: Throwable) {
+                Log.w(TAG, "Bundled Conscrypt export failed: ${e.message}")
+            }
+        }
 
         publicSessionMethod?.let { method ->
             try {

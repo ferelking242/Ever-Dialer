@@ -22,6 +22,7 @@ media3 = "1.6.1"
 # Utility
 aboutlibraries = "14.2.1"
 libphonenumber = "9.0.31"
+conscrypt = "2.5.2"
 
 [libraries]
 # AndroidX Core & Lifecycle
@@ -61,6 +62,7 @@ media3-session = { module = "androidx.media3:media3-session", version.ref = "med
 
 # Libphonenumber
 libphonenumber = { module = "com.googlecode.libphonenumber:libphonenumber", version.ref = "libphonenumber" }
+conscrypt-android = { module = "org.conscrypt:conscrypt-android", version.ref = "conscrypt" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

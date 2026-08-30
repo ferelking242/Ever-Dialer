@@ -377,4 +377,7 @@ dependencies {
 
     // Embedded privileged runtime: X509 cert building for the local ADB key
     implementation("org.bouncycastle:bcpkix-jdk18on:1.80")
+    // Wireless ADB pairing needs TLS keying-material export on devices that
+    // hide or omit the platform Conscrypt exporter.
+    implementation(libs.conscrypt.android)
 }

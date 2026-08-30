@@ -258,12 +258,12 @@ class AdbKey(private val adbKeyStore: AdbKeyStore, name: String) {
     val sslContext: SSLContext by lazy {
         val ctx = try {
             Log.d(TAG, "Creating SSLContext with TLSv1.3")
-            val c = SSLContext.getInstance("TLSv1.3")
+            val c = ConscryptCompat.newSslContext("TLSv1.3")
             c.init(arrayOf(keyManager), arrayOf(trustManager), SecureRandom())
             c
         } catch (e: Throwable) {
             Log.w(TAG, "TLSv1.3 not available, falling back to TLSv1.2: ${e.message}")
-            val c = SSLContext.getInstance("TLSv1.2")
+            val c = ConscryptCompat.newSslContext("TLSv1.2")
             c.init(arrayOf(keyManager), arrayOf(trustManager), SecureRandom())
             c
         }
