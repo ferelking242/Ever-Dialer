@@ -94,14 +94,18 @@ fun HomeScreen(
         mutableStateOf(com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences(context).isCallRecordingEnabled())
     }
     val lifecycleOwner = LocalLifecycleOwner.current
-    var shizukuConnected by remember { mutableStateOf(PrivilegedRuntime.isConnected()) }
+    val runtimeState by PrivilegedRuntime.state.collectAsState()
+    var shizukuConnected by remember { mutableStateOf(runtimeState == PrivilegedRuntime.State.RUNNING) }
+    // Keep shizukuConnected in sync with the reactive state flow.
+    LaunchedEffect(runtimeState) {
+        shizukuConnected = runtimeState == PrivilegedRuntime.State.RUNNING
+    }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 vm.refresh()
                 recordingEnabledState = com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences(context).isCallRecordingEnabled()
-                shizukuConnected = PrivilegedRuntime.isConnected()
-                PrivilegedRuntime.refreshState()
+                PrivilegedRuntime.refreshState(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

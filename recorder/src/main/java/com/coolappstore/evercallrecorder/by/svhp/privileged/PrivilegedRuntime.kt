@@ -36,6 +36,7 @@ import moe.shizuku.manager.adb.AdbPairingClient
 import moe.shizuku.manager.adb.PreferenceAdbKeyStore
 import java.io.File
 import java.security.MessageDigest
+import java.util.zip.ZipInputStream
 import kotlin.coroutines.resume
 
 object PrivilegedRuntime {
@@ -82,6 +83,19 @@ object PrivilegedRuntime {
         }
     }
 
+    /**
+     * Refresh state with access to a Context for the paired check.
+     * Call this from UI components that have a Context available.
+     */
+    fun refreshState(context: Context) {
+        if (startingJobCount > 0) return
+        _state.value = when {
+            ShizukuConnectionManager.isAvailable() -> State.RUNNING
+            isPaired(context) -> State.PAIRED_IDLE
+            else -> State.NOT_PAIRED
+        }
+    }
+
     /** Reads the live binder state for UI indicators and click guards. */
     fun isConnected(): Boolean = ShizukuConnectionManager.isAvailable()
 
@@ -94,6 +108,16 @@ object PrivilegedRuntime {
         if (isConnected()) return false
 
         val appContext = context.applicationContext
+        // Launch our embedded PairingActivity — it auto-starts the server
+        // after successful pairing and guides the user through Dev Settings.
+        runCatching {
+            appContext.startActivity(
+                Intent(appContext, PairingActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            return true
+        }
+        // Fallback: open Dev Settings directly if PairingActivity can't launch.
         runCatching { PairingNotifier.showWaitingNotification(appContext) }
         runCatching {
             appContext.startActivity(
@@ -347,8 +371,15 @@ object PrivilegedRuntime {
     }
 
     private fun ensureRemoteStarter(client: AdbClient, context: Context, log: ((String) -> Unit)?) {
-        val localStarter = File(context.applicationInfo.nativeLibraryDir, "libshizuku.so")
-        check(localStarter.isFile) { "Embedded Shizuku starter is missing from the APK" }
+        // 1. Try the standard nativeLibraryDir path (works when AGP packages the .so correctly).
+        var localStarter = File(context.applicationInfo.nativeLibraryDir, "libshizuku.so")
+        // 2. Fallback: extract libshizuku.so from the embedded server APK asset.
+        //    This handles builds where AGP doesn't pick up the generated jniLibs.
+        if (!localStarter.isFile) {
+            log?.invoke("Starter absent du nativeLib → extraction depuis l'asset embarqué…")
+            localStarter = extractStarterFromServerAsset(context)
+        }
+        check(localStarter.isFile) { "Embedded Shizuku starter is missing: not in nativeLibraryDir and could not extract from server asset" }
         val expectedSha = sha256(localStarter)
         var remoteSha: String? = null
         runCatching {
@@ -369,6 +400,37 @@ object PrivilegedRuntime {
         }
         client.command("shell:mv '$REMOTE_STARTER_PATH.tmp' '$REMOTE_STARTER_PATH' && chmod 755 '$REMOTE_STARTER_PATH'")
         log?.invoke("Starter transféré.")
+    }
+
+    /**
+     * Extracts libshizuku.so from the embedded Shizuku server APK asset.
+     * The server APK (pushed to the device) contains the same native starter.
+     * We extract it to a cache file so we can push it via ADB.
+     */
+    private fun extractStarterFromServerAsset(context: Context): File {
+        val cacheFile = File(context.cacheDir, "shizuku-starter-extracted.so")
+        if (cacheFile.isFile && cacheFile.length() > 0) return cacheFile
+        try {
+            context.assets.open(BuildConfig.SHIZUKU_ASSET_PATH).use { apkStream ->
+                ZipInputStream(apkStream.buffered()).use { zip ->
+                    var entry = zip.nextEntry
+                    while (entry != null) {
+                        if (!entry.isDirectory &&
+                            entry.name.matches(Regex("lib/.*/libshizuku\\.so"))
+                        ) {
+                            Log.i(TAG, "Extracting ${entry.name} from server asset")
+                            cacheFile.outputStream().use { out -> zip.copyTo(out) }
+                            cacheFile.setExecutable(true)
+                            return cacheFile
+                        }
+                        entry = zip.nextEntry
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to extract starter from server asset", e)
+        }
+        return cacheFile
     }
 
     private fun sha256(file: File): String {

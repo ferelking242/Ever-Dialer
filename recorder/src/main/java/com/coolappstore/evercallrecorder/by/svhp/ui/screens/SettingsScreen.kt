@@ -828,12 +828,15 @@ private fun AudioSection(preferences: AppPreferences, updateTrigger: Int, action
 private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, actions: SettingsActions) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    var shizukuConnected by remember { mutableStateOf(PrivilegedRuntime.isConnected()) }
+    val runtimeState by PrivilegedRuntime.state.collectAsState()
+    var shizukuConnected by remember { mutableStateOf(runtimeState == PrivilegedRuntime.State.RUNNING) }
+    LaunchedEffect(runtimeState) {
+        shizukuConnected = runtimeState == PrivilegedRuntime.State.RUNNING
+    }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                shizukuConnected = PrivilegedRuntime.isConnected()
-                PrivilegedRuntime.refreshState()
+                PrivilegedRuntime.refreshState(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

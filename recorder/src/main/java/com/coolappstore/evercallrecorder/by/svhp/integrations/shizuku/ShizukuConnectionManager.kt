@@ -147,10 +147,10 @@ class ShizukuConnectionManager(
         /**
          * Starts the Shizuku ADB server via broadcast intent. Can be called even if already running.
          *
-         * @param context The application context.
-         * @param authKey The authentication key for the Shizuku server.
-         * @throws IllegalStateException if the Shizuku manager package cannot be found.
+         * @deprecated This is the OLD external-Shizuku flow. Use [PrivilegedRuntime.ensureServerStarted]
+         * for the embedded runtime instead — no auth key needed.
          */
+        @Deprecated("Use PrivilegedRuntime.ensureServerStarted() — embedded runtime, no auth key needed")
         fun startServer(context: Context, authKey: String) {
             try {
                 if (isAvailable()) {
@@ -177,10 +177,10 @@ class ShizukuConnectionManager(
         /**
          * Stops the Shizuku server via broadcast intent.
          *
-         * @param context The application context.
-         * @param authKey The authentication key for the Shizuku server.
-         * @throws IllegalStateException if the Shizuku manager package cannot be found.
+         * @deprecated This is the OLD external-Shizuku flow. Use [PrivilegedRuntime.stopServer]
+         * for the embedded runtime instead — no auth key needed.
          */
+        @Deprecated("Use PrivilegedRuntime.stopServer() — embedded runtime, no auth key needed")
         fun stopServer(context: Context, authKey: String) {
             try {
                 if (!isAvailable()) {
