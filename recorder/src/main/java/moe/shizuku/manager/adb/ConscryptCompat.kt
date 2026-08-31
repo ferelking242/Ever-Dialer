@@ -32,6 +32,11 @@ internal object ConscryptCompat {
             if (Security.getProvider(provider.name) == null) {
                 Security.insertProviderAt(provider, 1)
             }
+            // Conscrypt.install() is required on some devices so the bundled
+            // provider fully registers its SSLSocketFactory and keying-material
+            // export capability. insertProviderAt alone is not enough.
+            runCatching { Conscrypt.install() }
+                .onFailure { Log.d(TAG, "Conscrypt.install() skipped: ${it.message}") }
             Log.i(TAG, "Bundled Conscrypt provider ready: ${provider.name}")
             provider
         }.onFailure {
