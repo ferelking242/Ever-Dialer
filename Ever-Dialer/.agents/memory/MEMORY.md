@@ -1,3 +1,4 @@
 - [Android build environment](android-build-environment.md) — local workspace may lack the SDK; use GitHub Actions as the authoritative Android build check.
 - [Android pairing TLS](android-pairing-tls.md) — prefer the public SSLSession key exporter because hidden Conscrypt reflection can fail at runtime.
 - [Embedded runtime startup](embedded-runtime-startup.md) — run pairing and server startup in a foreground service, with bounded waits and remote failure output.
+- [Embedded runtime package identity](embedded-runtime-package-identity.md) — the pushed server APK path must preserve the app id and its native library layout.
