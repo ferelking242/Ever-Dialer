@@ -340,7 +340,13 @@ object PrivilegedRuntime {
                             "launching starter on ${endpoint.host}:${endpoint.port}"
                         )
                         val starterOutput = StringBuilder()
-                        val launchCmd = "shell:'$starterPath' --apk='$REMOTE_APK_PATH'"
+                        // Re-apply the mode immediately before exec and include
+                        // the remote mode in diagnostics. Some Android builds
+                        // reset permissions when a file is moved in /data/local/tmp.
+                        val launchCmd =
+                            "shell:chmod 755 '$starterPath' 2>&1; " +
+                                "ls -l '$starterPath' 2>&1; " +
+                                "exec '$starterPath' --apk='$REMOTE_APK_PATH'"
                         client.command(launchCmd) { bytes ->
                             starterOutput.append(String(bytes))
                         }
