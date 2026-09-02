@@ -188,6 +188,10 @@ class AdbClient(private val host: String, private val port: Int, private val key
                     message.data?.let { listener?.invoke(it) }
                     write(A_OKAY, localId, message.arg0)
                 }
+                A_OKAY -> {
+                    // adbd may acknowledge our local close before sending
+                    // the final close for the remote shell stream.
+                }
                 A_CLSE -> {
                     write(A_CLSE, localId, message.arg0)
                     break
