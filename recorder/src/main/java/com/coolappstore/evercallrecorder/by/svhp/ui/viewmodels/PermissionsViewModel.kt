@@ -17,7 +17,7 @@ import androidx.lifecycle.AndroidViewModel
 
 import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.onboarding.OnboardingStatus
-import com.coolappstore.evercallrecorder.by.svhp.privileged.PairingActivity
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.ui.screens.PermissionsScreen
 
 /**
@@ -54,10 +54,7 @@ class PermissionsViewModel(application: Application) : AndroidViewModel(applicat
         onPermissionGranted: () -> Unit
     ) {
         when {
-            !status.shizukuRunning           -> appContext.startActivity(
-                Intent(appContext, PairingActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
+            !status.shizukuRunning           -> PrivilegedRuntime.openManagement(appContext)
             !status.shizukuPermissionGranted -> ShizukuConnectionManager.requestPermission()
             !status.notificationsGranted     -> requestRuntimePermission(Manifest.permission.POST_NOTIFICATIONS)
             !status.contactsGranted          -> requestRuntimePermission(Manifest.permission.READ_CONTACTS)

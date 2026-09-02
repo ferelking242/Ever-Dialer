@@ -44,7 +44,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.coolappstore.evercallrecorder.by.svhp.R
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
 import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
-import com.coolappstore.evercallrecorder.by.svhp.privileged.PairingActivity
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.onboarding.OnboardingStatus
 import com.coolappstore.evercallrecorder.by.svhp.system.openAppSettings
 import com.coolappstore.evercallrecorder.by.svhp.ui.common.StorageLocationDialog
@@ -100,10 +100,10 @@ fun PermissionsScreen(
     }
 
     val grantAccess = {
-        // The app owns the privileged runtime. Always route to its embedded
-        // wireless-debugging pairing page; never redirect to an external manager.
+        // Pairing and startup are notification-only. No intermediate activity
+        // is opened, so the main app never gets replaced by a blank page.
         if (!status.shizukuRunning) {
-            activityContext.startActivity(Intent(activityContext, PairingActivity::class.java))
+            PrivilegedRuntime.openManagement(activityContext)
         } else {
             viewModel.onGrantAccess(
                 status = status,

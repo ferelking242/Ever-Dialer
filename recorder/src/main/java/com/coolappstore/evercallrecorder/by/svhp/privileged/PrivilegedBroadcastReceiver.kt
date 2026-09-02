@@ -11,9 +11,6 @@ package com.coolappstore.evercallrecorder.by.svhp.privileged
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 class PrivilegedBroadcastReceiver : BroadcastReceiver() {
 
@@ -21,24 +18,17 @@ class PrivilegedBroadcastReceiver : BroadcastReceiver() {
         val appContext = context.applicationContext
         when (intent.action) {
             ACTION_START_SERVER -> {
-                val pending = goAsync()
-                CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        PrivilegedRuntime.ensureServerStarted(appContext)
-                    } finally {
-                        pending.finish()
-                    }
-                }
+                EmbeddedShizukuService.start(appContext)
             }
             ACTION_STOP_SERVER -> {
                 val pending = goAsync()
-                CoroutineScope(Dispatchers.IO).launch {
+                Thread {
                     try {
                         PrivilegedRuntime.stopServer(appContext)
                     } finally {
                         pending.finish()
                     }
-                }
+                }.start()
             }
         }
     }

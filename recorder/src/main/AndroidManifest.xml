@@ -177,17 +177,11 @@
 
         <!--
              Phase 2 — embedded privileged runtime:
-             dedicated pairing page (wireless debugging, self-pairing), watchdog foreground
-             service keeping the embedded Shizuku server alive, and compatibility receiver
+             notification-only pairing, watchdog foreground service keeping the embedded Shizuku
+             server alive, and compatibility receiver
              intercepting the standard START/STOP broadcasts aimed at the Shizuku manager
              (now routed to OUR embedded runtime instead of an external app).
         -->
-        <activity
-            android:name=".privileged.PairingActivity"
-            android:exported="false"
-            android:label="Privilèges système intégrés"
-            android:theme="@style/Theme.EverCallRecorder" />
-
         <service
             android:name=".privileged.EmbeddedShizukuService"
             android:exported="false"

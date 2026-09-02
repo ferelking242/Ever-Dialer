@@ -98,6 +98,20 @@ fun HomeScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val runtimeState by PrivilegedRuntime.state.collectAsState()
     val shizukuConnected = runtimeState == PrivilegedRuntime.State.RUNNING
+    val runtimeStatus = when (runtimeState) {
+        PrivilegedRuntime.State.RUNNING -> "Actif"
+        PrivilegedRuntime.State.STARTING -> "Starting…"
+        PrivilegedRuntime.State.PAIRED_IDLE -> "Démarrer"
+        PrivilegedRuntime.State.FAILED -> "Réessayer"
+        PrivilegedRuntime.State.NOT_PAIRED -> "Associer"
+    }
+    val runtimeColor = when (runtimeState) {
+        PrivilegedRuntime.State.RUNNING -> Color(0xFF66BB6A)
+        PrivilegedRuntime.State.STARTING -> Color(0xFFFFB74D)
+        PrivilegedRuntime.State.PAIRED_IDLE -> Color(0xFF42A5F5)
+        PrivilegedRuntime.State.FAILED -> Color(0xFFEF5350)
+        PrivilegedRuntime.State.NOT_PAIRED -> Color(0xFFEF5350)
+    }
     val density = LocalDensity.current
     val attentionTransition = rememberInfiniteTransition(label = "embedded-runtime-attention")
     val attentionOffset by attentionTransition.animateFloat(
@@ -139,7 +153,7 @@ fun HomeScreen(
                 actions = {
                     AnimatedVisibility(visible = !isSelectionMode, enter = fadeIn(), exit = fadeOut()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(
+                            Surface(
                                 onClick = {
                                     if (!PrivilegedRuntime.openManagement(context)) {
                                         android.widget.Toast.makeText(
@@ -149,25 +163,45 @@ fun HomeScreen(
                                         ).show()
                                     }
                                 },
+                                shape = RoundedCornerShape(18.dp),
+                                color = runtimeColor.copy(alpha = 0.14f),
+                                contentColor = runtimeColor,
                                 modifier = Modifier
-                                    .size(52.dp)
+                                    .padding(horizontal = 4.dp)
                                     .graphicsLayer {
-                                        translationX = if (shizukuConnected) {
+                                        translationX = if (shizukuConnected || runtimeState == PrivilegedRuntime.State.STARTING) {
                                             0f
                                         } else {
                                             with(density) { attentionOffset.dp.toPx() }
                                         }
                                     }
                             ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Shield,
-                                    contentDescription = if (shizukuConnected)
-                                        "Moteur intégré actif"
-                                    else
-                                        "Configurer le moteur intégré",
-                                    tint = if (shizukuConnected) Color(0xFF66BB6A)
-                                    else Color(0xFFE53935)
-                                )
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    if (runtimeState == PrivilegedRuntime.State.STARTING) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                            color = runtimeColor
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Shield,
+                                            contentDescription = null,
+                                            tint = runtimeColor,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    Text(
+                                        runtimeStatus,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = runtimeColor
+                                    )
+                                }
                             }
                             IconButton(onClick = onSettingsClick, modifier = Modifier.size(52.dp)) {
                                 Icon(Icons.Outlined.Settings, contentDescription = "Settings")

@@ -114,15 +114,53 @@ object PairingNotifier {
     fun onPairingSucceeded(context: Context) {
         Log.i(TAG, "Pairing succeeded — showing Phase 3")
         NtfyReporter.publish("pairing", "pairing completed")
-        showPhase3(context.applicationContext)
         stopWatching(context)
+        showPhase3(context.applicationContext)
     }
 
     fun onPairingFailed(context: Context, error: String) {
         Log.w(TAG, "Pairing failed: $error")
         NtfyReporter.publish("pairing", "failed: $error", "high")
         showFailedNotification(context.applicationContext, error)
-        if (detectedPort > 0) showPhase2(context.applicationContext)
+        if (detectedPort > 0) showPhase2(context.applicationContext, error)
+    }
+
+    fun showStartingNotification(context: Context) {
+        val appCtx = context.applicationContext
+        if (!ensureNotificationPermission(appCtx)) return
+        ensureChannel(appCtx)
+        val n = NotificationCompat.Builder(appCtx, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("Démarrage du moteur intégré…")
+            .setContentText("Ever Dialer prépare l'enregistrement des appels")
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+        post(appCtx, n, "Runtime: starting")
+    }
+
+    fun onRuntimeStarted(context: Context) {
+        Log.i(TAG, "Embedded runtime started")
+        NtfyReporter.publish("runtime", "embedded runtime started from foreground service")
+        showPhase3(context.applicationContext)
+    }
+
+    fun onRuntimeFailed(context: Context, error: Throwable) {
+        val detail = "${error.javaClass.simpleName}: ${error.message ?: "unknown"}"
+        Log.e(TAG, "Embedded runtime failed: $detail", error)
+        NtfyReporter.publish("runtime", "foreground startup failed: $detail", "high")
+        val appCtx = context.applicationContext
+        if (!ensureNotificationPermission(appCtx)) return
+        ensureChannel(appCtx)
+        val n = NotificationCompat.Builder(appCtx, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("Échec du moteur intégré")
+            .setContentText("Appuie sur le badge pour réessayer")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(detail))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build()
+        post(appCtx, n, "Runtime: failed")
     }
 
     // ── Phase 2: mDNS watcher ───────────────────────────────────────────
@@ -133,7 +171,7 @@ object PairingNotifier {
         Log.d(TAG, "Starting mDNS watcher for _adb-tls-pairing._tcp")
 
         try {
-            mdnsWatcher = AdbMdns(appCtx, AdbMdns.TLS_PAIRING) { (host, port) ->
+            val watcher = AdbMdns(appCtx, AdbMdns.TLS_PAIRING) { (host, port) ->
                 Log.d(TAG, "mDNS resolved: host=$host port=$port")
                 if (port > 0) {
                     detectedHost = host.ifBlank { "127.0.0.1" }
@@ -141,7 +179,18 @@ object PairingNotifier {
                     NtfyReporter.publish("pairing", "service discovered host=$detectedHost port=$detectedPort")
                     showPhase2(appCtx)
                 }
-            }.also { runCatching { it.start() } }
+            }
+            mdnsWatcher = watcher
+            runCatching { watcher.start() }.onFailure {
+                mdnsWatcher = null
+                isWatching = false
+                Log.e(TAG, "mDNS watcher failed to start: ${it.message}", it)
+                NtfyReporter.publish(
+                    "pairing",
+                    "mDNS start error ${it.javaClass.simpleName}: ${it.message ?: "unknown"}",
+                    "high"
+                )
+            }
         } catch (e: Throwable) {
             Log.e(TAG, "mDNS watcher failed: ${e.message}", e)
             NtfyReporter.publish(
@@ -155,7 +204,7 @@ object PairingNotifier {
 
     // ── Phase 2: notification with RemoteInput (inline code entry) ──────
 
-    private fun showPhase2(appCtx: Context) {
+    private fun showPhase2(appCtx: Context, error: String? = null) {
         if (!ensureNotificationPermission(appCtx)) return
         ensureChannel(appCtx)
 
@@ -183,10 +232,14 @@ object PairingNotifier {
 
         val n = NotificationCompat.Builder(appCtx, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("Service d'association trouvé")
-            .setContentText("Port : $detectedPort — Entres le code à 6 chiffres")
+            .setContentTitle(if (error == null) "Service d'association trouvé" else "Réessaie le pairing")
+            .setContentText(
+                if (error == null) "Port : $detectedPort — Entres le code à 6 chiffres"
+                else "Échec précédent : ${error.take(90)}"
+            )
             .setStyle(NotificationCompat.BigTextStyle().bigText(
-                "Service de pairing détecté sur le port $detectedPort. " +
+                (if (error == null) "Service de pairing détecté sur le port $detectedPort. "
+                else "Le dernier pairing a échoué : $error. ") +
                     "Tape « Code d'association » puis entre le code à 6 chiffres et envoie."
             ))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -306,14 +359,14 @@ object PairingNotifier {
 /**
  * BroadcastReceiver that handles the RemoteInput reply from Phase 2 notification.
  * The user types the 6-digit code inline in the notification and taps "Envoyer".
- * Includes a bounded timeout so pairing plus embedded-server startup doesn't hang forever.
+ * It immediately hands the long operation to the foreground service. A receiver
+ * must not perform pairing itself because Android can stop it after onReceive.
  */
 class PairingReplyReceiver : BroadcastReceiver() {
 
     companion object {
         const val KEY_PAIRING_CODE = "pairing_code"
         private const val TAG = "PairingReplyReceiver"
-        private const val PAIRING_TIMEOUT_MS = 90_000L // pairing + embedded server startup
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -324,49 +377,26 @@ class PairingReplyReceiver : BroadcastReceiver() {
 
         if (code.isNullOrBlank() || code.length != 6) {
             Log.w(TAG, "Invalid pairing code: '${code?.take(3)}...'")
+            PairingNotifier.onPairingFailed(context, "Le code doit contenir 6 chiffres")
             return
         }
         if (port <= 0) {
             Log.w(TAG, "No pairing port available (port=$port)")
+            PairingNotifier.onPairingFailed(context, "Port de pairing introuvable")
             return
         }
 
         Log.i(TAG, "Pairing code received: host=$host port=$port")
 
-        // Show "Pairing en cours…" notification immediately
+        // Show progress immediately, then hand the operation to a real
+        // foreground service so it survives the receiver lifecycle.
         PairingNotifier.onPairingStarted(context)
-
-        // goAsync() gives up to ~30s but we cap at 20s ourselves
-        val pendingResult = goAsync()
-        Thread {
-            try {
-                val result = kotlinx.coroutines.runBlocking {
-                    kotlinx.coroutines.withTimeoutOrNull(PAIRING_TIMEOUT_MS) {
-                         PrivilegedRuntime.pairAndStart(context, host, port, code)
-                    } ?: Result.failure(java.util.concurrent.TimeoutException(
-                        "Le pairing a pris trop de temps (>${PAIRING_TIMEOUT_MS / 1000}s). " +
-                            "Vérifie que le débogage sans fil est actif et réessaie."
-                    ))
-                }
-                if (result.isSuccess) {
-                    Log.i(TAG, "Pairing succeeded!")
-                    PairingNotifier.onPairingSucceeded(context)
-                } else {
-                    // Get the FULL error message including root cause
-                    val throwable = result.exceptionOrNull()
-                    val errorMsg = throwable?.let {
-                        val root = it.cause ?: it
-                        "${it.message ?: "Erreur"} (${root.javaClass.simpleName})"
-                    } ?: "Erreur inconnue"
-                    Log.e(TAG, "Pairing failed: $errorMsg", throwable)
-                    PairingNotifier.onPairingFailed(context, errorMsg)
-                }
-            } catch (e: Throwable) {
-                Log.e(TAG, "Pairing error: ${e.message}", e)
-                PairingNotifier.onPairingFailed(context, e.message ?: "Erreur fatale")
-            } finally {
-                pendingResult.finish()
-            }
-        }.start()
+        PrivilegedRuntime.markStarting()
+        runCatching {
+            EmbeddedShizukuService.startPairAndStart(context, host, port, code)
+        }.onFailure {
+            Log.e(TAG, "Could not start pairing foreground service", it)
+            PairingNotifier.onPairingFailed(context, it.message ?: "Impossible de démarrer le service")
+        }
     }
 }

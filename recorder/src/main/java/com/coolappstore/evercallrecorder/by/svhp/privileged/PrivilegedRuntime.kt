@@ -57,6 +57,7 @@ object PrivilegedRuntime {
     private const val REMOTE_DIR = "/data/local/tmp/.everdialer"
     private const val REMOTE_APK_PATH = "$REMOTE_DIR/shizuku-server.apk"
     private const val REMOTE_STARTER_PATH = "$REMOTE_DIR/shizuku-starter"
+    private const val REMOTE_LOG_PATH = "$REMOTE_DIR/starter.log"
 
     private val _state = MutableStateFlow(initialState())
     val state: StateFlow<State> = _state
@@ -119,6 +120,10 @@ object PrivilegedRuntime {
     /** Reads the live binder state for UI indicators and click guards. */
     fun isConnected(): Boolean = ShizukuConnectionManager.isAvailable()
 
+    fun markStarting() {
+        _state.value = State.STARTING
+    }
+
     /**
      * Opens the same wireless-debugging flow as the Shizuku manager.
      *
@@ -128,17 +133,22 @@ object PrivilegedRuntime {
         if (isConnected()) return false
 
         val appContext = context.applicationContext
-        // Launch our embedded PairingActivity — it auto-starts the server
-        // after successful pairing and guides the user through Dev Settings.
-        runCatching {
-            appContext.startActivity(
-                Intent(appContext, PairingActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
+        if (isPaired(appContext)) {
+            _state.value = State.STARTING
+            NtfyReporter.publish("runtime", "startup requested from header badge")
+            PairingNotifier.showStartingNotification(appContext)
+            runCatching {
+                EmbeddedShizukuService.start(appContext)
+            }.onFailure {
+                _state.value = State.FAILED
+                PairingNotifier.onRuntimeFailed(appContext, it)
+            }
             return true
         }
-        // Fallback: open Dev Settings directly if PairingActivity can't launch.
-        runCatching { PairingNotifier.showWaitingNotification(appContext) }
+
+        // Pairing is notification-only. The notification opens Android's
+        // developer settings and receives the code inline through RemoteInput.
+        PairingNotifier.showWaitingNotification(appContext)
         runCatching {
             appContext.startActivity(
                 Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
@@ -275,9 +285,13 @@ object PrivilegedRuntime {
                         ensureRemotePayloadChecked(client, appContext, log)
 
                         log?.invoke("Lancement du serveur Shizuku embarqué…")
-                        val launchCmd = "shell:mkdir -p $REMOTE_DIR && nohup setsid " +
-                            "'$REMOTE_STARTER_PATH' --apk='$REMOTE_APK_PATH'" +
-                            " </dev/null >/dev/null 2>&1 & echo ever-started"
+                        NtfyReporter.publish(
+                            "runtime",
+                            "launching starter on ${endpoint.host}:${endpoint.port}"
+                        )
+                        val launchCmd = "shell:mkdir -p '$REMOTE_DIR' && : > '$REMOTE_LOG_PATH' && " +
+                            "nohup '$REMOTE_STARTER_PATH' --apk='$REMOTE_APK_PATH'" +
+                            " </dev/null >'$REMOTE_LOG_PATH' 2>&1 & echo ever-started"
                         client.command(launchCmd)
                     }
                     break
@@ -291,12 +305,22 @@ object PrivilegedRuntime {
             }
             check(connected) { "connexion impossible" }
 
-            log?.invoke("En attente du binder Shizuku (≤60 s)…")
-            val up = waitForBinder(timeoutMillis = 60_000)
+            log?.invoke("En attente du binder Shizuku (≤30 s)…")
+            val up = waitForBinder(timeoutMillis = 30_000)
             if (!up) {
                 _state.value = State.FAILED
-                val msg = "Le serveur ne répond pas. Re-appaire l'appareil ou vérifie le débogage sans fil."
+                val remoteLog = readRemoteStartupLog(endpoint, key)
+                val msg = if (remoteLog.isNullOrBlank()) {
+                    "Le serveur ne répond pas après 30 s. Vérifie le débogage sans fil."
+                } else {
+                    "Le starter a échoué : ${remoteLog.take(700)}"
+                }
                 log?.invoke(msg)
+                NtfyReporter.publish(
+                    "runtime",
+                    "binder timeout; remote starter log=${remoteLog ?: "empty"}",
+                    "high"
+                )
                 return@withContext Result.failure(AdbException(msg))
             }
 
@@ -304,8 +328,6 @@ object PrivilegedRuntime {
             log?.invoke("Privilèges système actifs ✔")
             NtfyReporter.publish("runtime", "embedded Shizuku binder is running")
 
-            // Start the embedded watchdog so the server survives longer.
-            EmbeddedShizukuService.start(appContext)
             Result.success(Unit)
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
@@ -406,6 +428,21 @@ object PrivilegedRuntime {
         }
     } catch (e: Exception) {
         false
+    }
+
+    private fun readRemoteStartupLog(endpoint: AdbEndpoint, key: AdbKey): String? {
+        return runCatching {
+            val output = StringBuilder()
+            AdbClient(endpoint.host, endpoint.port, key).use { client ->
+                client.connect()
+                client.command("shell:tail -c 2000 '$REMOTE_LOG_PATH' 2>/dev/null") { bytes ->
+                    output.append(String(bytes))
+                }
+            }
+            output.toString().trim().takeIf { it.isNotBlank() }
+        }.onFailure {
+            Log.w(TAG, "Could not read remote starter log: ${it.message}")
+        }.getOrNull()
     }
 
     private fun isPairingInvalid(error: Throwable): Boolean {

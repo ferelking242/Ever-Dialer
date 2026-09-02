@@ -12,7 +12,6 @@ import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
-import java.net.NetworkInterface
 
 @RequiresApi(Build.VERSION_CODES.R)
 class AdbMdns(
@@ -28,8 +27,14 @@ class AdbMdns(
     fun start() {
         if (running) return
         running = true
-        if (!registered) {
-            nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener)
+        try {
+            if (!registered) {
+                nsdManager.discoverServices(serviceType, NsdManager.PROTOCOL_DNS_SD, listener)
+            }
+        } catch (error: Throwable) {
+            running = false
+            registered = false
+            throw error
         }
     }
 
@@ -59,31 +64,13 @@ class AdbMdns(
 
     private fun onServiceResolved(resolvedService: NsdServiceInfo) {
         val host = resolvedService.host?.hostAddress ?: return
-        // When adbd is actively offering wireless-debugging pairing, its port IS
-        // bound — so the old isPortAvailable() check (which returned true only when
-        // the port was FREE) caused mDNS to silently discard every service it found.
-        // We now only verify the host belongs to a local network interface.
-        try {
-            if (running && NetworkInterface.getNetworkInterfaces()
-                    .asSequence()
-                    .any { networkInterface ->
-                        networkInterface.inetAddresses
-                            .asSequence()
-                            .any { host == it.hostAddress }
-                    }
-            ) {
-                serviceName = resolvedService.serviceName
-                observer(host to resolvedService.port)
-            }
-        } catch (e: Throwable) {
-            // NetworkInterface.getNetworkInterfaces() can throw on some devices.
-            // If we can't verify the host, accept the service anyway — the user
-            // explicitly enabled wireless debugging, so trust the mDNS result.
-            Log.w(TAG, "NetworkInterface check failed (${e.message}), accepting service")
-            if (running) {
-                serviceName = resolvedService.serviceName
-                observer(host to resolvedService.port)
-            }
+        // NSD already resolved this host from the explicitly requested ADB
+        // service. Do not compare it against NetworkInterface: some Android
+        // builds expose the Wi-Fi address through NSD before the interface list
+        // is refreshed, which used to make discovery fail silently.
+        if (running && resolvedService.port > 0) {
+            serviceName = resolvedService.serviceName
+            observer(host to resolvedService.port)
         }
     }
 
@@ -95,6 +82,8 @@ class AdbMdns(
 
         override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
             Log.v(TAG, "onStartDiscoveryFailed: $serviceType, $errorCode")
+            adbMdns.running = false
+            adbMdns.registered = false
         }
 
         override fun onDiscoveryStopped(serviceType: String) {
@@ -118,7 +107,9 @@ class AdbMdns(
     }
 
     internal class ResolveListener(private val adbMdns: AdbMdns) : NsdManager.ResolveListener {
-        override fun onResolveFailed(nsdServiceInfo: NsdServiceInfo, i: Int) {}
+        override fun onResolveFailed(nsdServiceInfo: NsdServiceInfo, i: Int) {
+            Log.v(TAG, "onResolveFailed: ${nsdServiceInfo.serviceName}, $i")
+        }
 
         override fun onServiceResolved(nsdServiceInfo: NsdServiceInfo) {
             adbMdns.onServiceResolved(nsdServiceInfo)

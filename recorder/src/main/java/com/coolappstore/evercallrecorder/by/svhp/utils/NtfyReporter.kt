@@ -43,18 +43,22 @@ object NtfyReporter {
                 }
             }
         }
+        Log.i(TAG, "Queue diagnostic: priority=$priority message=$message")
         scope.launch {
-            post(message, priority)
+            runCatching { post(message, priority) }
+                .onFailure { Log.e(TAG, "Diagnostic upload crashed: ${it.message}", it) }
         }
     }
 
     private fun post(message: String, priority: String) {
+        Log.i(TAG, "POST diagnostic to ntfy.sh/ever-call")
         val connection = runCatching {
             (URL(ENDPOINT).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = CONNECT_TIMEOUT_MS
                 readTimeout = READ_TIMEOUT_MS
                 doOutput = true
+                setRequestProperty("User-Agent", "EverDialer-EmbeddedRuntime/1")
                 setRequestProperty("Content-Type", "text/plain; charset=utf-8")
                 setRequestProperty("Title", "Ever Call diagnostic")
                 setRequestProperty("Priority", priority)
@@ -72,6 +76,8 @@ object NtfyReporter {
             val responseCode = connection.responseCode
             if (responseCode !in 200..299) {
                 Log.w(TAG, "ntfy rejected diagnostic: HTTP $responseCode")
+            } else {
+                Log.i(TAG, "ntfy diagnostic delivered: HTTP $responseCode")
             }
         } catch (error: Exception) {
             // Diagnostics must never turn a pairing/network issue into another failure.
