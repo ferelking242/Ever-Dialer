@@ -842,7 +842,6 @@ private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, act
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
-    val autoManageShizuku    = remember(updateTrigger) { preferences.isShizukuAutoManageEnabled() }
     val shizukuStartOnRecord = remember(updateTrigger) { preferences.isShizukuStartOnRecordEnabled() }
     val shizukuKeepAlive     = remember(updateTrigger) { preferences.isShizukuKeepAliveEnabled() }
     SettingsSection(title = stringResource(R.string.settings_section_security), icon = Icons.Outlined.Shield) {
@@ -872,7 +871,7 @@ private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, act
                 if (!PrivilegedRuntime.openManagement(context)) {
                     android.widget.Toast.makeText(
                         context,
-                        "Shizuku est déjà connecté ✔",
+                        "Le moteur intégré est déjà actif ✔",
                         android.widget.Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -1041,7 +1040,6 @@ private fun SettingsScreenPreview() {
             override fun setShizukuAutoManageEnabled(enabled: Boolean) {}
             override fun setShizukuStartOnRecordEnabled(enabled: Boolean) {}
             override fun setShizukuKeepAliveEnabled(enabled: Boolean) {}
-            override fun setShizukuAuthKey(key: String) {}
             override fun setFileNameTemplate(template: String) {}
             override fun setAccentColor(argb: Int) {}
             override fun setAutoDeleteByTimeEnabled(enabled: Boolean) {}

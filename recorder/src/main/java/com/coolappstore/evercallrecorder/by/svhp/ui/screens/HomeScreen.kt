@@ -127,7 +127,7 @@ fun HomeScreen(
                                     if (!PrivilegedRuntime.openManagement(context)) {
                                         android.widget.Toast.makeText(
                                             context,
-                                            "Shizuku est déjà connecté ✔",
+                                            "Le moteur intégré est déjà actif ✔",
                                             android.widget.Toast.LENGTH_SHORT
                                         ).show()
                                     }
@@ -137,9 +137,9 @@ fun HomeScreen(
                                 Icon(
                                     imageVector = Icons.Outlined.Shield,
                                     contentDescription = if (shizukuConnected)
-                                        "Shizuku connecté"
+                                        "Moteur intégré actif"
                                     else
-                                        "Configurer Shizuku",
+                                        "Configurer le moteur intégré",
                                     tint = if (shizukuConnected) Color(0xFF66BB6A)
                                     else Color(0xFFE53935)
                                 )

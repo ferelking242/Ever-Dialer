@@ -23,7 +23,6 @@ import androidx.core.net.toUri
 import com.coolappstore.evercallrecorder.by.svhp.AppUrls
 import com.coolappstore.evercallrecorder.by.svhp.BuildConfig
 import com.coolappstore.evercallrecorder.by.svhp.R
-import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.utils.AppLogger
 
 /**
@@ -85,20 +84,6 @@ fun Context.openAppSettings() {
  */
 fun Context.openNotificationListenerSettings() {
     launchSmartIntent(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-}
-
-/**
- * Opens the Shizuku app.
- * If Shizuku is not installed, opens the Shizuku website so the user can download it.
- */
-fun Context.openShizukuManager() {
-    val packageName = ShizukuConnectionManager.getPackageName(this) ?: ""
-    val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-    if (launchIntent != null) {
-        launchSmartIntent(launchIntent)
-    } else {
-        launchSmartIntent(Intent(Intent.ACTION_VIEW).apply { data = AppUrls.SHIZUKU_WEBSITE.toUri() })
-    }
 }
 
 /** Opens the project GitHub page in the browser. */

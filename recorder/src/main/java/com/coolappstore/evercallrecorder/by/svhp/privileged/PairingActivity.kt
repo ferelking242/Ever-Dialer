@@ -11,21 +11,12 @@
  */
 package com.coolappstore.evercallrecorder.by.svhp.privileged
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,9 +28,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -67,7 +60,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -77,29 +69,11 @@ private const val TAG = "PairingActivity"
 
 class PairingActivity : ComponentActivity() {
 
-    private val requestNotifPerm = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        Log.d(TAG, "POST_NOTIFICATIONS granted=$granted")
-        if (granted) {
-            PairingNotifier.showWaitingNotification(this)
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        PrivilegedRuntime.refreshState()
-
-        // Request POST_NOTIFICATIONS if not granted (Android 13+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(
-                    this, Manifest.permission.POST_NOTIFICATIONS
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                Log.d(TAG, "Requesting POST_NOTIFICATIONS permission")
-                requestNotifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
+        // Restore PAIRED_IDLE after a process restart. The embedded runtime
+        // does not require an external Shizuku app or notification permission.
+        PrivilegedRuntime.refreshState(this)
 
         setContent { MaterialTheme { PairingScreen() } }
     }
@@ -138,23 +112,29 @@ private fun PairingScreen() {
         onDispose { mdns?.stop() }
     }
 
-    // Auto-start server after successful pairing
-    LaunchedEffect(runtimeState) {
-        if (runtimeState == PrivilegedRuntime.State.PAIRED_IDLE) {
+    // This must not be keyed to runtimeState: ensureServerStarted changes the
+    // state to STARTING, which would cancel the effect that started it.
+    LaunchedEffect(Unit) {
+        if (PrivilegedRuntime.isPaired(context) && !PrivilegedRuntime.isConnected()) {
             busy = true
-            PrivilegedRuntime.ensureServerStarted(context) { }.onFailure { /* silent */ }
+            PrivilegedRuntime.ensureServerStarted(context).onFailure {
+                errorMsg = friendlyErrorMessage(it)
+            }
             busy = false
         }
     }
 
-    val isPaired = runtimeState == PrivilegedRuntime.State.RUNNING ||
+    val isRunning = runtimeState == PrivilegedRuntime.State.RUNNING
+    val isStarting = busy ||
+        runtimeState == PrivilegedRuntime.State.STARTING ||
         runtimeState == PrivilegedRuntime.State.PAIRED_IDLE
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(24.dp),
+            .padding(24.dp)
+            .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -164,8 +144,10 @@ private fun PairingScreen() {
         Spacer(Modifier.height(4.dp))
 
         // ── Main content ────────────────────────────────
-        if (isPaired) {
+        if (isRunning) {
             SuccessCard(runtimeState, context)
+        } else if (isStarting) {
+            StartingCard()
         } else {
             PairingContent(
                 port = pairingPort,
@@ -188,7 +170,7 @@ private fun PairingScreen() {
                     scope.launch {
                         busy = true
                         errorMsg = null
-                        PrivilegedRuntime.pairWithCode(
+                        PrivilegedRuntime.pairAndStart(
                             context,
                             intentHost,
                             port,
@@ -196,11 +178,11 @@ private fun PairingScreen() {
                         ).onSuccess {
                             Log.d(TAG, "Pairing succeeded!")
                             PairingNotifier.onPairingSucceeded(context)
+                            busy = false
                         }.onFailure { e ->
                             Log.e(TAG, "Pairing failed", e)
-                            val root = e.cause ?: e
                             val friendly = friendlyErrorMessage(e)
-                            errorMsg = friendly + "\n(${root.javaClass.simpleName}: ${root.message?.take(60) ?: "?"})"
+                            errorMsg = friendly
                             PairingNotifier.onPairingFailed(context, friendly)
                             busy = false
                         }
@@ -241,7 +223,7 @@ private fun friendlyErrorMessage(e: Throwable): String {
             "Erreur de connexion — vérifie le débogage sans fil"
         e.message?.contains("Pairing failed", true) == true ->
             "Échec du pairing — vérifie le code et le port"
-        else -> "Erreur : ${e.message?.take(80) ?: "inconnue"}"
+        else -> "Le moteur intégré n'a pas pu démarrer — réessaie après avoir activé le débogage sans fil"
     }
 }
 
@@ -417,6 +399,37 @@ private fun SuccessCard(state: PrivilegedRuntime.State, context: android.content
             ) {
                 Text("Fermer")
             }
+        }
+    }
+}
+
+@Composable
+private fun StartingCard() {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            Modifier.padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            CircularProgressIndicator(modifier = Modifier.size(32.dp))
+            Text(
+                "Activation du moteur intégré…",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                "Le serveur embarqué démarre. Ne ferme pas l'application.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }

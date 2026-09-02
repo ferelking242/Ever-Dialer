@@ -15,7 +15,6 @@ package com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku
 
 import android.content.ComponentName
 import android.content.Context
-import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
@@ -130,77 +129,6 @@ class ShizukuConnectionManager(
         fun requestPermission() {
             if (!hasPermission()) {
                 Shizuku.requestPermission(PERMISSION_REQUEST_CODE)
-            }
-        }
-
-        /**
-         * Resolves the Shizuku manager app package name using its declared permission.
-         * This ensures we can find the app even if the user has enabled the "hide app" feature.
-         * @return The package name of the Shizuku manager app, or null if it cannot be found (e.g. not installed).
-         */
-        fun getPackageName(context: Context): String? {
-            return runCatching {
-                context.packageManager.getPermissionInfo(ShizukuProvider.PERMISSION, 0)
-            }.getOrNull()?.packageName
-        }
-
-        /**
-         * Starts the Shizuku ADB server via broadcast intent. Can be called even if already running.
-         *
-         * @deprecated This is the OLD external-Shizuku flow. Use [PrivilegedRuntime.ensureServerStarted]
-         * for the embedded runtime instead — no auth key needed.
-         */
-        @Deprecated("Use PrivilegedRuntime.ensureServerStarted() — embedded runtime, no auth key needed")
-        fun startServer(context: Context, authKey: String) {
-            try {
-                if (isAvailable()) {
-                    AppLogger.i(TAG, "Shizuku server is already running, no need to send start broadcast")
-                    return
-                }
-                val packageName = getPackageName(context) ?: throw IllegalStateException("Shizuku manager package not found, cannot start server")
-
-                val action = "moe.shizuku.privileged.api.START"
-                val intent = Intent(action)
-
-                intent.apply {
-                    setPackage(packageName)
-                    putExtra("auth", authKey)
-                    addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
-                }
-                context.sendBroadcast(intent)
-                AppLogger.i(TAG, "Sent broadcast to start Shizuku server to $packageName")
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "Failed to send broadcast to start Shizuku server", e)
-            }
-        }
-
-        /**
-         * Stops the Shizuku server via broadcast intent.
-         *
-         * @deprecated This is the OLD external-Shizuku flow. Use [PrivilegedRuntime.stopServer]
-         * for the embedded runtime instead — no auth key needed.
-         */
-        @Deprecated("Use PrivilegedRuntime.stopServer() — embedded runtime, no auth key needed")
-        fun stopServer(context: Context, authKey: String) {
-            try {
-                if (!isAvailable()) {
-                    AppLogger.i(TAG, "Shizuku server is already stopped, no need to send stop broadcast")
-                    return
-                }
-                val packageName = getPackageName(context) ?: throw IllegalStateException("Shizuku manager package not found, cannot stop server")
-
-                val action = "moe.shizuku.privileged.api.STOP"
-                val intent = Intent(action)
-
-                intent.apply {
-                    setPackage(packageName)
-                    putExtra("auth", authKey)
-                    addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES)
-                }
-                context.sendBroadcast(intent)
-                AppLogger.i(TAG, "Sent broadcast to stop Shizuku server to $packageName")
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "Failed to send broadcast to stop Shizuku server", e)
             }
         }
 

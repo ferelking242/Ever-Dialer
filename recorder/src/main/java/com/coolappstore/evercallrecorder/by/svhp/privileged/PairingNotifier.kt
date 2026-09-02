@@ -306,14 +306,14 @@ object PairingNotifier {
 /**
  * BroadcastReceiver that handles the RemoteInput reply from Phase 2 notification.
  * The user types the 6-digit code inline in the notification and taps "Envoyer".
- * Includes a 20-second timeout so the pairing attempt doesn't hang forever.
+ * Includes a bounded timeout so pairing plus embedded-server startup doesn't hang forever.
  */
 class PairingReplyReceiver : BroadcastReceiver() {
 
     companion object {
         const val KEY_PAIRING_CODE = "pairing_code"
         private const val TAG = "PairingReplyReceiver"
-        private const val PAIRING_TIMEOUT_MS = 20_000L // 20s max for SPAKE2+ handshake
+        private const val PAIRING_TIMEOUT_MS = 90_000L // pairing + embedded server startup
     }
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -342,7 +342,7 @@ class PairingReplyReceiver : BroadcastReceiver() {
             try {
                 val result = kotlinx.coroutines.runBlocking {
                     kotlinx.coroutines.withTimeoutOrNull(PAIRING_TIMEOUT_MS) {
-                        PrivilegedRuntime.pairWithCode(context, host, port, code)
+                         PrivilegedRuntime.pairAndStart(context, host, port, code)
                     } ?: Result.failure(java.util.concurrent.TimeoutException(
                         "Le pairing a pris trop de temps (>${PAIRING_TIMEOUT_MS / 1000}s). " +
                             "Vérifie que le débogage sans fil est actif et réessaie."

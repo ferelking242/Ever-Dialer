@@ -11,6 +11,7 @@ package com.coolappstore.evercallrecorder.by.svhp.onboarding
 import android.content.Context
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
 import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.system.permissions.PermissionChecks
 import com.coolappstore.evercallrecorder.by.svhp.system.storage.SafHelper
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.AppNavigationViewModel
@@ -81,10 +82,9 @@ object OnboardingStatus {
             callLogGranted           = PermissionChecks.hasCallLogPermission(context),
             batteryExempted          = PermissionChecks.hasBatteryExemption(context),
             storageSelected          = SafHelper.isStorageConfigured(context, preferences),
-            // Special check here, if the auto-manage option was enabled, users already passed this check, and we can assume app will be able to start/stop Shizuku as needed.
-            shizukuRunning           = ShizukuConnectionManager.isAvailable() || preferences.isShizukuAutoManageEnabled(),
-            // We provide the context to use the Android Permission system as a fallback. Since if isShizukuAutoManageEnabled is enabled, we can assume the
-            // shizuku server may not be running at the moment.
+            // Auto-manage means the app may start the server; it does not mean
+            // that the embedded binder is already available.
+            shizukuRunning           = PrivilegedRuntime.isConnected(),
             shizukuPermissionGranted = ShizukuConnectionManager.hasPermission(context)
         )
     }

@@ -75,10 +75,9 @@ class AppPreferences(private val context: Context) {
         const val DYNAMIC_COLOR = true
         const val SHOW_TOASTS = true
         const val RECORDING_NOTIFICATIONS_ENABLED = false
-        const val SHIZUKU_AUTO_MANAGE = false
+        const val SHIZUKU_AUTO_MANAGE = true
         const val SHIZUKU_START_ON_RECORD = false
         const val SHIZUKU_KEEP_ALIVE = false
-        const val SHIZUKU_AUTH_KEY = ""
         // Accent color default: original green
         val ACCENT_COLOR: Int = DEFAULT_ACCENT_ARGB
         // Auto-delete defaults
@@ -95,8 +94,9 @@ class AppPreferences(private val context: Context) {
         val APP_LOCK_METHOD = AppLockMethod.NONE
         val APP_LOCK_SECRET_HASH: String? = null
         val APP_LOCK_SALT: String? = null
-        // Record calls from apps defaults — both OFF (unticked) until the user opts in.
-        const val RECORD_WHATSAPP_CALLS = false
+        // WhatsApp call recording is enabled with the main recording switch.
+        // Telegram remains opt-in because its notification formats vary by version.
+        const val RECORD_WHATSAPP_CALLS = true
         const val RECORD_TELEGRAM_CALLS = false
         // Call detection defaults to the original, proven phone-state broadcast method.
         val CALL_DETECTION_MODE = CallDetectionMode.PHONE_STATE
@@ -134,7 +134,6 @@ class AppPreferences(private val context: Context) {
         SHIZUKU_AUTO_MANAGE("shizuku_auto_manage"),
         SHIZUKU_START_ON_RECORD("shizuku_start_on_record"),
         SHIZUKU_KEEP_ALIVE("shizuku_keep_alive"),
-        SHIZUKU_AUTH_KEY("shizuku_auth_key"),
         ACCENT_COLOR("accent_color"),
         AUTO_DELETE_BY_TIME_ENABLED("auto_delete_by_time_enabled"),
         AUTO_DELETE_BY_TIME_VALUE("auto_delete_by_time_value"),
@@ -351,8 +350,6 @@ class AppPreferences(private val context: Context) {
     fun setShizukuStartOnRecordEnabled(enabled: Boolean) = setBoolean(Key.SHIZUKU_START_ON_RECORD, enabled)
     fun isShizukuKeepAliveEnabled() = getBoolean(Key.SHIZUKU_KEEP_ALIVE, DefaultsValue.SHIZUKU_KEEP_ALIVE)
     fun setShizukuKeepAliveEnabled(enabled: Boolean) = setBoolean(Key.SHIZUKU_KEEP_ALIVE, enabled)
-    fun getShizukuAuthKey() = getString(Key.SHIZUKU_AUTH_KEY, DefaultsValue.SHIZUKU_AUTH_KEY) ?: DefaultsValue.SHIZUKU_AUTH_KEY
-    fun setShizukuAuthKey(key: String) = setString(Key.SHIZUKU_AUTH_KEY, key)
     /** Returns the custom accent color as ARGB-packed Int (used when dynamic color is disabled). */
     fun getAccentColor(): Int = getInt(Key.ACCENT_COLOR, DefaultsValue.ACCENT_COLOR)
     /** Stores the custom accent color as ARGB-packed Int. */

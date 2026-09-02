@@ -22,10 +22,13 @@ import com.coolappstore.evercallrecorder.by.svhp.BuildConfig
 import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import moe.shizuku.manager.adb.AdbClient
@@ -56,7 +59,9 @@ object PrivilegedRuntime {
     private val _state = MutableStateFlow(initialState())
     val state: StateFlow<State> = _state
 
+    @Volatile
     private var startingJobCount = 0
+    private val startMutex = Mutex()
 
     private fun initialState(): State =
         if (ShizukuConnectionManager.isAvailable()) State.RUNNING else State.NOT_PAIRED
@@ -152,7 +157,6 @@ object PrivilegedRuntime {
                     Log.i(TAG, "Pairing succeeded")
                     NtfyReporter.publish("pairing", "SPAKE2+ handshake succeeded")
                     _state.value = State.PAIRED_IDLE
-                    PairingNotifier.onPairingSucceeded(context)
                     Result.success(Unit)
                 } else {
                     Log.w(TAG, "Pairing failed (wrong code or stale port)")
@@ -160,11 +164,30 @@ object PrivilegedRuntime {
                     Result.failure(AdbException("Code invalide ou port expiré"))
                 }
             } catch (e: Throwable) {
+                if (e is CancellationException) throw e
                 Log.e(TAG, "Pairing error", e)
                 NtfyReporter.publish("pairing", "error ${e.javaClass.simpleName}: ${e.message ?: "unknown"}", "high")
                 Result.failure(e)
             }
         }
+
+    /**
+     * Pair the device and immediately bring the embedded server up.
+     *
+     * Pairing only stores the ADB key. Keeping the server start in this stable
+     * runtime layer (rather than in a Compose effect) means the operation
+     * continues even if the pairing screen is recreated or closed.
+     */
+    suspend fun pairAndStart(
+        context: Context,
+        host: String,
+        port: Int,
+        code: String
+    ): Result<Unit> {
+        val pairing = pairWithCode(context, host, port, code)
+        if (pairing.isFailure) return pairing
+        return ensureServerStarted(context)
+    }
 
     /**
      * Starts NSD discovery of the one-time `_adb-tls-pairing._tcp` service so the UI
@@ -194,9 +217,10 @@ object PrivilegedRuntime {
     suspend fun ensureServerStarted(
         context: Context,
         log: ((String) -> Unit)? = null
-    ): Result<Unit> = withContext(Dispatchers.IO) {
-        startingJobCount++
-        try {
+    ): Result<Unit> = startMutex.withLock {
+        withContext(Dispatchers.IO) {
+            startingJobCount++
+            try {
             val appContext = context.applicationContext
             if (ShizukuConnectionManager.isAvailable()) {
                 log?.invoke("Serveur déjà actif ✔")
@@ -265,13 +289,15 @@ object PrivilegedRuntime {
             // Start the embedded watchdog so the server survives longer.
             EmbeddedShizukuService.start(appContext)
             Result.success(Unit)
-        } catch (e: Throwable) {
-            Log.e(TAG, "ensureServerStarted failed", e)
-            NtfyReporter.publish("runtime", "startup error ${e.javaClass.simpleName}: ${e.message ?: "unknown"}", "high")
-            _state.value = State.FAILED
-            Result.failure(e)
-        } finally {
-            startingJobCount--
+            } catch (e: Throwable) {
+                if (e is CancellationException) throw e
+                Log.e(TAG, "ensureServerStarted failed", e)
+                NtfyReporter.publish("runtime", "startup error ${e.javaClass.simpleName}: ${e.message ?: "unknown"}", "high")
+                _state.value = State.FAILED
+                Result.failure(e)
+            } finally {
+                startingJobCount--
+            }
         }
     }
 

@@ -17,8 +17,7 @@ import androidx.lifecycle.AndroidViewModel
 
 import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.onboarding.OnboardingStatus
-import com.coolappstore.evercallrecorder.by.svhp.system.openAppSettings
-import com.coolappstore.evercallrecorder.by.svhp.system.openShizukuManager
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PairingActivity
 import com.coolappstore.evercallrecorder.by.svhp.ui.screens.PermissionsScreen
 
 /**
@@ -41,7 +40,7 @@ class PermissionsViewModel(application: Application) : AndroidViewModel(applicat
      * For each runtime permission:
      *  - First press → the system permission dialog is shown via [requestRuntimePermission].
      *  - If the OS cannot show the popup (permanent denial), [PermissionsScreen] handles the
-     *    fallback by calling [openAppSettings] in the launcher result callback.
+     *    fallback by opening this app's system settings.
      *
      * @param status                   Current state of every permission and setup step.
      * @param requestRuntimePermission Launches the system permission dialog for a given permission.
@@ -55,7 +54,10 @@ class PermissionsViewModel(application: Application) : AndroidViewModel(applicat
         onPermissionGranted: () -> Unit
     ) {
         when {
-            !status.shizukuRunning           -> appContext.openShizukuManager()
+            !status.shizukuRunning           -> appContext.startActivity(
+                Intent(appContext, PairingActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
             !status.shizukuPermissionGranted -> ShizukuConnectionManager.requestPermission()
             !status.notificationsGranted     -> requestRuntimePermission(Manifest.permission.POST_NOTIFICATIONS)
             !status.contactsGranted          -> requestRuntimePermission(Manifest.permission.READ_CONTACTS)

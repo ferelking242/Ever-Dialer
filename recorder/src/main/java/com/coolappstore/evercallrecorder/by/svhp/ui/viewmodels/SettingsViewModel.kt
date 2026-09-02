@@ -55,7 +55,6 @@ interface SettingsActions {
     fun setShizukuAutoManageEnabled(enabled: Boolean)
     fun setShizukuStartOnRecordEnabled(enabled: Boolean)
     fun setShizukuKeepAliveEnabled(enabled: Boolean)
-    fun setShizukuAuthKey(key: String)
     fun setFileNameTemplate(template: String)
     fun setAccentColor(argb: Int)
     fun setAutoDeleteByTimeEnabled(enabled: Boolean)
@@ -170,7 +169,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     override fun setShizukuAutoManageEnabled(enabled: Boolean) { preferences.setShizukuAutoManageEnabled(enabled); refresh() }
     override fun setShizukuStartOnRecordEnabled(enabled: Boolean) { preferences.setShizukuStartOnRecordEnabled(enabled); refresh() }
     override fun setShizukuKeepAliveEnabled(enabled: Boolean) { preferences.setShizukuKeepAliveEnabled(enabled); refresh() }
-    override fun setShizukuAuthKey(key: String) { preferences.setShizukuAuthKey(key); refresh() }
     override fun setLoggingEnabled(enabled: Boolean) {
         preferences.setLoggingEnabled(enabled)
         if (!enabled) AppLogger.clearLogs()

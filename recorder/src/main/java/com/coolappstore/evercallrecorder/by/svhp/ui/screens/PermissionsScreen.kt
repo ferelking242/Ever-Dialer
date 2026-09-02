@@ -100,12 +100,9 @@ fun PermissionsScreen(
     }
 
     val grantAccess = {
-        // Phase 2 — embedded privileged runtime: when the Shizuku server isn't running
-        // AND no external manager app is installed, route the user to OUR dedicated
-        // wireless-debugging pairing page instead of the "install/open Shizuku" flow.
-        val externalManager = ShizukuConnectionManager.getPackageName(activityContext)
-            ?.takeIf { it != activityContext.packageName }
-        if (!status.shizukuRunning && externalManager == null) {
+        // The app owns the privileged runtime. Always route to its embedded
+        // wireless-debugging pairing page; never redirect to an external manager.
+        if (!status.shizukuRunning) {
             activityContext.startActivity(Intent(activityContext, PairingActivity::class.java))
         } else {
             viewModel.onGrantAccess(

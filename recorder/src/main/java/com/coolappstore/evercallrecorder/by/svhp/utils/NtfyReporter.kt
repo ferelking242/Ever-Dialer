@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
+import java.util.LinkedHashMap
 
 object NtfyReporter {
     private const val TAG = "NtfyReporter"
@@ -22,11 +23,26 @@ object NtfyReporter {
     private const val CONNECT_TIMEOUT_MS = 5_000
     private const val READ_TIMEOUT_MS = 5_000
     private const val MAX_MESSAGE_LENGTH = 1_500
+    private const val DEDUPE_WINDOW_MS = 10_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val recentMessages = LinkedHashMap<String, Long>()
 
     fun publish(event: String, detail: String, priority: String = "default") {
         val message = sanitize("$event: $detail")
+        val dedupeKey = "$priority|$message"
+        synchronized(recentMessages) {
+            val now = System.currentTimeMillis()
+            val previous = recentMessages[dedupeKey]
+            if (previous != null && now - previous < DEDUPE_WINDOW_MS) return
+            recentMessages[dedupeKey] = now
+            if (recentMessages.size > 64) {
+                recentMessages.entries.iterator().let { iterator ->
+                    iterator.next()
+                    iterator.remove()
+                }
+            }
+        }
         scope.launch {
             post(message, priority)
         }

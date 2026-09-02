@@ -95,10 +95,10 @@
     <!-- Same label as settings_recording_folder_label -->
     <string name="permission_storage_description">Select where recordings will be saved.</string>
 
-    <string name="permission_shizuku_label" translatable="false">Shizuku</string>
-    <string name="permission_shizuku_description">Required to start the audio recording (ShellService) with scrcpy.</string>
-    <string name="permission_shizuku_not_running">Not running</string>
-    <string name="permission_shizuku_open">Open Shizuku</string>
+    <string name="permission_shizuku_label" translatable="false">Moteur système intégré</string>
+    <string name="permission_shizuku_description">Nécessaire pour démarrer l'enregistrement audio avec le moteur embarqué.</string>
+    <string name="permission_shizuku_not_running">Non connecté</string>
+    <string name="permission_shizuku_open">Configurer le moteur intégré</string>
 
     <!-- Settings Screen: Section Titles -->
     <string name="settings_section_about">About</string>
@@ -121,13 +121,13 @@
     <string name="settings_accent_color_hex">Hex Code</string>
 
     <!-- Settings Screen: Security Section -->
-    <string name="settings_shizuku_auto_manage">Manage Shizuku</string>
-    <string name="settings_shizuku_auto_manage_desc">Automatically start and stop Shizuku</string>
+    <string name="settings_shizuku_auto_manage">Moteur système intégré</string>
+    <string name="settings_shizuku_auto_manage_desc">Démarre automatiquement le moteur embarqué quand l'enregistrement en a besoin</string>
     <string name="settings_shizuku_auth_key">Shizuku Intents Auth Key</string>
-    <string name="settings_shizuku_start_on_record">Start only when recording</string>
-    <string name="settings_shizuku_start_on_record_desc">Shizuku will only start when you press record or an auto-recording rule matches</string>
-    <string name="settings_shizuku_keep_alive">Keep Shizuku alive</string>
-    <string name="settings_shizuku_keep_alive_desc">Do not send the stop intent</string>
+    <string name="settings_shizuku_start_on_record">Démarrer uniquement pendant l'enregistrement</string>
+    <string name="settings_shizuku_start_on_record_desc">Le moteur embarqué démarre seulement lorsqu'un enregistrement est demandé</string>
+    <string name="settings_shizuku_keep_alive">Garder le moteur actif</string>
+    <string name="settings_shizuku_keep_alive_desc">Évite d'arrêter le moteur entre deux enregistrements</string>
 
     <!-- Settings Screen: Recording Section -->
     <string name="settings_tap_to_select_folder">Tap to choose storage…</string>
@@ -286,7 +286,7 @@
     <string name="recording_notification_current_country_tip">🏠Home-Country</string>
     <string name="recording_notification_title">Recording in progress</string>
     <string name="recording_notification_press_to_start">Press to start recording</string>
-    <string name="recording_notification_waiting_shizuku">Waiting for Shizuku Server to start...</string>
+    <string name="recording_notification_waiting_shizuku">En attente du démarrage du moteur intégré…</string>
     <string name="recording_notification_press_to_pause">Press to pause recording</string>
     <string name="recording_notification_press_to_resume">Press to resume recording</string>
     <string name="recording_toast_standby">Entering standby for %1$s call.</string>
