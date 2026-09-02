@@ -1,0 +1,1 @@
+modules = ["java-graalvm22.3", "python-base-3.13"]

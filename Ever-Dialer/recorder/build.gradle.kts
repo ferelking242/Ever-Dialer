@@ -1,0 +1,386 @@
+/*
+ * ShizuCallRecorder: FOSS Call recording powered through ADB/Shizuku!
+ *  Copyright (C) 2026-present kitsumed (Med)
+ *  This software is licensed under the GNU General Public License v3 or later, with additional terms as permitted under Section 7.
+ *  The full license text is available in the LICENSE file at the root of this project.
+ *  This software is distributed WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ */
+
+import java.net.URI
+import java.security.MessageDigest
+import java.util.zip.ZipInputStream
+
+plugins {
+    alias(libs.plugins.android.library)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.parcelize)
+    alias(libs.plugins.aboutlibraries)
+}
+
+val scrcpyVersion = "4.0"
+val scrcpyServerUrl = "https://github.com/Genymobile/scrcpy/releases/download/v$scrcpyVersion/scrcpy-server-v$scrcpyVersion"
+val scrcpyServerSha256 = "84924bd564a1eb6089c872c7521f968058977f91f5ff02514a8c74aff3210f3a"
+val scrcpyServerAssetName = "scrcpy-server"
+
+// ── Embedded privileged runtime (Phase 2): pinned thedjchi/Shizuku fork ──
+// The fork release APK carries both the Shizuku server classes (launched via
+// app_process at runtime) and the prebuilt SPAKE2p pairing lib (libadb.so) plus
+// the privileged starter executable (libshizuku.so). Pinned by SHA-256.
+val shizukuForkVersion = "13.7.0-thedjchi"
+val shizukuApkUrl = "https://github.com/thedjchi/Shizuku/releases/download/v$shizukuForkVersion/shizuku-v$shizukuForkVersion.apk"
+val shizukuApkSha256 = "6ea6dee65d5ddc626b6b75b2c2f67f8cc547fa47d7b437e6892639c37eaffe43"
+val shizukuGenDir = layout.buildDirectory.dir("generated/shizuku")
+val shizukuAssetRelPath = "shizuku/server.apk"
+val scrcpyDownloadDir = layout.buildDirectory.dir("generated/scrcpy/assets")
+val scrcpyServerAssetFile = scrcpyDownloadDir.map { it.file(scrcpyServerAssetName) }
+// Bundled copy checked into the repo. If present (and hash matches), it is used
+// instead of hitting GitHub at build time, avoiding release-download API/rate-limit failures.
+val bundledScrcpyServerFile = layout.projectDirectory.file("scrcpy-server/scrcpy-server-v$scrcpyVersion")
+val libphonenumberMetadataDir = layout.buildDirectory.dir("generated/libphonenumber/assets")
+
+// Detect if we're running in a CI environment (e.g., GitHub Actions).
+val isEnvironmentGithubCI = providers.environmentVariable("GITHUB_ACTIONS").isPresent
+
+abstract class DownloadAssetTask : DefaultTask() {
+    @get:Input
+    abstract val url: Property<String>
+
+    @get:Input
+    abstract val sha256: Property<String>
+
+    @get:Input
+    abstract val assetName: Property<String>
+
+    @get:InputFile
+    @get:Optional
+    abstract val bundledFile: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun download() {
+        val targetFile = outputDir.get().file(assetName.get()).asFile
+        targetFile.parentFile.mkdirs()
+
+        // 1. Prefer the locally bundled copy, if it exists and matches the expected hash.
+        val bundled = bundledFile.orNull?.asFile
+        if (bundled != null && bundled.exists()) {
+            val bundledHash = calculateSha256(bundled)
+            if (bundledHash.equals(sha256.get(), ignoreCase = true)) {
+                println("Using bundled ${assetName.get()} (no download needed).")
+                bundled.copyTo(targetFile, overwrite = true)
+                return
+            } else {
+                println("Bundled ${assetName.get()} hash mismatch (expected ${sha256.get()}, got $bundledHash), falling back to download.")
+            }
+        }
+
+        // 2. Skip re-download if the previously produced output is already correct.
+        if (targetFile.exists() && calculateSha256(targetFile).equals(sha256.get(), ignoreCase = true)) {
+            println("${assetName.get()} is already up-to-date.")
+            return
+        }
+
+        // 3. Fall back to downloading from GitHub.
+        println("Downloading ${assetName.get()}...")
+
+        URI(url.get()).toURL().openStream().use { input ->
+            targetFile.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+
+        val actualHash = calculateSha256(targetFile)
+        if (!actualHash.equals(sha256.get(), ignoreCase = true)) {
+            targetFile.delete()
+            throw GradleException("SHA256 mismatch! Expected ${sha256.get()} but got $actualHash")
+        }
+    }
+
+    private fun calculateSha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(8192)
+            var bytesRead = input.read(buffer)
+            while (bytesRead != -1) {
+                digest.update(buffer, 0, bytesRead)
+                bytesRead = input.read(buffer)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+}
+/**
+ * Downloads (cached by SHA-256) the pinned thedjchi/Shizuku fork release APK and extracts:
+ *  - the APK itself as a packaged asset (classes.dex hosts moe.shizuku.server.*, launched at
+ *    runtime via app_process from /data/local/tmp through our own wireless-debugging link),
+ *  - prebuilt libadb.so (SPAKE2p pairing JNI backing moe.shizuku.manager.adb.AdbPairingClient)
+ *    and libshizuku.so (privileged starter executable) into jniLibs for our target ABIs.
+ * Zero native compilation required — binaries are bit-identical to the upstream release.
+ */
+abstract class PrepareShizukuEmbeddedTask : DefaultTask() {
+    @get:Input
+    abstract val url: Property<String>
+
+    @get:Input
+    abstract val sha256: Property<String>
+
+    @get:Input
+    abstract val assetRelPath: Property<String>
+
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+
+    @TaskAction
+    fun run() {
+        val outDir = outputDir.get().asFile
+        val apkFile = File(outDir, "shizuku-fork.apk")
+
+        fun sha256Of(file: File): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(65536)
+                var read: Int
+                while (input.read(buffer).also { read = it } != -1) digest.update(buffer, 0, read)
+            }
+            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
+
+        if (!apkFile.exists() || !sha256Of(apkFile).equals(sha256.get(), ignoreCase = true)) {
+            apkFile.parentFile.mkdirs()
+            println("Downloading embedded Shizuku server (pinned ${sha256.get().take(12)}…)...")
+            URI(url.get()).toURL().openStream().use { input ->
+                apkFile.outputStream().use { output -> input.copyTo(output) }
+            }
+            val actual = sha256Of(apkFile)
+            if (!actual.equals(sha256.get(), ignoreCase = true)) {
+                apkFile.delete()
+                throw GradleException("Shizuku APK SHA256 mismatch! Expected ${sha256.get()} but got $actual")
+            }
+        } else {
+            println("Embedded Shizuku APK already up-to-date.")
+        }
+
+        // 1. Asset copy — pushed to /data/local/tmp/.everdialer/ at runtime.
+        val assetFile = File(outDir, "assets/${assetRelPath.get()}")
+        assetFile.parentFile.mkdirs()
+        apkFile.copyTo(assetFile, overwrite = true)
+
+        // 2. Prebuilt native libs → generated jniLibs dir (wired below).
+        val jniRoot = File(outDir, "jniLibs")
+        jniRoot.deleteRecursively()
+        ZipInputStream(apkFile.inputStream().buffered()).use { zip ->
+            var entry = zip.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory &&
+                    entry.name.matches(Regex("lib/(arm64-v8a|armeabi-v7a)/lib(adb|shizuku)\\.so"))
+                ) {
+                    val dest = File(jniRoot, entry.name.removePrefix("lib/"))
+                    dest.parentFile.mkdirs()
+                    dest.outputStream().use { zip.copyTo(it) }
+                }
+                entry = zip.nextEntry
+            }
+        }
+    }
+}
+
+abstract class ExtractMetadataTask : Sync() {
+    @get:OutputDirectory
+    abstract val outputDir: DirectoryProperty
+}
+
+val downloadScrcpyServer = tasks.register<DownloadAssetTask>("downloadScrcpyServer") {
+    url.set(scrcpyServerUrl)
+    sha256.set(scrcpyServerSha256)
+    assetName.set(scrcpyServerAssetName)
+    if (bundledScrcpyServerFile.asFile.exists()) {
+        bundledFile.set(bundledScrcpyServerFile)
+    }
+    outputDir.set(scrcpyDownloadDir)
+}
+
+val extractLibphonenumberMetadata = tasks.register<ExtractMetadataTask>("extractLibphonenumberMetadata") {
+    val lib = libs.libphonenumber.get()
+    val jarFile = project.configurations
+        .detachedConfiguration(project.dependencies.create(lib))
+        .singleFile
+
+    from(zipTree(jarFile)) {
+        include("com/google/i18n/phonenumbers/data/**")
+        eachFile {
+            relativePath = RelativePath(true, "phonenumber_data", name)
+        }
+        includeEmptyDirs = false
+    }
+    outputDir.set(libphonenumberMetadataDir)
+    into(outputDir)
+}
+
+val prepareShizukuEmbedded = tasks.register<PrepareShizukuEmbeddedTask>("prepareShizukuEmbedded") {
+    url.set(shizukuApkUrl)
+    sha256.set(shizukuApkSha256)
+    assetRelPath.set(shizukuAssetRelPath)
+    outputDir.set(shizukuGenDir)
+}
+
+val ciVersionCode = providers.gradleProperty("versionCode").map { it.toIntOrNull() }.orElse(3)
+val ciVersionName = providers.gradleProperty("versionName").orElse("3.0.0")
+val ciBuildNumber = providers.gradleProperty("ciBuildNumber").orElse("Local")
+
+android {
+    namespace = "com.coolappstore.evercallrecorder.by.svhp"
+    compileSdk = 36
+
+    defaultConfig {
+        minSdk = 30
+
+        buildConfigField("String", "APPLICATION_ID", "\"com.coolappstore.everdialer.by.svhp\"")
+        buildConfigField("String", "VERSION_NAME", "\"${ciVersionName.get()}\"")
+        buildConfigField("int", "VERSION_CODE", "${ciVersionCode.get()}")
+
+        buildConfigField("String", "CI_BUILD_NUMBER", "\"${ciBuildNumber.get()}\"")
+
+        buildConfigField("String", "SCRCPY_VERSION", "\"$scrcpyVersion\"")
+        buildConfigField("String", "SCRCPY_SERVER_SHA256", "\"$scrcpyServerSha256\"")
+        buildConfigField("String", "SCRCPY_SERVER_ASSET_NAME", "\"$scrcpyServerAssetName\"")
+        buildConfigField("String", "SHIZUKU_APK_SHA256", "\"$shizukuApkSha256\"")
+        buildConfigField("String", "SHIZUKU_ASSET_PATH", "\"$shizukuAssetRelPath\"")
+    }
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+    compileOptions {
+        sourceCompatibility =  JavaVersion.VERSION_17
+        targetCompatibility =  JavaVersion.VERSION_17
+    }
+    buildFeatures {
+        compose = true
+        aidl = true
+        buildConfig = true
+    }
+    sourceSets {
+        getByName("main") {
+            // Prebuilt libadb.so / libshizuku.so extracted by prepareShizukuEmbedded.
+            // Plain string path: AGP rejects Provider instances in SourceSet APIs.
+            jniLibs.srcDir("${layout.buildDirectory.get().asFile}/generated/shizuku/jniLibs")
+            // The embedded server APK must be packaged as an Android asset so
+            // Context.assets.open("shizuku/server.apk") can push it to adbd.
+            assets.srcDir("${layout.buildDirectory.get().asFile}/generated/shizuku/assets")
+        }
+    }
+    packaging {
+        // Exclude the original metadata from libphonenumber to avoid conflicts with our extracted version. This ensures only our processed assets are included in the final APK.
+        resources.excludes.add("com/google/i18n/phonenumbers/data/**")
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
+androidComponents {
+    onVariants { variant ->
+        variant.sources.assets?.addGeneratedSourceDirectory(
+            downloadScrcpyServer,
+            DownloadAssetTask::outputDir
+        )
+
+        variant.sources.assets?.addGeneratedSourceDirectory(
+            extractLibphonenumberMetadata,
+            ExtractMetadataTask::outputDir
+        )
+
+        // prepareShizukuEmbedded is wired through preBuild below. Its output
+        // contains both assets/ and jniLibs/, so only the assets subdirectory
+        // is registered in sourceSets.main.assets above. Registering the
+        // output root here would package "assets/shizuku/server.apk".
+    }
+}
+
+tasks.named("preBuild") {
+    // jniLibs srcDir above is config-time only — force generation before any build.
+    dependsOn(prepareShizukuEmbedded)
+}
+
+aboutLibraries {
+    // Gradle sync runs in the Task :app:prepareLibraryDefinitionsDebug and :app:prepareLibraryDefinitionsRelease.
+    collect {
+        // Define the path configuration files are located in. E.g. additional libraries, licenses to add to the target .json
+        // Warning: Please do not use the parent folder of a module as path, as this can result in issues. More details: https://github.com/mikepenz/AboutLibraries/issues/936
+        // The path provided is relative to the modules path (not project root)
+        configPath = file("../aboutLibrariesConfig")
+
+        // Enable fetching of "remote" licenses.  Uses the API of supported source hosts
+        // See https://github.com/mikepenz/AboutLibraries#special-repository-support
+        // A `gitHubApiToken` is required for this to work as it fetches information from GitHub's API.
+        fetchRemoteLicense = false
+
+        // Enables fetching of "remote" funding information. Uses the API of supported source hosts
+        // See https://github.com/mikepenz/AboutLibraries#special-repository-support
+        // A `gitHubApiToken` is required for this to work as it fetches information from GitHub's API.
+        fetchRemoteFunding = false
+
+    }
+    library {
+        // Enable the duplication mode, allows to merge, or link dependencies which relate
+        duplicationMode = com.mikepenz.aboutlibraries.plugin.DuplicateMode.MERGE
+        // Configure the duplication rule, to match "duplicates" with
+        // We merge when groupId and license are equal
+        duplicationRule = com.mikepenz.aboutlibraries.plugin.DuplicateRule.GROUP
+    }
+}
+
+dependencies {
+    // AndroidX Core & Lifecycle
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.documentfile)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.ktx)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.biometric)
+
+    // Compose Core
+    implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.extended)
+
+    // Compose Tooling
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    // AboutLibraries
+    implementation(libs.aboutlibraries.core)
+    implementation(libs.aboutlibraries.compose.m3)
+
+    // Libphonenumber
+    implementation(libs.libphonenumber)
+    // Media3
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
+    implementation(libs.media3.session)
+
+    // Shizuku
+    implementation(libs.shizukuApi)
+    implementation(libs.shizukuProvider)
+
+    // Embedded privileged runtime: X509 cert building for the local ADB key
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.80")
+    // Wireless ADB pairing needs TLS keying-material export on devices that
+    // hide or omit the platform Conscrypt exporter.
+    implementation(libs.conscrypt.android)
+}
