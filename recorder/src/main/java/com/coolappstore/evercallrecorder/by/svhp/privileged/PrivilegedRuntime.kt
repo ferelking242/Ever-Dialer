@@ -612,8 +612,12 @@ object PrivilegedRuntime {
             client.commandWithStdin("shell:cat > '$remoteStarterPath.tmp'", input)
         }
         client.command(
-            "shell:mv '$remoteStarterPath.tmp' '$remoteStarterPath' && " +
-                "chmod 755 '$remoteStarterPath' && sync && sleep 1"
+            // Do not rename the inode written by cat: Android can keep that
+            // inode busy for a short time after the ADB stream closes. Copying
+            // creates a fresh executable inode before the temporary is removed.
+            "shell:toybox cp '$remoteStarterPath.tmp' '$remoteStarterPath' && " +
+                "toybox rm -f '$remoteStarterPath.tmp' && " +
+                "toybox chmod 0755 '$remoteStarterPath' && sync && sleep 1"
         )
         log?.invoke("Starter transféré.")
         return remoteStarterPath
