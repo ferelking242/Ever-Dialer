@@ -48,6 +48,7 @@ object PrivilegedRuntime {
 
     private const val TAG = "PrivilegedRuntime"
     private const val PREFS_NAME = "privileged_runtime"
+    private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_PORT = "last_connect_port"
     private const val KEY_WATCHDOG_ENABLED = "watchdog_enabled"
 
@@ -72,6 +73,18 @@ object PrivilegedRuntime {
         runCatching {
             PreferenceAdbKeyStore(prefs(context)).get() != null
         }.getOrDefault(false)
+
+    /**
+     * Forget the local wireless-debugging pairing after adbd rejects the key.
+     * The next attempt must go through Android's pairing dialog again.
+     */
+    fun forgetPairing(context: Context) {
+        prefs(context).edit()
+            .remove(KEY_ADB_KEY)
+            .remove(KEY_LAST_PORT)
+            .apply()
+        _state.value = State.NOT_PAIRED
+    }
 
     fun isWatchdogEnabled(context: Context): Boolean =
         prefs(context).getBoolean(KEY_WATCHDOG_ENABLED, true)
@@ -220,8 +233,8 @@ object PrivilegedRuntime {
     ): Result<Unit> = startMutex.withLock {
         withContext(Dispatchers.IO) {
             startingJobCount++
-            try {
             val appContext = context.applicationContext
+            try {
             if (ShizukuConnectionManager.isAvailable()) {
                 log?.invoke("Serveur déjà actif ✔")
                 _state.value = State.RUNNING
@@ -291,9 +304,13 @@ object PrivilegedRuntime {
             Result.success(Unit)
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
+                val pairingInvalid = isPairingInvalid(e)
+                if (pairingInvalid) {
+                    forgetPairing(appContext)
+                }
                 Log.e(TAG, "ensureServerStarted failed", e)
                 NtfyReporter.publish("runtime", "startup error ${e.javaClass.simpleName}: ${e.message ?: "unknown"}", "high")
-                _state.value = State.FAILED
+                if (!pairingInvalid) _state.value = State.FAILED
                 Result.failure(e)
             } finally {
                 startingJobCount--
@@ -360,6 +377,25 @@ object PrivilegedRuntime {
         }
     } catch (e: Exception) {
         false
+    }
+
+    private fun isPairingInvalid(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            val text = "${current.javaClass.simpleName} ${current.message.orEmpty()}".lowercase()
+            if (
+                "unauthorized" in text ||
+                "unauthenticated" in text ||
+                "authentication failed" in text ||
+                "pairing failed" in text ||
+                "invalid key" in text ||
+                "tls alert" in text
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
     }
 
     /**

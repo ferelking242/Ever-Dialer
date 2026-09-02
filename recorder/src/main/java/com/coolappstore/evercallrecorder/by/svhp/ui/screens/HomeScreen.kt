@@ -48,6 +48,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -95,10 +97,25 @@ fun HomeScreen(
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     val runtimeState by PrivilegedRuntime.state.collectAsState()
-    var shizukuConnected by remember { mutableStateOf(runtimeState == PrivilegedRuntime.State.RUNNING) }
-    // Keep shizukuConnected in sync with the reactive state flow.
-    LaunchedEffect(runtimeState) {
-        shizukuConnected = runtimeState == PrivilegedRuntime.State.RUNNING
+    val shizukuConnected = runtimeState == PrivilegedRuntime.State.RUNNING
+    val density = LocalDensity.current
+    val attentionTransition = rememberInfiniteTransition(label = "embedded-runtime-attention")
+    val attentionOffset by attentionTransition.animateFloat(
+        initialValue = -4f,
+        targetValue = 4f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(420, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "embedded-runtime-attention-offset"
+    )
+    // The binder can die while this screen stays open. Polling the local
+    // runtime keeps the header honest instead of leaving a stale green badge.
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            PrivilegedRuntime.refreshState(context)
+            delay(2_000L)
+        }
     }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -132,7 +149,15 @@ fun HomeScreen(
                                         ).show()
                                     }
                                 },
-                                modifier = Modifier.size(52.dp)
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .graphicsLayer {
+                                        translationX = if (shizukuConnected) {
+                                            0f
+                                        } else {
+                                            with(density) { attentionOffset.dp.toPx() }
+                                        }
+                                    }
                             ) {
                                 Icon(
                                     imageVector = Icons.Outlined.Shield,
