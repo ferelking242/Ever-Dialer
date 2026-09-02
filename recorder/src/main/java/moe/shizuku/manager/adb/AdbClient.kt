@@ -169,7 +169,10 @@ class AdbClient(private val host: String, private val port: Int, private val key
 
                 val ack = read()
                 if (ack.command != A_OKAY) {
-                    if (ack.command == A_CLSE) throw AdbException("remote closed during payload write: $cmd")
+                    if (ack.command == A_CLSE) {
+                        write(A_CLSE, localId, ack.arg0)
+                        throw AdbException("remote closed during payload write: $cmd")
+                    }
                     throw AdbException("expected A_OKAY after A_WRTE, got ${ack.toStringShort()}")
                 }
                 off += len

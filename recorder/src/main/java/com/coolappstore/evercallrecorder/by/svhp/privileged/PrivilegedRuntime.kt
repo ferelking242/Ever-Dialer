@@ -586,7 +586,9 @@ object PrivilegedRuntime {
          * overwritten, so every launch gets its own remote filename.
          */
         runCatching {
-            client.command("shell:pkill -f '$REMOTE_DIR/shizuku-starter-' || true")
+            // Anchor the pattern so pkill cannot match the shell command that
+            // contains the pattern itself and tear down its own ADB stream.
+            client.command("shell:pkill -f '^$REMOTE_DIR/shizuku-starter-' || true")
             client.command(
                 "shell:rm -f '$REMOTE_DIR'/shizuku-starter-* " +
                     "'$REMOTE_DIR'/shizuku-starter-*.tmp 2>/dev/null || true"
