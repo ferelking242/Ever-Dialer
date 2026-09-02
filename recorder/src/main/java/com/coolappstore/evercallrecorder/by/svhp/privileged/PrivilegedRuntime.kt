@@ -586,11 +586,14 @@ object PrivilegedRuntime {
          * overwritten, so every launch gets its own remote filename.
          */
         runCatching {
-            // Anchor the pattern so pkill cannot match the shell command that
-            // contains the pattern itself and tear down its own ADB stream.
-            client.command("shell:pkill -f '^$REMOTE_DIR/shizuku-starter-' || true")
+            // The starter is launched through /system/bin/sh, so the full
+            // process command line does not start with REMOTE_DIR. The
+            // bracket expression prevents pkill from matching its own command.
             client.command(
-                "shell:rm -f '$REMOTE_DIR'/shizuku-starter-* " +
+                "shell:pkill -f '[s]hizuku-starter-[0-9a-f]+( |$)' || true"
+            )
+            client.command(
+                "shell:sleep 1; rm -f '$REMOTE_DIR'/shizuku-starter-* " +
                     "'$REMOTE_DIR'/shizuku-starter-*.tmp 2>/dev/null || true"
             )
         }
@@ -601,7 +604,10 @@ object PrivilegedRuntime {
         localStarter.inputStream().use { input ->
             client.commandWithStdin("shell:cat > '$remoteStarterPath.tmp'", input)
         }
-        client.command("shell:mv '$remoteStarterPath.tmp' '$remoteStarterPath' && chmod 755 '$remoteStarterPath'")
+        client.command(
+            "shell:mv '$remoteStarterPath.tmp' '$remoteStarterPath' && " +
+                "chmod 755 '$remoteStarterPath' && sync && sleep 1"
+        )
         log?.invoke("Starter transféré.")
         return remoteStarterPath
     }
