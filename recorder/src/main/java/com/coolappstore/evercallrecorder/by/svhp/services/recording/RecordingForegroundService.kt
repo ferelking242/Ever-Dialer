@@ -226,13 +226,18 @@ class RecordingForegroundService : Service() {
 
                 currentState = RecordingServiceState.Starting(currentMeta)
 
-                // If enabled, start the embedded runtime; no external Shizuku auth key is needed.
-                tryStartShizukuServer()
-
                 serviceScope.launch {
                     try {
-                        // Wait for Shizuku server to be available
-                        ShizukuConnectionManager.waitForServer()
+                        // The recording pipeline needs the privileged ShellService. Do not
+                        // independently wait here while another coroutine starts the runtime:
+                        // that race used to add a silent 30-second delay to every failed start.
+                        if (!ensureRuntimeForRecording()) {
+                            notificationHelper.showErrorNotification(
+                                getString(R.string.recording_shizuku_not_started)
+                            )
+                            stopRecordingSessionAndService()
+                            return@launch
+                        }
                         val service = shizukuManager.getShellService()
                         shellService = service // update local ref
                         startNewRecordingSession(service, currentMeta)
@@ -290,6 +295,30 @@ class RecordingForegroundService : Service() {
             }
         }
         return START_NOT_STICKY
+    }
+
+    private suspend fun ensureRuntimeForRecording(): Boolean {
+        if (ShizukuConnectionManager.isAvailable()) return true
+        if (!appPreferences.isShizukuAutoManageEnabled()) return false
+
+        val result = PrivilegedRuntime.ensureServerStarted(this) { message ->
+            AppLogger.i(TAG, "Embedded Shizuku: $message")
+            NtfyReporter.publish("runtime", message)
+        }
+        result.onFailure { error ->
+            val message = if (!PrivilegedRuntime.isPaired(this)) {
+                getString(R.string.recording_shizuku_pairing_required)
+            } else {
+                "Impossible de démarrer le moteur privilégié : ${error.message ?: "erreur inconnue"}"
+            }
+            AppLogger.e(TAG, message, error)
+            NtfyReporter.publish("runtime", message, "high")
+            notificationHelper.showErrorNotification(message)
+            if (!PrivilegedRuntime.isPaired(this)) {
+                PairingNotifier.showWaitingNotification(this)
+            }
+        }
+        return result.isSuccess
     }
 
     /**

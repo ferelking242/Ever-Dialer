@@ -305,13 +305,13 @@ object PrivilegedRuntime {
             }
             check(connected) { "connexion impossible" }
 
-            log?.invoke("En attente du binder Shizuku (≤30 s)…")
-            val up = waitForBinder(timeoutMillis = 30_000)
+            log?.invoke("En attente du binder Shizuku (≤10 s)…")
+            val up = waitForBinder(timeoutMillis = 10_000)
             if (!up) {
                 _state.value = State.FAILED
                 val remoteLog = readRemoteStartupLog(endpoint, key)
                 val msg = if (remoteLog.isNullOrBlank()) {
-                    "Le serveur ne répond pas après 30 s. Vérifie le débogage sans fil."
+                    "Le serveur ne répond pas après 10 s. Vérifie le débogage sans fil."
                 } else {
                     "Le starter a échoué : ${remoteLog.take(700)}"
                 }
