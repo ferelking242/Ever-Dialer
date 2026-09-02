@@ -15,10 +15,7 @@ import android.provider.Settings
 import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
 
-import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.onboarding.OnboardingStatus
-import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
-import com.coolappstore.evercallrecorder.by.svhp.ui.screens.PermissionsScreen
 
 /**
  * The "Brain" of the permissions setup flow.
@@ -54,8 +51,6 @@ class PermissionsViewModel(application: Application) : AndroidViewModel(applicat
         onPermissionGranted: () -> Unit
     ) {
         when {
-            !status.shizukuRunning           -> PrivilegedRuntime.openManagement(appContext)
-            !status.shizukuPermissionGranted -> ShizukuConnectionManager.requestPermission()
             !status.notificationsGranted     -> requestRuntimePermission(Manifest.permission.POST_NOTIFICATIONS)
             !status.contactsGranted          -> requestRuntimePermission(Manifest.permission.READ_CONTACTS)
             !status.phoneStateGranted        -> requestRuntimePermission(Manifest.permission.READ_PHONE_STATE)

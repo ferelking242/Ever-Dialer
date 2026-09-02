@@ -162,7 +162,7 @@ abstract class PrepareShizukuEmbeddedTask : DefaultTask() {
             println("Embedded Shizuku APK already up-to-date.")
         }
 
-        // 1. Asset copy — pushed to /data/local/tmp/.everdialer/ at runtime.
+        // 1. Asset copy — pushed to the package-named runtime directory at runtime.
         val assetFile = File(outDir, "assets/${assetRelPath.get()}")
         assetFile.parentFile.mkdirs()
         apkFile.copyTo(assetFile, overwrite = true)

@@ -33,11 +33,16 @@ class PrivilegedBroadcastReceiver : BroadcastReceiver() {
                     }
                 }
             }
+            ACTION_RESET_PAIRING -> {
+                PrivilegedRuntime.forgetPairing(appContext)
+                PrivilegedRuntime.openManagement(appContext)
+            }
         }
     }
 
     companion object {
         const val ACTION_START_SERVER = "moe.shizuku.privileged.api.START"
         const val ACTION_STOP_SERVER = "moe.shizuku.privileged.api.STOP"
+        const val ACTION_RESET_PAIRING = "com.coolappstore.evercallrecorder.action.RESET_PAIRING"
     }
 }

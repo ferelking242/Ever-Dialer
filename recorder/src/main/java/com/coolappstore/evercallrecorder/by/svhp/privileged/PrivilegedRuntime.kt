@@ -4,9 +4,11 @@
  * Embeds the Shizuku server startup inside this single app, using a local
  * wireless-debugging connection (Android 11+ pairing, LADB/Shizuku-manager style):
  *   1. SPAKE2p pairing against adbd on localhost (vendored moe.shizuku.manager.adb stack)
- *   2. Push of the pinned thedjchi/Shizuku fork APK into /data/local/tmp/.everdialer/
- *   3. Launch of the vendored libshizuku.so starter:
- *        <nativeLibraryDir>/libshizuku.so --apk=/data/local/tmp/.everdialer/shizuku-server.apk
+ *   2. Push of the pinned thedjchi/Shizuku fork APK into a directory named
+ *      after this application's package id under /data/local/tmp/
+ *   3. Launch of the vendored libshizuku.so starter from a hash-versioned
+ *      remote filename:
+ *        <nativeLibraryDir>/libshizuku.so --apk=/data/local/tmp/<package>/shizuku-server.apk
  *      (exact replication of Shizuku manager's Starter.internalCommand)
  *   4. The server then pushes its binder into our own rikka.shizuku.ShizukuProvider,
  *      so every existing dev.rikka.shizuku API call keeps working untouched.
@@ -52,11 +54,17 @@ object PrivilegedRuntime {
     private const val KEY_LAST_HOST = "last_connect_host"
     private const val KEY_LAST_PORT = "last_connect_port"
     private const val KEY_WATCHDOG_ENABLED = "watchdog_enabled"
+    private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
 
-    /** Remote working directory; writable AND executable by the shell uid. */
-    private const val REMOTE_DIR = "/data/local/tmp/.everdialer"
+    /**
+     * Remote working directory; writable AND executable by the shell uid.
+     *
+     * The embedded Shizuku server derives the manager package name from the
+     * parent directory of the APK passed to the native starter. This directory
+     * must therefore be the real application id, not an arbitrary cache name.
+     */
+    private const val REMOTE_DIR = "/data/local/tmp/com.coolappstore.everdialer.by.svhp"
     private const val REMOTE_APK_PATH = "$REMOTE_DIR/shizuku-server.apk"
-    private const val REMOTE_STARTER_PATH = "$REMOTE_DIR/shizuku-starter"
     private const val REMOTE_LOG_PATH = "$REMOTE_DIR/starter.log"
 
     private val _state = MutableStateFlow(initialState())
@@ -120,6 +128,19 @@ object PrivilegedRuntime {
     /** Reads the live binder state for UI indicators and click guards. */
     fun isConnected(): Boolean = ShizukuConnectionManager.isAvailable()
 
+    /**
+     * Reads Android's actual Wireless debugging switch.
+     *
+     * A remembered ADB key can remain stored after Wireless debugging has been
+     * disabled, but it cannot reconnect until the system switch is enabled.
+     */
+    fun isWirelessDebuggingEnabled(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        return runCatching {
+            Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
+        }.getOrDefault(false)
+    }
+
     fun markStarting() {
         _state.value = State.STARTING
     }
@@ -127,12 +148,26 @@ object PrivilegedRuntime {
     /**
      * Opens the same wireless-debugging flow as the Shizuku manager.
      *
-     * @return false when the embedded Shizuku binder is already active.
+     * @return false only when the embedded Shizuku binder is active and the
+     * user has already granted this app Shizuku permission.
      */
     fun openManagement(context: Context): Boolean {
-        if (isConnected()) return false
-
         val appContext = context.applicationContext
+        if (isConnected()) {
+            if (!ShizukuConnectionManager.hasPermission(appContext)) {
+                NtfyReporter.publish("runtime", "requesting app Shizuku permission")
+                ShizukuConnectionManager.requestPermission()
+                return true
+            }
+            return false
+        }
+
+        if (!isWirelessDebuggingEnabled(appContext)) {
+            PairingNotifier.showWirelessDebuggingRequiredNotification(appContext)
+            openDeveloperSettings(appContext)
+            return true
+        }
+
         if (isPaired(appContext)) {
             _state.value = State.STARTING
             NtfyReporter.publish("runtime", "startup requested from header badge")
@@ -149,17 +184,21 @@ object PrivilegedRuntime {
         // Pairing is notification-only. The notification opens Android's
         // developer settings and receives the code inline through RemoteInput.
         PairingNotifier.showWaitingNotification(appContext)
+        openDeveloperSettings(appContext)
+        return true
+    }
+
+    private fun openDeveloperSettings(context: Context) {
         runCatching {
-            appContext.startActivity(
+            context.startActivity(
                 Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         }.onFailure {
-            appContext.startActivity(
+            context.startActivity(
                 Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         }
-        return true
     }
 
     // ─────────────────────────── Pairing ───────────────────────────
@@ -173,6 +212,9 @@ object PrivilegedRuntime {
     suspend fun pairWithCode(context: Context, host: String, port: Int, code: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             try {
+                check(isWirelessDebuggingEnabled(context)) {
+                    "Débogage sans fil désactivé. Active-le dans les Options pour les développeurs."
+                }
                 require(code.isNotBlank()) { "empty pairing code" }
                 NtfyReporter.publish("pairing", "starting host=${host.ifBlank { "127.0.0.1" }} port=$port")
                 val key = adbKey(context)
@@ -185,6 +227,7 @@ object PrivilegedRuntime {
                     Result.success(Unit)
                 } else {
                     Log.w(TAG, "Pairing failed (wrong code or stale port)")
+                    forgetPairing(context)
                     NtfyReporter.publish("pairing", "handshake rejected: invalid code or expired port", "high")
                     Result.failure(AdbException("Code invalide ou port expiré"))
                 }
@@ -256,6 +299,13 @@ object PrivilegedRuntime {
                 _state.value = State.NOT_PAIRED
                 return@withContext Result.failure(AdbException("Appareil non apparié"))
             }
+            if (!isWirelessDebuggingEnabled(appContext)) {
+                _state.value = State.FAILED
+                val msg = "Débogage sans fil désactivé. Active-le dans les Options pour les développeurs."
+                log?.invoke(msg)
+                NtfyReporter.publish("runtime", "wireless debugging is disabled", "high")
+                return@withContext Result.failure(AdbException(msg))
+            }
 
             _state.value = State.STARTING
             log?.invoke("Recherche du port du débogage sans fil…")
@@ -282,17 +332,29 @@ object PrivilegedRuntime {
                             .putInt(KEY_LAST_PORT, endpoint.port)
                             .apply()
 
-                        ensureRemotePayloadChecked(client, appContext, log)
+                        val starterPath = ensureRemotePayloadChecked(client, appContext, log)
 
                         log?.invoke("Lancement du serveur Shizuku embarqué…")
                         NtfyReporter.publish(
                             "runtime",
                             "launching starter on ${endpoint.host}:${endpoint.port}"
                         )
-                        val launchCmd = "shell:mkdir -p '$REMOTE_DIR' && : > '$REMOTE_LOG_PATH' && " +
-                            "nohup '$REMOTE_STARTER_PATH' --apk='$REMOTE_APK_PATH'" +
-                            " </dev/null >'$REMOTE_LOG_PATH' 2>&1 & echo ever-started"
-                        client.command(launchCmd)
+                        val starterOutput = StringBuilder()
+                        val launchCmd = "shell:'$starterPath' --apk='$REMOTE_APK_PATH'"
+                        client.command(launchCmd) { bytes ->
+                            starterOutput.append(String(bytes))
+                        }
+                        val starterSummary = starterOutput.toString().trim()
+                        if (starterSummary.isNotBlank()) {
+                            log?.invoke("Starter : ${starterSummary.take(500)}")
+                            NtfyReporter.publish(
+                                "runtime",
+                                "starter result: ${starterSummary.take(700)}"
+                            )
+                        } else {
+                            log?.invoke("Starter terminé sans sortie ; vérification du binder…")
+                            NtfyReporter.publish("runtime", "starter returned without output")
+                        }
                     }
                     break
                 } catch (e: Throwable) {
@@ -468,7 +530,11 @@ object PrivilegedRuntime {
      * Pushes the pinned fork APK into $REMOTE_DIR when its remote SHA-256 differs
      * from the pinned asset hash.
      */
-    private fun ensureRemotePayloadChecked(client: AdbClient, context: Context, log: ((String) -> Unit)?) {
+    private fun ensureRemotePayloadChecked(
+        client: AdbClient,
+        context: Context,
+        log: ((String) -> Unit)?
+    ): String {
         client.command("shell:mkdir -p '$REMOTE_DIR'")
         val expectedSha = BuildConfig.SHIZUKU_APK_SHA256
         var remoteSha: String? = null
@@ -482,8 +548,7 @@ object PrivilegedRuntime {
 
         if (remoteSha.equals(expectedSha, ignoreCase = true)) {
             log?.invoke("Serveur déjà à jour sur l'appareil.")
-            ensureRemoteStarter(client, context, log)
-            return
+            return ensureRemoteStarter(client, context, log)
         }
 
         log?.invoke("Transfert du serveur embarqué (~3,6 Mo)…")
@@ -495,10 +560,14 @@ object PrivilegedRuntime {
 
         // /data/app/.../libshizuku.so is readable by the app but not reliably
         // executable by the shell UID. Copy the starter beside the server APK.
-        ensureRemoteStarter(client, context, log)
+        return ensureRemoteStarter(client, context, log)
     }
 
-    private fun ensureRemoteStarter(client: AdbClient, context: Context, log: ((String) -> Unit)?) {
+    private fun ensureRemoteStarter(
+        client: AdbClient,
+        context: Context,
+        log: ((String) -> Unit)?
+    ): String {
         // 1. Try the standard nativeLibraryDir path (works when AGP packages the .so correctly).
         var localStarter = File(context.applicationInfo.nativeLibraryDir, "libshizuku.so")
         // 2. Fallback: extract libshizuku.so from the embedded server APK asset.
@@ -509,25 +578,33 @@ object PrivilegedRuntime {
         }
         check(localStarter.isFile) { "Embedded Shizuku starter is missing: not in nativeLibraryDir and could not extract from server asset" }
         val expectedSha = sha256(localStarter)
+        /*
+         * Never overwrite the filename of a starter that may still be executing.
+         * Android can report ETXTBSY ("Text file busy") when a second startup
+         * races with an upload or an old detached starter. Hash-versioned names
+         * let old and new processes finish independently.
+         */
+        val remoteStarterPath = "$REMOTE_DIR/shizuku-starter-${expectedSha.take(12)}"
         var remoteSha: String? = null
         runCatching {
             val out = StringBuilder()
-            client.command("shell:sha256sum '$REMOTE_STARTER_PATH' 2>/dev/null") { bytes ->
+            client.command("shell:sha256sum '$remoteStarterPath' 2>/dev/null") { bytes ->
                 out.append(String(bytes))
             }
             remoteSha = out.toString().trim().split(" ", "\n").firstOrNull { it.length == 64 }
         }
         if (remoteSha.equals(expectedSha, ignoreCase = true)) {
             log?.invoke("Starter Shizuku déjà à jour.")
-            return
+            return remoteStarterPath
         }
 
         log?.invoke("Transfert du starter Shizuku…")
         localStarter.inputStream().use { input ->
-            client.commandWithStdin("shell:cat > '$REMOTE_STARTER_PATH.tmp'", input)
+            client.commandWithStdin("shell:cat > '$remoteStarterPath.tmp'", input)
         }
-        client.command("shell:mv '$REMOTE_STARTER_PATH.tmp' '$REMOTE_STARTER_PATH' && chmod 755 '$REMOTE_STARTER_PATH'")
+        client.command("shell:mv '$remoteStarterPath.tmp' '$remoteStarterPath' && chmod 755 '$remoteStarterPath'")
         log?.invoke("Starter transféré.")
+        return remoteStarterPath
     }
 
     /**

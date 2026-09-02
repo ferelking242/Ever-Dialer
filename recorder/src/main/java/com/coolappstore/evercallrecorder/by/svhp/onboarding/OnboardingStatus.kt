@@ -33,6 +33,7 @@ object OnboardingStatus {
      * @param callLogGranted            True if the app has permission to access the call log.
      * @param batteryExempted           True if the app is on the battery-optimisation whitelist.
      * @param storageSelected           True if a valid recording storage destination has been chosen (SAF folder or private app storage).
+     * @param wirelessDebuggingEnabled  True if Android's wireless debugging switch is enabled.
      * @param shizukuRunning            True if the Shizuku service is currently active.
      * @param shizukuPermissionGranted  True if the user has granted Shizuku permission to this app.
      */
@@ -44,12 +45,17 @@ object OnboardingStatus {
         val callLogGranted: Boolean,
         val batteryExempted: Boolean,
         val storageSelected: Boolean,
+        val wirelessDebuggingEnabled: Boolean = false,
         val shizukuRunning: Boolean,
         val shizukuPermissionGranted: Boolean,
         val skipped: Boolean = false
     ) {
         /**
-         * Returns true only when every prerequisite is satisfied, including the disclaimer.
+         * Returns true when the normal onboarding permissions are complete.
+         *
+         * The embedded privileged runtime is intentionally not a blocking onboarding page:
+         * it is started and repaired from the Home badge, so a failed pairing can never trap
+         * the user on the permissions screen.
          * If the user has explicitly skipped the permissions step, this returns true as well.
          */
         fun isComplete(): Boolean {
@@ -60,9 +66,7 @@ object OnboardingStatus {
                 phoneStateGranted &&
                 callLogGranted &&
                 batteryExempted &&
-                storageSelected &&
-                shizukuRunning &&
-                shizukuPermissionGranted
+                storageSelected
         }
     }
 
@@ -82,8 +86,7 @@ object OnboardingStatus {
             callLogGranted           = PermissionChecks.hasCallLogPermission(context),
             batteryExempted          = PermissionChecks.hasBatteryExemption(context),
             storageSelected          = SafHelper.isStorageConfigured(context, preferences),
-            // Auto-manage means the app may start the server; it does not mean
-            // that the embedded binder is already available.
+            wirelessDebuggingEnabled = PrivilegedRuntime.isWirelessDebuggingEnabled(context),
             shizukuRunning           = PrivilegedRuntime.isConnected(),
             shizukuPermissionGranted = ShizukuConnectionManager.hasPermission(context)
         )

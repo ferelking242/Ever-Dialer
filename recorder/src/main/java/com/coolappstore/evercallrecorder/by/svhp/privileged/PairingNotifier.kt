@@ -54,6 +54,8 @@ object PairingNotifier {
     fun showWaitingNotification(context: Context) {
         val appCtx = context.applicationContext
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        detectedPort = 0
+        detectedHost = "127.0.0.1"
         NtfyReporter.publish("pairing", "waiting for wireless debugging pairing service")
 
         ensureChannel(appCtx)
@@ -89,6 +91,40 @@ object PairingNotifier {
 
         post(appCtx, n, "Phase 1: searching")
         startMdnsWatcher(appCtx)
+    }
+
+    fun showWirelessDebuggingRequiredNotification(context: Context) {
+        val appCtx = context.applicationContext
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        startMdnsWatcher(appCtx)
+        if (!ensureNotificationPermission(appCtx)) return
+        ensureChannel(appCtx)
+
+        val devSettingsIntent = Intent(
+            android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val pi = PendingIntent.getActivity(
+            appCtx, 1, devSettingsIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val n = NotificationCompat.Builder(appCtx, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setContentTitle("Active le débogage sans fil")
+            .setContentText("Le moteur démarrera ensuite depuis l’accueil")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(
+                "Le débogage sans fil est désactivé. Ouvre les Options pour les développeurs, " +
+                    "active « Débogage sans fil », puis reviens dans Ever Dialer et appuie sur le badge."
+            ))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .addAction(
+                android.R.drawable.ic_menu_manage,
+                "Ouvrir les Options développeur",
+                pi
+            )
+            .build()
+        post(appCtx, n, "Wireless debugging required")
     }
 
     fun startWatching(context: Context) {
@@ -246,6 +282,15 @@ object PairingNotifier {
             .setOngoing(false)
             .setAutoCancel(false)
             .addAction(action)
+            .apply {
+                if (error != null) {
+                    addAction(
+                        android.R.drawable.ic_menu_close_clear_cancel,
+                        "Recommencer",
+                        resetPairingPendingIntent(appCtx)
+                    )
+                }
+            }
             .build()
 
         post(appCtx, n, "Phase 2: RemoteInput code entry")
@@ -310,6 +355,11 @@ object PairingNotifier {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .setTimeoutAfter(15_000L)
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "Recommencer le pairing",
+                resetPairingPendingIntent(appCtx)
+            )
             .build()
 
         post(appCtx, n, "Failed: $error")
@@ -342,6 +392,16 @@ object PairingNotifier {
             nm.cancel(NOTIFICATION_ID)
         } catch (_: Exception) {}
     }
+
+    private fun resetPairingPendingIntent(appCtx: Context): PendingIntent =
+        PendingIntent.getBroadcast(
+            appCtx,
+            3,
+            Intent(appCtx, PrivilegedBroadcastReceiver::class.java).apply {
+                action = PrivilegedBroadcastReceiver.ACTION_RESET_PAIRING
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
     private fun ensureChannel(appCtx: Context) {
         val nm = appCtx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
