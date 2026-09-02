@@ -46,6 +46,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.*
 import kotlinx.coroutines.delay
@@ -98,19 +99,27 @@ fun HomeScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val runtimeState by PrivilegedRuntime.state.collectAsState()
     val shizukuConnected = runtimeState == PrivilegedRuntime.State.RUNNING
-    val runtimeStatus = when (runtimeState) {
-        PrivilegedRuntime.State.RUNNING -> "Actif"
-        PrivilegedRuntime.State.STARTING -> "Starting…"
-        PrivilegedRuntime.State.PAIRED_IDLE -> "Démarrer"
-        PrivilegedRuntime.State.FAILED -> "Réessayer"
-        PrivilegedRuntime.State.NOT_PAIRED -> "Associer"
+    var wirelessDebuggingEnabled by remember {
+        mutableStateOf(PrivilegedRuntime.isWirelessDebuggingEnabled(context))
     }
-    val runtimeColor = when (runtimeState) {
-        PrivilegedRuntime.State.RUNNING -> Color(0xFF66BB6A)
-        PrivilegedRuntime.State.STARTING -> Color(0xFFFFB74D)
-        PrivilegedRuntime.State.PAIRED_IDLE -> Color(0xFF42A5F5)
-        PrivilegedRuntime.State.FAILED -> Color(0xFFEF5350)
-        PrivilegedRuntime.State.NOT_PAIRED -> Color(0xFFEF5350)
+    var shizukuPermissionGranted by remember {
+        mutableStateOf(ShizukuConnectionManager.hasPermission(context))
+    }
+    val runtimeStatus = when {
+        runtimeState == PrivilegedRuntime.State.RUNNING && !shizukuPermissionGranted -> "Autoriser"
+        runtimeState == PrivilegedRuntime.State.RUNNING -> "Actif"
+        !wirelessDebuggingEnabled -> "Activer débogage"
+        runtimeState == PrivilegedRuntime.State.STARTING -> "Démarrage…"
+        runtimeState == PrivilegedRuntime.State.PAIRED_IDLE -> "Démarrer"
+        runtimeState == PrivilegedRuntime.State.FAILED -> "Réessayer"
+        else -> "Associer"
+    }
+    val runtimeColor = when {
+        runtimeState == PrivilegedRuntime.State.RUNNING && shizukuPermissionGranted -> Color(0xFF66BB6A)
+        runtimeState == PrivilegedRuntime.State.STARTING -> Color(0xFFFFB74D)
+        !wirelessDebuggingEnabled -> Color(0xFFEF5350)
+        runtimeState == PrivilegedRuntime.State.FAILED -> Color(0xFFEF5350)
+        else -> Color(0xFF42A5F5)
     }
     val density = LocalDensity.current
     val attentionTransition = rememberInfiniteTransition(label = "embedded-runtime-attention")
@@ -128,6 +137,8 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         while (isActive) {
             PrivilegedRuntime.refreshState(context)
+            wirelessDebuggingEnabled = PrivilegedRuntime.isWirelessDebuggingEnabled(context)
+            shizukuPermissionGranted = ShizukuConnectionManager.hasPermission(context)
             delay(2_000L)
         }
     }
@@ -137,6 +148,8 @@ fun HomeScreen(
                 vm.refresh()
                 recordingEnabledState = com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences(context).isCallRecordingEnabled()
                 PrivilegedRuntime.refreshState(context)
+                wirelessDebuggingEnabled = PrivilegedRuntime.isWirelessDebuggingEnabled(context)
+                shizukuPermissionGranted = ShizukuConnectionManager.hasPermission(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

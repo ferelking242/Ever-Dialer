@@ -44,7 +44,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.coolappstore.evercallrecorder.by.svhp.R
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
 import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
-import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.onboarding.OnboardingStatus
 import com.coolappstore.evercallrecorder.by.svhp.system.openAppSettings
 import com.coolappstore.evercallrecorder.by.svhp.ui.common.StorageLocationDialog
@@ -100,23 +99,20 @@ fun PermissionsScreen(
     }
 
     val grantAccess: () -> Unit = {
-        // Pairing and startup are notification-only. No intermediate activity
-        // is opened, so the main app never gets replaced by a blank page.
-        if (!status.shizukuRunning) {
-            PrivilegedRuntime.openManagement(activityContext)
-        } else {
-            viewModel.onGrantAccess(
-                status = status,
-                onPermissionGranted = onPermissionGranted,
-                requestRuntimePermission = { permission -> permissionRequestLauncher.launch(permission) },
-                showStorageChoice = { showStorageChoiceDialog = true },
-            )
-        }
+        // The embedded runtime is managed from the Home badge. Keep this screen
+        // focused on normal Android permissions and never send the user to an
+        // intermediate Shizuku page.
+        viewModel.onGrantAccess(
+            status = status,
+            onPermissionGranted = onPermissionGranted,
+            requestRuntimePermission = { permission -> permissionRequestLauncher.launch(permission) },
+            showStorageChoice = { showStorageChoiceDialog = true },
+        )
         Unit
     }
 
-    // Auto-pop next permission when Shizuku is ready and a runtime permission is still missing
-    val autoGrantable = status.shizukuRunning && status.shizukuPermissionGranted &&
+    // Auto-pop next normal permission when one is still missing.
+    val autoGrantable =
         (!status.notificationsGranted || !status.contactsGranted ||
          !status.phoneStateGranted   || !status.callLogGranted ||
          !status.batteryExempted     || !status.storageSelected)

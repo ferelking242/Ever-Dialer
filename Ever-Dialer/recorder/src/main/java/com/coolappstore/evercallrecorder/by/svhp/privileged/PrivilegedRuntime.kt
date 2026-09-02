@@ -4,7 +4,8 @@
  * Embeds the Shizuku server startup inside this single app, using a local
  * wireless-debugging connection (Android 11+ pairing, LADB/Shizuku-manager style):
  *   1. SPAKE2p pairing against adbd on localhost (vendored moe.shizuku.manager.adb stack)
- *   2. Push of the pinned thedjchi/Shizuku fork APK into /data/local/tmp/.everdialer/
+ *   2. Push of the pinned thedjchi/Shizuku fork APK into a directory named
+ *      after this application's package id under /data/local/tmp/
  *   3. Launch of the vendored libshizuku.so starter:
  *        <nativeLibraryDir>/libshizuku.so --apk=/data/local/tmp/.everdialer/shizuku-server.apk
  *      (exact replication of Shizuku manager's Starter.internalCommand)
@@ -52,6 +53,7 @@ object PrivilegedRuntime {
     private const val KEY_LAST_HOST = "last_connect_host"
     private const val KEY_LAST_PORT = "last_connect_port"
     private const val KEY_WATCHDOG_ENABLED = "watchdog_enabled"
+    private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
 
     /**
      * Remote working directory; writable AND executable by the shell uid.
@@ -128,6 +130,20 @@ object PrivilegedRuntime {
     /** Reads the live binder state for UI indicators and click guards. */
     fun isConnected(): Boolean = ShizukuConnectionManager.isAvailable()
 
+    /**
+     * Reads Android's actual Wireless debugging switch.
+     *
+     * This is deliberately checked before using a remembered ADB key. A key
+     * can remain stored after Wireless debugging has been disabled, but it
+     * cannot reconnect until the system switch is enabled again.
+     */
+    fun isWirelessDebuggingEnabled(context: Context): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return false
+        return runCatching {
+            Settings.Global.getInt(context.contentResolver, ADB_WIFI_ENABLED, 0) == 1
+        }.getOrDefault(false)
+    }
+
     fun markStarting() {
         _state.value = State.STARTING
     }
@@ -135,12 +151,26 @@ object PrivilegedRuntime {
     /**
      * Opens the same wireless-debugging flow as the Shizuku manager.
      *
-     * @return false when the embedded Shizuku binder is already active.
+     * @return false only when the embedded Shizuku binder is active and the
+     * user has already granted this app Shizuku permission.
      */
     fun openManagement(context: Context): Boolean {
-        if (isConnected()) return false
-
         val appContext = context.applicationContext
+        if (isConnected()) {
+            if (!ShizukuConnectionManager.hasPermission(appContext)) {
+                NtfyReporter.publish("runtime", "requesting app Shizuku permission")
+                ShizukuConnectionManager.requestPermission()
+                return true
+            }
+            return false
+        }
+
+        if (!isWirelessDebuggingEnabled(appContext)) {
+            PairingNotifier.showWirelessDebuggingRequiredNotification(appContext)
+            openDeveloperSettings(appContext)
+            return true
+        }
+
         if (isPaired(appContext)) {
             _state.value = State.STARTING
             NtfyReporter.publish("runtime", "startup requested from header badge")
@@ -157,17 +187,21 @@ object PrivilegedRuntime {
         // Pairing is notification-only. The notification opens Android's
         // developer settings and receives the code inline through RemoteInput.
         PairingNotifier.showWaitingNotification(appContext)
+        openDeveloperSettings(appContext)
+        return true
+    }
+
+    private fun openDeveloperSettings(context: Context) {
         runCatching {
-            appContext.startActivity(
+            context.startActivity(
                 Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         }.onFailure {
-            appContext.startActivity(
+            context.startActivity(
                 Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         }
-        return true
     }
 
     // ─────────────────────────── Pairing ───────────────────────────
@@ -181,6 +215,9 @@ object PrivilegedRuntime {
     suspend fun pairWithCode(context: Context, host: String, port: Int, code: String): Result<Unit> =
         withContext(Dispatchers.IO) {
             try {
+                check(isWirelessDebuggingEnabled(context)) {
+                    "Débogage sans fil désactivé. Active-le dans les Options pour les développeurs."
+                }
                 require(code.isNotBlank()) { "empty pairing code" }
                 NtfyReporter.publish("pairing", "starting host=${host.ifBlank { "127.0.0.1" }} port=$port")
                 val key = adbKey(context)
@@ -193,12 +230,16 @@ object PrivilegedRuntime {
                     Result.success(Unit)
                 } else {
                     Log.w(TAG, "Pairing failed (wrong code or stale port)")
+                    // Never leave a half-created key behind after a rejected
+                    // first pairing. The next notification starts cleanly.
+                    forgetPairing(context)
                     NtfyReporter.publish("pairing", "handshake rejected: invalid code or expired port", "high")
                     Result.failure(AdbException("Code invalide ou port expiré"))
                 }
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 Log.e(TAG, "Pairing error", e)
+                if (isPairingInvalid(e)) forgetPairing(context)
                 NtfyReporter.publish("pairing", "error ${e.javaClass.simpleName}: ${e.message ?: "unknown"}", "high")
                 Result.failure(e)
             }
@@ -263,6 +304,13 @@ object PrivilegedRuntime {
             if (!isPaired(appContext)) {
                 _state.value = State.NOT_PAIRED
                 return@withContext Result.failure(AdbException("Appareil non apparié"))
+            }
+            if (!isWirelessDebuggingEnabled(appContext)) {
+                _state.value = State.FAILED
+                val msg = "Débogage sans fil désactivé. Active-le dans les Options pour les développeurs."
+                log?.invoke(msg)
+                NtfyReporter.publish("runtime", "wireless debugging is disabled", "high")
+                return@withContext Result.failure(AdbException(msg))
             }
 
             _state.value = State.STARTING

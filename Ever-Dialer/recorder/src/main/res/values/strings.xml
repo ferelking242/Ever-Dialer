@@ -97,8 +97,8 @@
 
     <string name="permission_shizuku_label" translatable="false">Moteur système intégré</string>
     <string name="permission_shizuku_description">Nécessaire pour démarrer l\'enregistrement audio avec le moteur embarqué.</string>
-    <string name="permission_shizuku_not_running">Non connecté</string>
-    <string name="permission_shizuku_open">Configurer le moteur intégré</string>
+    <string name="permission_shizuku_not_running">Pas démarré</string>
+    <string name="permission_shizuku_open">Démarrer depuis l’accueil</string>
 
     <!-- Settings Screen: Section Titles -->
     <string name="settings_section_about">About</string>
@@ -323,7 +323,7 @@
     <string name="recording_unexpected_error">An unexpected error occurred during recording. Please report this with the steps to reproduce and the apps logs.</string>
     <!-- Recording Service: Errors Shizuku -->
     <string name="recording_error_shizuku_disconnected_unexpectedly">Shizuku disconnected unexpectedly, causing the recording process to stop. (Shizuku-Server process died)</string>
-    <string name="recording_shizuku_not_started">Shizuku-Server process is stopped. Please start Shizuku and ensure it is always able to run when the app wants to record audio.</string>
+    <string name="recording_shizuku_not_started">Le moteur intégré est arrêté. Retournez à l’accueil et appuyez sur le badge du moteur pour l’activer.</string>
     <string name="recording_shizuku_permission_denied">Please allow the application to use Shizuku. Permission was denied.</string>
     <string name="recording_shizuku_auth_key_missing">Shizuku Intents authentication key is missing. Please enter it in the app settings.</string>
     <string name="recording_shizuku_pairing_required">Appaire d’abord le moteur privilégié intégré depuis les options Shizuku.</string>
