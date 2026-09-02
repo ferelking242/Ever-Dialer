@@ -579,24 +579,21 @@ object PrivilegedRuntime {
         check(localStarter.isFile) { "Embedded Shizuku starter is missing: not in nativeLibraryDir and could not extract from server asset" }
         val expectedSha = sha256(localStarter)
         /*
-         * Never overwrite the filename of a starter that may still be executing.
+         * Never reuse a starter filename that may still be executing.
          * Android can report ETXTBSY ("Text file busy") when a second startup
-         * races with an upload or an old detached starter. Hash-versioned names
-         * let old and new processes finish independently.
+         * races with an upload or an old detached starter. A hash alone is not
+         * enough because a failed hash probe can cause the same file to be
+         * overwritten, so every launch gets its own remote filename.
          */
-        val remoteStarterPath = "$REMOTE_DIR/shizuku-starter-${expectedSha.take(12)}"
-        var remoteSha: String? = null
         runCatching {
-            val out = StringBuilder()
-            client.command("shell:sha256sum '$remoteStarterPath' 2>/dev/null") { bytes ->
-                out.append(String(bytes))
-            }
-            remoteSha = out.toString().trim().split(" ", "\n").firstOrNull { it.length == 64 }
+            client.command("shell:pkill -f '$REMOTE_DIR/shizuku-starter-' || true")
+            client.command(
+                "shell:rm -f '$REMOTE_DIR'/shizuku-starter-* " +
+                    "'$REMOTE_DIR'/shizuku-starter-*.tmp 2>/dev/null || true"
+            )
         }
-        if (remoteSha.equals(expectedSha, ignoreCase = true)) {
-            log?.invoke("Starter Shizuku déjà à jour.")
-            return remoteStarterPath
-        }
+        val launchId = System.nanoTime().toString(16)
+        val remoteStarterPath = "$REMOTE_DIR/shizuku-starter-${expectedSha.take(12)}-$launchId"
 
         log?.invoke("Transfert du starter Shizuku…")
         localStarter.inputStream().use { input ->
