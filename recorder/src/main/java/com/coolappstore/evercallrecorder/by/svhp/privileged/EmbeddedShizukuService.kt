@@ -18,6 +18,7 @@ import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.util.Log
 import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
+import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job

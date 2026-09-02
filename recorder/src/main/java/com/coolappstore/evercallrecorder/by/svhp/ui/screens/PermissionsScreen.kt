@@ -99,7 +99,7 @@ fun PermissionsScreen(
         }
     }
 
-    val grantAccess = {
+    val grantAccess: () -> Unit = {
         // Pairing and startup are notification-only. No intermediate activity
         // is opened, so the main app never gets replaced by a blank page.
         if (!status.shizukuRunning) {
@@ -112,6 +112,7 @@ fun PermissionsScreen(
                 showStorageChoice = { showStorageChoiceDialog = true },
             )
         }
+        Unit
     }
 
     // Auto-pop next permission when Shizuku is ready and a runtime permission is still missing
