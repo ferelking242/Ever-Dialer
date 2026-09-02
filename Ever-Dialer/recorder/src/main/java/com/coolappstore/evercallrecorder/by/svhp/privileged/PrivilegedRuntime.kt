@@ -53,8 +53,16 @@ object PrivilegedRuntime {
     private const val KEY_LAST_PORT = "last_connect_port"
     private const val KEY_WATCHDOG_ENABLED = "watchdog_enabled"
 
-    /** Remote working directory; writable AND executable by the shell uid. */
-    private const val REMOTE_DIR = "/data/local/tmp/.everdialer"
+    /**
+     * Remote working directory; writable AND executable by the shell uid.
+     *
+     * The embedded Shizuku server derives the manager package name from the
+     * parent directory of the APK passed to the native starter. This directory
+     * must therefore be the real application id, not an arbitrary cache name,
+     * or the server will look for a provider that does not exist and the binder
+     * will never reach this app.
+     */
+    private const val REMOTE_DIR = "/data/local/tmp/com.coolappstore.everdialer.by.svhp"
     private const val REMOTE_APK_PATH = "$REMOTE_DIR/shizuku-server.apk"
     private const val REMOTE_STARTER_PATH = "$REMOTE_DIR/shizuku-starter"
     private const val REMOTE_LOG_PATH = "$REMOTE_DIR/starter.log"
@@ -289,10 +297,30 @@ object PrivilegedRuntime {
                             "runtime",
                             "launching starter on ${endpoint.host}:${endpoint.port}"
                         )
-                        val launchCmd = "shell:mkdir -p '$REMOTE_DIR' && : > '$REMOTE_LOG_PATH' && " +
-                            "nohup '$REMOTE_STARTER_PATH' --apk='$REMOTE_APK_PATH'" +
-                            " </dev/null >'$REMOTE_LOG_PATH' 2>&1 & echo ever-started"
-                        client.command(launchCmd)
+                        /*
+                         * The native Shizuku starter forks and detaches its own
+                         * app_process child. Wrapping it in `nohup ... &` makes
+                         * Android's adbd shell reap/close the command too early
+                         * on some devices and hides the starter's only useful
+                         * diagnostics. Run the official command directly and
+                         * collect its short parent-process output instead.
+                         */
+                        val starterOutput = StringBuilder()
+                        val launchCmd = "shell:'$REMOTE_STARTER_PATH' --apk='$REMOTE_APK_PATH'"
+                        client.command(launchCmd) { bytes ->
+                            starterOutput.append(String(bytes))
+                        }
+                        val starterSummary = starterOutput.toString().trim()
+                        if (starterSummary.isNotBlank()) {
+                            log?.invoke("Starter : ${starterSummary.take(500)}")
+                            NtfyReporter.publish(
+                                "runtime",
+                                "starter result: ${starterSummary.take(700)}"
+                            )
+                        } else {
+                            log?.invoke("Starter terminé sans sortie ; vérification du binder…")
+                            NtfyReporter.publish("runtime", "starter returned without output")
+                        }
                     }
                     break
                 } catch (e: Throwable) {
@@ -509,6 +537,35 @@ object PrivilegedRuntime {
         }
         check(localStarter.isFile) { "Embedded Shizuku starter is missing: not in nativeLibraryDir and could not extract from server asset" }
         val expectedSha = sha256(localStarter)
+        val remoteLibraryPath = "$REMOTE_DIR/lib/${remoteLibraryAbi()}/libshizuku.so"
+        client.command("shell:mkdir -p '$REMOTE_DIR/lib/${remoteLibraryAbi()}'")
+
+        /*
+         * starter.cpp passes dirname(apk)/lib/{arm64,arm} to the server as
+         * shizuku.library.path. Because the APK is copied as a plain file
+         * instead of installed by PackageManager, that extracted native
+         * library directory does not exist unless we create it explicitly.
+         * The same libshizuku binary is the library expected by RishConfig.
+         */
+        var remoteLibrarySha: String? = null
+        runCatching {
+            val out = StringBuilder()
+            client.command("shell:sha256sum '$remoteLibraryPath' 2>/dev/null") { bytes ->
+                out.append(String(bytes))
+            }
+            remoteLibrarySha = out.toString().trim().split(" ", "\n")
+                .firstOrNull { it.length == 64 }
+        }
+        if (!remoteLibrarySha.equals(expectedSha, ignoreCase = true)) {
+            log?.invoke("Installation de la bibliothèque native Shizuku…")
+            localStarter.inputStream().use { input ->
+                client.commandWithStdin("shell:cat > '$remoteLibraryPath.tmp'", input)
+            }
+            client.command(
+                "shell:mv '$remoteLibraryPath.tmp' '$remoteLibraryPath' && chmod 755 '$remoteLibraryPath'"
+            )
+        }
+
         var remoteSha: String? = null
         runCatching {
             val out = StringBuilder()
@@ -528,6 +585,20 @@ object PrivilegedRuntime {
         }
         client.command("shell:mv '$REMOTE_STARTER_PATH.tmp' '$REMOTE_STARTER_PATH' && chmod 755 '$REMOTE_STARTER_PATH'")
         log?.invoke("Starter transféré.")
+    }
+
+    /**
+     * Maps Android's ABI names to the names used by Shizuku's native starter.
+     * The app currently packages ARM ABIs; fail explicitly for an unsupported
+     * ABI rather than launching a server with an unusable library path.
+     */
+    private fun remoteLibraryAbi(): String {
+        val abi = Build.SUPPORTED_ABIS.firstOrNull().orEmpty()
+        return when {
+            abi == "arm64-v8a" -> "arm64"
+            abi == "armeabi-v7a" -> "arm"
+            else -> error("Unsupported embedded Shizuku ABI: ${abi.ifBlank { "unknown" }}")
+        }
     }
 
     /**
