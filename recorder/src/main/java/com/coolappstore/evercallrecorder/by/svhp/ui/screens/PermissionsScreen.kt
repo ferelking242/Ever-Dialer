@@ -43,6 +43,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.coolappstore.evercallrecorder.by.svhp.R
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
+import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.onboarding.OnboardingStatus
 import com.coolappstore.evercallrecorder.by.svhp.system.openAppSettings
 import com.coolappstore.evercallrecorder.by.svhp.ui.common.StorageLocationDialog
