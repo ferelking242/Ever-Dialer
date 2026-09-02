@@ -344,8 +344,9 @@ object PrivilegedRuntime {
                         // the remote mode in diagnostics. Some Android builds
                         // reset permissions when a file is moved in /data/local/tmp.
                         val launchCmd =
-                            "shell:chmod 755 '$starterPath' 2>&1; " +
-                                "ls -l '$starterPath' 2>&1; " +
+                            "shell:toybox chmod 0755 '$starterPath' 2>&1; " +
+                                "toybox ls -l '$starterPath' 2>&1; " +
+                                "toybox stat -c '%A %a %U:%G %n' '$starterPath' 2>&1; " +
                                 "exec '$starterPath' --apk='$REMOTE_APK_PATH'"
                         client.command(launchCmd) { bytes ->
                             starterOutput.append(String(bytes))
