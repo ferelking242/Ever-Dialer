@@ -17,6 +17,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -74,8 +75,24 @@ class PairingActivity : ComponentActivity() {
         // Restore PAIRED_IDLE after a process restart. The embedded runtime
         // does not require an external Shizuku app or notification permission.
         PrivilegedRuntime.refreshState(this)
+        startPairedRuntimeIfNeeded()
 
         setContent { MaterialTheme { PairingScreen() } }
+    }
+
+    /**
+     * Start from the Activity lifecycle rather than a Compose LaunchedEffect.
+     * A state change from PAIRED_IDLE to STARTING replaces the content branch;
+     * tying this long operation to composition can cancel it with
+     * LeftCompositionCancellationException on some Compose versions.
+     */
+    private fun startPairedRuntimeIfNeeded() {
+        if (!PrivilegedRuntime.isPaired(this) || PrivilegedRuntime.isConnected()) return
+        lifecycleScope.launch {
+            PrivilegedRuntime.ensureServerStarted(applicationContext).onFailure {
+                Log.e(TAG, "Automatic embedded-server startup failed", it)
+            }
+        }
     }
 }
 
@@ -84,13 +101,17 @@ private fun PairingScreen() {
     val context = LocalContext.current
     val activity = context as? ComponentActivity
     val scope = rememberCoroutineScope()
+    val operationScope = activity?.lifecycleScope ?: scope
     val runtimeState by PrivilegedRuntime.state.collectAsState()
 
     // Read port/host from intent extras (passed by notification)
     val intentPort = activity?.intent?.getIntExtra(PairingNotifier.EXTRA_PAIRING_PORT, 0) ?: 0
-    val intentHost = activity?.intent?.getStringExtra(PairingNotifier.EXTRA_PAIRING_HOST) ?: "127.0.0.1"
+    val intentHost = activity?.intent?.getStringExtra(PairingNotifier.EXTRA_PAIRING_HOST)
+        ?.takeIf { it.isNotBlank() }
+        ?: PairingNotifier.detectedHost
 
     var pairingPort by remember { mutableStateOf(if (intentPort > 0) intentPort.toString() else "") }
+    var pairingHost by remember { mutableStateOf(intentHost) }
     var pairingCode by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
@@ -101,8 +122,9 @@ private fun PairingScreen() {
         var mdns: moe.shizuku.manager.adb.AdbMdns? = null
         if (intentPort <= 0) {
             Log.d(TAG, "Starting mDNS watcher for pairing port")
-            mdns = PrivilegedRuntime.observePairingPort(context) { port ->
-                Log.d(TAG, "mDNS detected port: $port")
+            mdns = PrivilegedRuntime.observePairingPort(context) { host, port ->
+                Log.d(TAG, "mDNS detected endpoint: $host:$port")
+                pairingHost = host
                 pairingPort = port.toString()
                 portDetected = true
             }
@@ -110,18 +132,6 @@ private fun PairingScreen() {
             Log.d(TAG, "Port from intent: $intentPort")
         }
         onDispose { mdns?.stop() }
-    }
-
-    // This must not be keyed to runtimeState: ensureServerStarted changes the
-    // state to STARTING, which would cancel the effect that started it.
-    LaunchedEffect(Unit) {
-        if (PrivilegedRuntime.isPaired(context) && !PrivilegedRuntime.isConnected()) {
-            busy = true
-            PrivilegedRuntime.ensureServerStarted(context).onFailure {
-                errorMsg = friendlyErrorMessage(it)
-            }
-            busy = false
-        }
     }
 
     val isRunning = runtimeState == PrivilegedRuntime.State.RUNNING
@@ -167,12 +177,12 @@ private fun PairingScreen() {
                         errorMsg = "Le code doit faire 6 chiffres"
                         return@PairingContent
                     }
-                    scope.launch {
+                    operationScope.launch {
                         busy = true
                         errorMsg = null
                         PrivilegedRuntime.pairAndStart(
                             context,
-                            intentHost,
+                            pairingHost,
                             port,
                             pairingCode
                         ).onSuccess {

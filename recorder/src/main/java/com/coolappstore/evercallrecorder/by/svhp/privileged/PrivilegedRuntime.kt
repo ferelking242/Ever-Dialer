@@ -49,6 +49,7 @@ object PrivilegedRuntime {
     private const val TAG = "PrivilegedRuntime"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
+    private const val KEY_LAST_HOST = "last_connect_host"
     private const val KEY_LAST_PORT = "last_connect_port"
     private const val KEY_WATCHDOG_ENABLED = "watchdog_enabled"
 
@@ -81,6 +82,7 @@ object PrivilegedRuntime {
     fun forgetPairing(context: Context) {
         prefs(context).edit()
             .remove(KEY_ADB_KEY)
+            .remove(KEY_LAST_HOST)
             .remove(KEY_LAST_PORT)
             .apply()
         _state.value = State.NOT_PAIRED
@@ -207,11 +209,11 @@ object PrivilegedRuntime {
      * can auto-fill the pairing port while the user opens the system pairing dialog.
      * Returns the AdbMdns instance; caller must call .stop() (see DisposableEffect).
      */
-    fun observePairingPort(context: Context, onPort: (Int) -> Unit): AdbMdns? {
+    fun observePairingPort(context: Context, onEndpoint: (host: String, port: Int) -> Unit): AdbMdns? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         return try {
-            val mdns = AdbMdns(context.applicationContext, AdbMdns.TLS_PAIRING) { (_, port) ->
-                if (port > 0) onPort(port)
+            val mdns = AdbMdns(context.applicationContext, AdbMdns.TLS_PAIRING) { (host, resolvedPort) ->
+                if (resolvedPort > 0 && host.isNotBlank()) onEndpoint(host, resolvedPort)
             }
             mdns.start()
             mdns
@@ -249,23 +251,26 @@ object PrivilegedRuntime {
             log?.invoke("Recherche du port du débogage sans fil…")
             NtfyReporter.publish("runtime", "starting embedded Shizuku server")
 
-            val port = resolveConnectPort(appContext, log)
+            val endpoint = resolveConnectEndpoint(appContext, log)
                 ?: run {
                     _state.value = State.FAILED
                     val msg = "Port introuvable. Active « Débogage sans fil » puis réessaie."
                     log?.invoke(msg)
                     return@withContext Result.failure(AdbException(msg))
                 }
-            log?.invoke("Connexion à adbd sur 127.0.0.1:$port…")
+            log?.invoke("Connexion à adbd sur ${endpoint.host}:${endpoint.port}…")
 
             val key = adbKey(appContext)
             var connected = false
             for (attempt in 1..3) {
                 try {
-                    AdbClient("127.0.0.1", port, key).use { client ->
+                    AdbClient(endpoint.host, endpoint.port, key).use { client ->
                         client.connect()
                         connected = true
-                        prefs(appContext).edit().putInt(KEY_LAST_PORT, port).apply()
+                        prefs(appContext).edit()
+                            .putString(KEY_LAST_HOST, endpoint.host)
+                            .putInt(KEY_LAST_PORT, endpoint.port)
+                            .apply()
 
                         ensureRemotePayloadChecked(client, appContext, log)
 
@@ -324,8 +329,10 @@ object PrivilegedRuntime {
             val appContext = context.applicationContext
             val key = adbKey(appContext)
             val port = prefs(appContext).getInt(KEY_LAST_PORT, -1)
+            val host = prefs(appContext).getString(KEY_LAST_HOST, null)
+                ?.takeIf { it.isNotBlank() } ?: "127.0.0.1"
             if (port > 0) {
-                AdbClient("127.0.0.1", port, key).use { client ->
+                AdbClient(host, port, key).use { client ->
                     client.connect()
                     // Only matches our own starter/server process names.
                     client.command("shell:pkill -f shizuku-starter || true")
@@ -349,30 +356,52 @@ object PrivilegedRuntime {
     private fun adbKey(context: Context): AdbKey =
         AdbKey(PreferenceAdbKeyStore(prefs(context)), context.packageName.take(24))
 
-    private suspend fun resolveConnectPort(context: Context, log: ((String) -> Unit)?): Int? {
-        // 1. Try the remembered port with a cheap probe.
+    private data class AdbEndpoint(val host: String, val port: Int)
+
+    private suspend fun resolveConnectEndpoint(
+        context: Context,
+        log: ((String) -> Unit)?
+    ): AdbEndpoint? {
+        // 1. Try the remembered endpoint with a cheap probe.
         val last = prefs(context).getInt(KEY_LAST_PORT, -1)
-        if (last > 0 && probeAdbd(last)) {
-            log?.invoke("Port mémorisé $last opérationnel.")
-            return last
+        val lastHost = prefs(context).getString(KEY_LAST_HOST, null)
+            ?.takeIf { it.isNotBlank() }
+        if (last > 0 && lastHost != null && probeAdbd(lastHost, last)) {
+            log?.invoke("Connexion mémorisée $lastHost:$last opérationnel.")
+            return AdbEndpoint(lastHost, last)
         }
-        // 2. mDNS discovery (_adb-tls-connect._tcp), bounded to ~15 s.
+        // Compatibility with builds that remembered only the port.
+        if (last > 0 && probeAdbd("127.0.0.1", last)) {
+            log?.invoke("Port mémorisé 127.0.0.1:$last opérationnel.")
+            return AdbEndpoint("127.0.0.1", last)
+        }
+        // 2. mDNS discovery (_adb-tls-connect._tcp), bounded and cancellable.
+        // The resolved host is essential: wireless debugging is normally bound
+        // to the phone's LAN address, not to 127.0.0.1.
         log?.invoke("Découverte mDNS en cours…")
         val discovered = withTimeoutOrNull(15_000) {
             suspendCancellableCoroutine { cont ->
-                val mdns = AdbMdns(context.applicationContext, AdbMdns.TLS_CONNECT) { (_, port) ->
-                    if (port > 0 && cont.isActive) cont.resume(port)
+                lateinit var mdns: AdbMdns
+                mdns = AdbMdns(context.applicationContext, AdbMdns.TLS_CONNECT) { (host, port) ->
+                    if (port > 0 && host.isNotBlank() && cont.isActive) {
+                        runCatching { mdns.stop() }
+                        cont.resume(AdbEndpoint(host, port))
+                    }
                 }
                 cont.invokeOnCancellation { runCatching { mdns.stop() } }
-                mdns.start()
+                runCatching { mdns.start() }
+                    .onFailure { error ->
+                        runCatching { mdns.stop() }
+                        if (cont.isActive) cont.resumeWith(Result.failure(error))
+                    }
             }
         }
         return discovered
     }
 
-    private fun probeAdbd(port: Int): Boolean = try {
+    private fun probeAdbd(host: String, port: Int): Boolean = try {
         java.net.Socket().use { socket ->
-            socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 1200)
+            socket.connect(java.net.InetSocketAddress(host, port), 1200)
             true
         }
     } catch (e: Exception) {
