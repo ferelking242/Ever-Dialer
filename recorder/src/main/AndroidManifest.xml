@@ -166,9 +166,17 @@
                 tools:node="replace" />
         </provider>
 
+        <!--
+             Subclass of rikka.shizuku.ShizukuProvider: identical authority and
+             permissions (the fork manager registers the same way, including
+             directBootAware), but it reports binder pushes to the ntfy
+             diagnostics so a binder timeout can be told apart from a failed
+             server startup.
+        -->
         <provider
-            android:name="rikka.shizuku.ShizukuProvider"
+            android:name=".privileged.EverShizukuProvider"
             android:authorities="${applicationId}.shizuku"
+            android:directBootAware="true"
             android:enabled="true"
             android:exported="true"
             android:multiprocess="false"

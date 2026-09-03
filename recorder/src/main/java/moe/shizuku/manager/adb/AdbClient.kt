@@ -39,6 +39,10 @@ import javax.net.ssl.SSLSocket
 private const val TAG = "AdbClient"
 
 class AdbClient(private val host: String, private val port: Int, private val key: AdbKey) : Closeable {
+    companion object {
+        private const val PAYLOAD_READ_TIMEOUT_MS = 30_000
+    }
+
     private lateinit var socket: Socket
     private lateinit var plainInputStream: DataInputStream
     private lateinit var plainOutputStream: DataOutputStream
@@ -55,7 +59,7 @@ class AdbClient(private val host: String, private val port: Int, private val key
         socket = Socket()
         val address = InetSocketAddress(host, port)
         socket.connect(address, 5000)
-        socket.soTimeout = 15_000
+        socket.soTimeout = 20_000
         socket.tcpNoDelay = true
 
         plainInputStream = DataInputStream(socket.getInputStream())
@@ -101,37 +105,18 @@ class AdbClient(private val host: String, private val port: Int, private val key
     }
 
     fun command(cmd: String, listener: ((ByteArray) -> Unit)? = null) {
-        val localId = 1
+        val localId = newLocalId()
         write(A_OPEN, localId, 0, cmd)
 
-        var message = read()
-
-        when (message.command) {
-            A_OKAY -> {
-                while (true) {
-                    message = read()
-                    val remoteId = message.arg0
-
-                    if (message.command == A_WRTE) {
-                        if (message.data_length > 0) {
-                            listener?.invoke(message.data!!)
-                        }
-                        write(A_OKAY, localId, remoteId)
-                    } else if (message.command == A_CLSE) {
-                        write(A_CLSE, localId, remoteId)
-                        break
-                    } else {
-                        error("not A_WRTE or A_CLSE")
-                    }
-                }
-            }
+        val first = read()
+        when (first.command) {
+            A_OKAY -> drainStream(localId, first.arg0, listener, cmd)
             A_CLSE -> {
-                val remoteId = message.arg0
-                write(A_CLSE, localId, remoteId)
+                // adbd refused the stream outright (e.g. shell service unavailable).
+                write(A_CLSE, localId, first.arg0)
+                throw AdbException("stream refused by adbd for: $cmd")
             }
-            else -> {
-                error("not A_OKAY or A_CLSE")
-            }
+            else -> throw AdbException("expected A_OKAY after A_OPEN for: $cmd, got ${first.toStringShort()}")
         }
     }
 
@@ -145,38 +130,56 @@ class AdbClient(private val host: String, private val port: Int, private val key
      * CNXN packet, and every WRTE waits for its OKAY before the next one.
      */
     fun commandWithStdin(cmd: String, payload: InputStream, listener: ((ByteArray) -> Unit)? = null) {
-        val localId = 1
+        val localId = newLocalId()
         write(A_OPEN, localId, 0, cmd)
 
         val first = read()
-        if (first.command == A_CLSE) {
-            write(A_CLSE, localId, first.arg0)
-            throw AdbException("stream refused by adbd for: $cmd")
+        when (first.command) {
+            A_CLSE -> {
+                write(A_CLSE, localId, first.arg0)
+                throw AdbException("stream refused by adbd for: $cmd")
+            }
+            A_OKAY -> Unit
+            else -> throw AdbException("expected A_OKAY after A_OPEN for: $cmd, got ${first.toStringShort()}")
         }
-        if (first.command != A_OKAY) throw AdbException("expected A_OKAY after A_OPEN, got ${first.toStringShort()}")
         val remoteId = first.arg0
 
-        // Stream the payload in <=4096-byte chunks with per-message OKAY handshake.
-        val buffer = ByteArray(4096)
-        while (true) {
-            val n = payload.read(buffer)
-            if (n <= 0) break
-            var off = 0
-            while (off < n) {
-                val len = minOf(4096, n - off)
-                val chunk = buffer.copyOfRange(off, off + len)
-                write(A_WRTE, localId, remoteId, chunk)
+        /*
+         * A multi-megabyte push (the embedded server APK) takes many round
+         * trips over wireless TLS; a stalled WiFi link can easily exceed the
+         * default read timeout. Raise it for the duration of the payload so a
+         * slow-but-alive link is not mistaken for a dead one.
+         */
+        val previousTimeout = socket.soTimeout
+        try {
+            socket.soTimeout = PAYLOAD_READ_TIMEOUT_MS
 
-                val ack = read()
-                if (ack.command != A_OKAY) {
+            // Stream the payload in <=4096-byte chunks with per-message OKAY handshake.
+            val buffer = ByteArray(4096)
+            var sent = 0L
+            while (true) {
+                val n = payload.read(buffer)
+                if (n <= 0) break
+                var off = 0
+                while (off < n) {
+                    val len = minOf(4096, n - off)
+                    write(A_WRTE, localId, remoteId, buffer.copyOfRange(off, off + len))
+                    sent += len
+
+                    val ack = read()
+                    if (ack.command == A_OKAY) {
+                        off += len
+                        continue
+                    }
                     if (ack.command == A_CLSE) {
                         write(A_CLSE, localId, ack.arg0)
-                        throw AdbException("remote closed during payload write: $cmd")
+                        throw AdbException("remote closed during payload write ($sent bytes sent): $cmd")
                     }
-                    throw AdbException("expected A_OKAY after A_WRTE, got ${ack.toStringShort()}")
+                    throw AdbException("expected A_OKAY after A_WRTE for: $cmd, got ${ack.toStringShort()}")
                 }
-                off += len
             }
+        } finally {
+            socket.soTimeout = previousTimeout
         }
 
         // Close our side: adbd forwards EOF to the shell command's stdin.
@@ -184,22 +187,43 @@ class AdbClient(private val host: String, private val port: Int, private val key
 
         // Drain the remote side before returning. Without this handshake,
         // subsequent commands can consume the old A_CLSE and fail randomly.
+        drainStream(localId, remoteId, listener, cmd)
+    }
+
+    /**
+     * Reads the shell stream until the remote closes it, invoking [listener]
+     * for every payload chunk. Every A_WRTE is acknowledged with A_OKAY; the
+     * final A_CLSE is answered with A_CLSE. Stray A_OKAY packets are tolerated
+     * (some adbd builds acknowledge the local close before the remote close)
+     * instead of being misread as protocol corruption.
+     */
+    private fun drainStream(
+        localId: Int,
+        remoteId: Int,
+        listener: ((ByteArray) -> Unit)?,
+        cmd: String
+    ) {
         while (true) {
             val message = read()
             when (message.command) {
                 A_WRTE -> {
-                    message.data?.let { listener?.invoke(it) }
-                    write(A_OKAY, localId, message.arg0)
-                }
-                A_OKAY -> {
-                    // adbd may acknowledge our local close before sending
-                    // the final close for the remote shell stream.
+                    if (message.data_length > 0) {
+                        listener?.invoke(message.data!!)
+                    }
+                    write(A_OKAY, localId, remoteId)
                 }
                 A_CLSE -> {
-                    write(A_CLSE, localId, message.arg0)
-                    break
+                    write(A_CLSE, localId, remoteId)
+                    return
                 }
-                else -> throw AdbException("expected A_WRTE or A_CLSE after stdin close, got ${message.toStringShort()}")
+                A_OKAY -> {
+                    // Acknowledge of our own close, or of a WRTE that raced
+                    // with the remote close. Nothing to do.
+                }
+                else -> throw AdbException(
+                    "protocol error on stream '$cmd': got ${message.toStringShort()}, " +
+                        "expected A_WRTE/A_CLSE"
+                )
             }
         }
     }
@@ -207,6 +231,18 @@ class AdbClient(private val host: String, private val port: Int, private val key
     private fun write(command: Int, arg0: Int, arg1: Int, data: ByteArray? = null) = write(AdbMessage(command, arg0, arg1, data))
 
     private fun write(command: Int, arg0: Int, arg1: Int, data: String) = write(AdbMessage(command, arg0, arg1, data))
+
+    /**
+     * Stream ids must be unique per transport connection: adbd routes packets
+     * by (local id, remote id) and reusing an id whose previous stream is only
+     * half-closed on the remote side makes replies land on the wrong stream.
+     */
+    private var nextLocalId = 0
+
+    private fun newLocalId(): Int {
+        nextLocalId = nextLocalId + 1
+        return nextLocalId
+    }
 
     private fun write(message: AdbMessage) {
         outputStream.write(message.toByteArray())

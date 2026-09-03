@@ -72,7 +72,14 @@ object PrivilegedRuntime {
      * ART needs a few seconds to JIT-compile the pushed server dex on slower
      * devices, so 10 s was too tight; the fork manager waits up to 60 s.
      */
-    private const val BINDER_WAIT_MS = 20_000L
+    private const val BINDER_WAIT_MS = 30_000L
+
+    /**
+     * Extra chance given to the binder AFTER the diagnostics have run: the
+     * server may still be compiling its dex or retrying its binder push while
+     * we collect logs, so a timeout right after launch is not final.
+     */
+    private const val BINDER_GRACE_MS = 8_000L
 
     private val _state = MutableStateFlow(initialState())
     val state: StateFlow<State> = _state
@@ -134,6 +141,18 @@ object PrivilegedRuntime {
 
     /** Reads the live binder state for UI indicators and click guards. */
     fun isConnected(): Boolean = ShizukuConnectionManager.isAvailable()
+
+    /**
+     * Called from the in-app [EverShizukuProvider] when the embedded server's
+     * binder push reaches this process. Lets the badge recover to RUNNING even
+     * when the binder arrives after a startup attempt already gave up (e.g.
+     * slow first dex compilation on the device), and reports the state change.
+     */
+    fun notifyBinderDelivered() {
+        if (startingJobCount == 0 && ShizukuConnectionManager.isAvailable()) {
+            _state.value = State.RUNNING
+        }
+    }
 
     /**
      * Reads Android's actual Wireless debugging switch.
@@ -317,6 +336,11 @@ object PrivilegedRuntime {
             _state.value = State.STARTING
             log?.invoke("Recherche du port du débogage sans fil…")
             NtfyReporter.publish("runtime", "starting embedded Shizuku server")
+            NtfyReporter.publish(
+                "runtime",
+                "app binder pre-start: ping=${ShizukuConnectionManager.isAvailable()} " +
+                    "perm=${ShizukuConnectionManager.hasPermission(appContext)}"
+            )
 
             val endpoint = resolveConnectEndpoint(appContext, log)
                 ?: run {
@@ -329,10 +353,21 @@ object PrivilegedRuntime {
 
             val key = adbKey(appContext)
             var connected = false
+            var launched = false
             var lastLaunchError: Throwable? = null
             val launchOutput = StringBuilder()
+            val maxAttempts = 3
 
-            for (attempt in 1..2) {
+            /*
+             * Every attempt opens a FRESH AdbClient connection. Transport-level
+             * and protocol-level errors (EOF, stray packets, stream refused)
+             * are retried up to maxAttempts; pairing/auth failures and errors
+             * after a successful launch are not (retrying a launch would kill
+             * an already-running server for nothing).
+             */
+            var attempt = 1
+            while (attempt <= maxAttempts) {
+                val attemptError: Throwable?
                 try {
                     AdbClient(endpoint.host, endpoint.port, key).use { client ->
                         client.connect()
@@ -368,6 +403,11 @@ object PrivilegedRuntime {
                         client.command(launchCmd) { bytes ->
                             launchOutput.append(String(bytes))
                         }
+                        // The starter ran to completion (or its stream closed
+                        // after forking the server): from here on the server
+                        // owns its lifecycle, so never re-launch on a later
+                        // transient error.
+                        launched = true
                         val starterSummary = launchOutput.toString().trim()
                         if (starterSummary.isNotBlank()) {
                             log?.invoke("Starter : ${starterSummary.take(500)}")
@@ -386,8 +426,9 @@ object PrivilegedRuntime {
                         val snapshot = StringBuilder()
                         runCatching {
                             client.command(
-                                "shell:ps -A -o USER,PID,PPID,NAME | " +
-                                    "grep -E 'shizuku|app_process' | grep -v grep || true"
+                                "shell:ps -A -o USER,PID,PPID,NAME,ARGS | " +
+                                    "grep -E 'shizuku_server|ShizukuService|app_process' | " +
+                                    "grep -v grep || true"
                             ) { bytes ->
                                 snapshot.append(String(bytes))
                             }
@@ -395,19 +436,30 @@ object PrivilegedRuntime {
                         if (snapshot.isNotBlank()) {
                             NtfyReporter.publish(
                                 "runtime",
-                                "post-launch ps: ${snapshot.toString().trim().take(600)}"
+                                "post-launch ps: ${snapshot.toString().trim().take(700)}"
                             )
                         }
                     }
-                    break
+                    attemptError = null
                 } catch (e: Throwable) {
+                    if (e is CancellationException) throw e
+                    attemptError = e
                     lastLaunchError = e
-                    if (attempt == 2 || e is AdbException) {
-                        break
-                    }
-                    log?.invoke("Tentative $attempt échouée, nouvel essai… (${e.message})")
-                    delay(1200L)
                 }
+
+                if (attemptError == null) break
+                if (launched || isPairingInvalid(attemptError) || attempt >= maxAttempts) break
+
+                attempt += 1
+                log?.invoke("Tentative ${attempt - 1} échouée : ${attemptError.message} — nouvel essai…")
+                NtfyReporter.publish(
+                    "runtime",
+                    "attempt ${attempt - 1} failed (${attemptError.javaClass.simpleName}: " +
+                        "${attemptError.message ?: "unknown"}), retrying on a fresh connection",
+                    "high"
+                )
+                connected = false
+                delay(1500L)
             }
 
             if (!connected) {
@@ -418,6 +470,30 @@ object PrivilegedRuntime {
                 return@withContext Result.failure(err)
             }
 
+            if (!launched) {
+                /*
+                 * The connection succeeded but the pipeline never reached the
+                 * starter (payload transfer, install or launch-command write
+                 * failed and the retries were exhausted). Fail immediately with
+                 * the REAL error instead of silently degrading into a 30 s fake
+                 * binder wait, which is what made every earlier run look like a
+                 * generic "server did not answer" timeout.
+                 */
+                _state.value = State.FAILED
+                val err = lastLaunchError ?: AdbException("Échec avant le lancement du starter")
+                if (isPairingInvalid(err)) {
+                    forgetPairing(appContext)
+                }
+                log?.invoke("Échec avant le lancement : ${err.message}")
+                NtfyReporter.publish(
+                    "runtime",
+                    "startup failed before launch: ${err.javaClass.simpleName}: " +
+                        "${err.message ?: "unknown"}",
+                    "high"
+                )
+                return@withContext Result.failure(err)
+            }
+
             /*
              * The native starter detaches the server (fork + setsid) and the
              * launch stream can close before the server is up — or the stream
@@ -425,10 +501,23 @@ object PrivilegedRuntime {
              * report failure without giving the binder a real chance.
              */
             log?.invoke("En attente du binder Shizuku (≤${BINDER_WAIT_MS / 1000} s)…")
-            val up = waitForBinder(timeoutMillis = BINDER_WAIT_MS)
+            var up = waitForBinder(timeoutMillis = BINDER_WAIT_MS)
             if (!up) {
-                _state.value = State.FAILED
+                /*
+                 * Diagnostics take several seconds (logcat dump, process list).
+                 * The server may still be JIT-compiling its dex or retrying its
+                 * binder push during that window, so give the binder one last
+                 * short chance before declaring failure.
+                 */
                 val remoteLog = readRemoteStartupLog(endpoint, key)
+                up = waitForBinder(timeoutMillis = BINDER_GRACE_MS)
+                if (up) {
+                    _state.value = State.RUNNING
+                    log?.invoke("Privilèges système actifs ✔ (binder arrivé pendant les diagnostics)")
+                    NtfyReporter.publish("runtime", "embedded Shizuku binder is running (late)")
+                    return@withContext Result.success(Unit)
+                }
+                _state.value = State.FAILED
                 val launchSummary = launchOutput.toString().trim()
                 val msg = if (remoteLog.isNullOrBlank()) {
                     "Le serveur ne répond pas après ${BINDER_WAIT_MS / 1000} s. Vérifie le débogage sans fil."
@@ -577,24 +666,37 @@ object PrivilegedRuntime {
                 }
 
                 collect("starter.log", "shell:toybox tail -c 4000 '$REMOTE_LOG_PATH' 2>&1")
-                // The native starter detaches the Java server, so its stdout is
-                // no longer on the launch stream; the server's own logs (and any
-                // fatal crash, SELinux denial, or app_process error) land here.
+                // The native starter detaches the Java server and redirects its
+                // stdout/stderr to /dev/null, so the server's own logs (and any
+                // fatal crash, SELinux denial, or app_process error) only land
+                // in logcat. Dump the whole ring buffer and filter narrowly:
+                // earlier versions used -t 2000 with a wide pattern that both
+                // missed old lines (Samsung's buffer overflows in seconds) and
+                // matched unrelated noise such as "InterruptionStateProvider".
                 collect(
                     "logcat",
-                    "shell:logcat -d -t 2000 -v brief | " +
-                        "grep -iE 'shizuku|binder|provider|app_process|avc|denied|exception|fatal' | " +
-                        "tail -200"
+                    "shell:logcat -d -v brief 2>/dev/null | " +
+                        "grep -aiE 'shizuku|app_process|E AndroidRuntime|FATAL EXCEPTION|avc: denied' | " +
+                        "tail -300"
                 )
                 collect(
                     "processes",
                     "shell:ps -A -o USER,PID,PPID,NAME,ARGS | " +
-                        "grep -E 'shizuku|app_process' | grep -v grep || true"
+                        "grep -E 'shizuku_server|ShizukuService|app_process' | grep -v grep || true"
+                )
+                // The pushed server publishes its binder into THIS app's
+                // <package>.shizuku provider; verify the provider is actually
+                // registered in the running APK (resolve-content-provider does
+                // not exist on this Samsung ROM, hence dumpsys instead).
+                collect(
+                    "provider-package",
+                    "shell:dumpsys package '${BuildConfig.APPLICATION_ID}' 2>/dev/null | " +
+                        "grep -aiE 'shizuku' | head -30"
                 )
                 collect(
-                    "provider",
-                    "shell:cmd package resolve-content-provider " +
-                        "'${BuildConfig.APPLICATION_ID}.shizuku' 0 2>&1"
+                    "providers-registry",
+                    "shell:dumpsys activity providers 2>/dev/null | " +
+                        "grep -aiE 'shizuku' | head -40"
                 )
                 collect(
                     "selinux",
