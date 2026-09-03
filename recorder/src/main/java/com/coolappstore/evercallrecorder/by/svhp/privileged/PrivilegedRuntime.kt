@@ -925,24 +925,54 @@ object PrivilegedRuntime {
         }
         check(localStarter.isFile) { "Embedded Shizuku starter is missing: not in nativeLibraryDir and could not extract from server asset" }
         val expectedSha = sha256(localStarter)
+        val shaPrefix = expectedSha.take(12)
         /*
-         * Never reuse a starter filename that may still be executing.
+         * Stop the per-launch delete-and-repush of the starter.
+         *
+         * This ROM's adbd tears bulk write-streams down mid-transfer
+         * (observed as "remote closed during payload write (8192 bytes sent)"
+         * on shell:cat and "remote closed during sync payload write (0 bytes
+         * sent)" on the sync service), so re-crossing that channel on EVERY
+         * startup made most launches die before the server was even started.
+         * The APK already gets a SHA check before any upload; give the starter
+         * the same treatment: keep the verified file on the device and reuse it.
+         */
+        runCatching {
+            // Kill stale starter processes (which would hold an executing file
+            // open and cause ETXTBSY on the next exec), but DO NOT remove the
+            // installed files here.
+            client.command(
+                "shell:pkill -f '[s]hizuku-starter-[0-9a-f]+-' || true; sleep 1"
+            )
+        }
+        findMatchingRemoteStarter(client, shaPrefix, expectedSha)?.let { existing ->
+            // Cheap sanity pass on the reused file: mode may have been lost
+            // (adb push defaults, fs quirks); re-chmod is idempotent and safe.
+            val ready = runCatching {
+                val out = StringBuilder()
+                client.command(
+                    "shell:toybox chmod 0755 '$existing' 2>/dev/null; " +
+                        "if toybox test -x '$existing'; then echo EVER_STARTER_REUSE_OK; fi"
+                ) { bytes -> out.append(String(bytes)) }
+                out.toString().contains("EVER_STARTER_REUSE_OK")
+            }.getOrDefault(false)
+            if (ready) {
+                log?.invoke("Starter déjà installé et vérifié : réutilisation.")
+                NtfyReporter.publish("runtime", "reusing verified on-device starter (no transfer)")
+                return existing
+            }
+            log?.invoke("Starter présent mais non exécutable : réinstallation…")
+        }
+        /*
+         * Install path: every install gets its own remote filename.
          * Android can report ETXTBSY ("Text file busy") when a second startup
          * races with an upload or an old detached starter. A hash alone is not
          * enough because a failed hash probe can cause the same file to be
          * overwritten, so every launch gets its own remote filename.
          */
         runCatching {
-            // The starter is launched through /system/bin/sh, so the full
-            // process command line does not start with REMOTE_DIR. The
-            // bracket expression prevents pkill from matching its own command.
-            // Real filenames are shizuku-starter-<sha12>-<launchId>, so the
-            // pattern must end with '-', not end-of-line.
             client.command(
-                "shell:pkill -f '[s]hizuku-starter-[0-9a-f]+-' || true"
-            )
-            client.command(
-                "shell:sleep 1; rm -f '$REMOTE_DIR'/shizuku-starter-* " +
+                "shell:rm -f '$REMOTE_DIR'/shizuku-starter-* " +
                     "'$REMOTE_DIR'/shizuku-starter-*.tmp 2>/dev/null || true"
             )
         }
@@ -1019,6 +1049,36 @@ object PrivilegedRuntime {
         NtfyReporter.publish("runtime", "starter install: ${modeCheck.take(300)}")
         log?.invoke("Starter transféré.")
         return remoteStarterPath
+    }
+
+    /**
+     * Returns the path of an already-pushed starter whose SHA-256 matches the
+     * current build, or null when none exists. Hash-versioned filenames are
+     * shizuku-starter-<sha12>-<launchId>, so a glob on the prefix finds every
+     * candidate and `sha256sum` (multi-file) filters by real content.
+     */
+    private fun findMatchingRemoteStarter(
+        client: AdbClient,
+        shaPrefix: String,
+        expectedSha: String
+    ): String? {
+        val output = StringBuilder()
+        runCatching {
+            client.command(
+                "shell:toybox sha256sum '$REMOTE_DIR'/shizuku-starter-$shaPrefix-* 2>/dev/null || true"
+            ) { bytes -> output.append(String(bytes)) }
+        }
+        for (line in output.toString().lineSequence()) {
+            val trimmed = line.trim()
+            if (trimmed.length < 66) continue
+            val hash = trimmed.take(64)
+            if (!hash.equals(expectedSha, ignoreCase = true)) continue
+            val path = trimmed.substring(64).trim()
+            if (path.startsWith("$REMOTE_DIR/shizuku-starter-$shaPrefix-")) {
+                return path
+            }
+        }
+        return null
     }
 
     /**
