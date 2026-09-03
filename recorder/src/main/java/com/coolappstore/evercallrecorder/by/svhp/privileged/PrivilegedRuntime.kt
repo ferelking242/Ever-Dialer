@@ -507,6 +507,23 @@ object PrivilegedRuntime {
                 client.command("shell:tail -c 2000 '$REMOTE_LOG_PATH' 2>/dev/null") { bytes ->
                     output.append(String(bytes))
                 }
+                if (output.toString().isBlank()) {
+                    // The native starter detaches the Java server, so its
+                    // stdout is no longer available on the launch stream.
+                    // Read the Android log buffer to expose server/provider
+                    // failures instead of reporting an unhelpful empty log.
+                    client.command(
+                        "shell:logcat -d -t 300 -v brief | " +
+                            "grep -iE 'shizuku|binder|provider' | tail -80"
+                    ) { bytes ->
+                        output.append(String(bytes))
+                    }
+                }
+                if (output.toString().isBlank()) {
+                    client.command("shell:ps -A | grep -i shizuku") { bytes ->
+                        output.append(String(bytes))
+                    }
+                }
             }
             output.toString().trim().takeIf { it.isNotBlank() }
         }.onFailure {
