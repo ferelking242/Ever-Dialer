@@ -173,7 +173,8 @@ class AdbClient(private val host: String, private val port: Int, private val key
             // SEND <length> <remotePath>,<octal mode> — adbd opens the file here
             // and may answer FAIL immediately if the directory is missing.
             val modeText = mode.toString(8).padStart(4, '0')
-            writeSyncPacket(localId, remoteId, syncMessage("SEND", "$remotePath,$modeText"))
+            val header = "$remotePath,$modeText".toByteArray(Charsets.UTF_8)
+            writeSyncPacket(localId, remoteId, syncMessage("SEND", header))
 
             // DATA <length> <bytes>…
             val data = ByteArray(SYNC_WRTE_MAX - 8)
@@ -257,7 +258,7 @@ class AdbClient(private val host: String, private val port: Int, private val key
      * Builds one adb sync message: 4-byte id (ASCII), little-endian payload
      * length, payload. The whole thing is sent inside a single WRTE.
      */
-    private fun syncMessage(id: String, payload: ByteArray): ByteArray {
+    private fun syncMessage(id: String, payload: ByteArray = ByteArray(0)): ByteArray {
         val buffer = ByteBuffer.allocate(8 + payload.size).order(ByteOrder.LITTLE_ENDIAN)
         buffer.putInt(syncId(id))
         buffer.putInt(payload.size)
