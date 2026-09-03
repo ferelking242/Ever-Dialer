@@ -69,10 +69,15 @@ object PrivilegedRuntime {
 
     /**
      * How long to poll for the Shizuku binder after launching the starter.
-     * ART needs a few seconds to JIT-compile the pushed server dex on slower
-     * devices, so 10 s was too tight; the fork manager waits up to 60 s.
+     *
+     * The pushed APK runs under app_process as the shell uid, so ART cannot
+     * write oat caches and interprets the dex on every boot; on slow ROMs the
+     * server also scans the installed packages before it can push its binder.
+     * The fork manager itself waits up to 60 s for the binder ("This may take
+     * up to 1 minute"), so any shorter window here reports failure while the
+     * server is still booting.
      */
-    private const val BINDER_WAIT_MS = 30_000L
+    private const val BINDER_WAIT_MS = 60_000L
 
     /**
      * Extra chance given to the binder AFTER the diagnostics have run: the
@@ -353,21 +358,28 @@ object PrivilegedRuntime {
 
             val key = adbKey(appContext)
             var connected = false
-            var launched = false
             var lastLaunchError: Throwable? = null
             val launchOutput = StringBuilder()
             val maxAttempts = 3
+            // True once a silent-but-alive server has been killed for a single
+            // controlled relaunch. At most one escalation is allowed per call.
+            var escalated = false
 
             /*
-             * Every attempt opens a FRESH AdbClient connection. Transport-level
-             * and protocol-level errors (EOF, stray packets, stream refused)
-             * are retried up to maxAttempts; pairing/auth failures and errors
-             * after a successful launch are not (retrying a launch would kill
-             * an already-running server for nothing).
+             * Phase loop:
+             *  - phase 0: launch the starter (or adopt a shizuku_server that is
+             *    already running) and wait for the binder.
+             *  - if the binder never appears while a server process stays alive,
+             *    kill it once and relaunch (phase 1), matching the fork
+             *    manager's own "kill and try again" recovery.
              */
+            for (phase in 0..1) {
+            var serverWasRunning = false
+            var launched = false
             var attempt = 1
+            var attemptError: Throwable? = null
+
             while (attempt <= maxAttempts) {
-                var attemptError: Throwable? = null
                 try {
                     AdbClient(endpoint.host, endpoint.port, key).use { client ->
                         client.connect()
@@ -377,67 +389,91 @@ object PrivilegedRuntime {
                             .putInt(KEY_LAST_PORT, endpoint.port)
                             .apply()
 
-                        val starterPath = ensureRemotePayloadChecked(client, appContext, log)
-
-                        log?.invoke("Lancement du serveur Shizuku embarqué…")
-                        NtfyReporter.publish(
-                            "runtime",
-                            "launching starter on ${endpoint.host}:${endpoint.port}"
-                        )
-
-                        /*
-                         * Mirror the fork manager's proven invocation exactly:
-                         * plain `<starter> --apk=<apk>` — no exec chain, no ls/stat
-                         * prefix that could confuse mksh on OEM ROMs. The starter
-                         * output is teed into the remote log so the binder-timeout
-                         * diagnostic can read it, and an exit-code marker is
-                         * appended so the app knows whether the starter itself
-                         * failed before forking the server.
-                         */
-                        launchOutput.setLength(0)
-                        val launchCmd =
-                            "shell:{ toybox chmod 0755 '$starterPath' 2>&1 || true; " +
-                                "'$starterPath' --apk='$REMOTE_APK_PATH' 2>&1; } | " +
-                                "toybox tee '$REMOTE_LOG_PATH'; " +
-                                "echo EVER_STARTER_EXIT=\${PIPESTATUS[0]}"
-                        client.command(launchCmd) { bytes ->
-                            launchOutput.append(String(bytes))
-                        }
-                        // The starter ran to completion (or its stream closed
-                        // after forking the server): from here on the server
-                        // owns its lifecycle, so never re-launch on a later
-                        // transient error.
-                        launched = true
-                        val starterSummary = launchOutput.toString().trim()
-                        if (starterSummary.isNotBlank()) {
-                            log?.invoke("Starter : ${starterSummary.take(500)}")
+                        if (!escalated && isShizukuServerRunning(client)) {
+                            /*
+                             * A shizuku_server from an earlier attempt is alive
+                             * (it may still be booting: app_process dex loading
+                             * and package scans can exceed 30 s on slow ROMs).
+                             * Do NOT relaunch over it — the native starter
+                             * kills the old process, so a retry here murdered
+                             * the still-booting server and made every attempt
+                             * start from zero. Adopt it and wait for its binder.
+                             */
+                            serverWasRunning = true
+                            log?.invoke(
+                                "Un shizuku_server est déjà actif ; attente du binder " +
+                                    "(≤${BINDER_WAIT_MS / 1000} s)…"
+                            )
                             NtfyReporter.publish(
                                 "runtime",
-                                "starter result: ${starterSummary.take(700)}"
+                                "existing shizuku_server alive; skipping re-launch and waiting for binder"
                             )
                         } else {
-                            log?.invoke("Starter terminé sans sortie ; vérification du binder…")
-                            NtfyReporter.publish("runtime", "starter returned without output")
-                        }
+                            val starterPath = ensureRemotePayloadChecked(client, appContext, log)
 
-                        // Same-connection process snapshot: know immediately
-                        // whether shizuku_server came up, even if a later
-                        // diagnostic reconnect fails.
-                        val snapshot = StringBuilder()
-                        runCatching {
-                            client.command(
-                                "shell:ps -A -o USER,PID,PPID,NAME,ARGS | " +
-                                    "grep -E 'shizuku_server|ShizukuService|app_process' | " +
-                                    "grep -v grep || true"
-                            ) { bytes ->
-                                snapshot.append(String(bytes))
-                            }
-                        }
-                        if (snapshot.isNotBlank()) {
+                            log?.invoke("Lancement du serveur Shizuku embarqué…")
                             NtfyReporter.publish(
                                 "runtime",
-                                "post-launch ps: ${snapshot.toString().trim().take(700)}"
+                                if (escalated) {
+                                    "relaunching silent server on ${endpoint.host}:${endpoint.port}"
+                                } else {
+                                    "launching starter on ${endpoint.host}:${endpoint.port}"
+                                }
                             )
+
+                            /*
+                             * Mirror the fork manager's proven invocation exactly:
+                             * plain `<starter> --apk=<apk>`. The exit marker is
+                             * emitted INSIDE the pipeline so it is also teed into
+                             * the remote log: the binder-timeout diagnostic can
+                             * then tell a starter that never ran (no log file at
+                             * all) from one that ran and failed (exit != 0).
+                             */
+                            launchOutput.setLength(0)
+                            val launchCmd =
+                                "shell:{ toybox chmod 0755 '$starterPath' 2>&1 || true; " +
+                                    "'$starterPath' --apk='$REMOTE_APK_PATH' 2>&1; " +
+                                    "echo EVER_STARTER_EXIT=\$?; } | " +
+                                    "toybox tee '$REMOTE_LOG_PATH'"
+                            client.command(launchCmd) { bytes ->
+                                launchOutput.append(String(bytes))
+                            }
+                            // The starter ran to completion (or its stream closed
+                            // after forking the server): from here on the server
+                            // owns its lifecycle, so never re-launch on a later
+                            // transient error.
+                            launched = true
+                            val starterSummary = launchOutput.toString().trim()
+                            if (starterSummary.isNotBlank()) {
+                                log?.invoke("Starter : ${starterSummary.take(500)}")
+                                NtfyReporter.publish(
+                                    "runtime",
+                                    "starter result: ${starterSummary.take(700)}"
+                                )
+                            } else {
+                                log?.invoke("Starter terminé sans sortie ; vérification du binder…")
+                                NtfyReporter.publish("runtime", "starter returned without output")
+                            }
+
+                            // Same-connection process snapshot: know immediately
+                            // whether shizuku_server came up, even if a later
+                            // diagnostic reconnect fails.
+                            val snapshot = StringBuilder()
+                            runCatching {
+                                client.command(
+                                    "shell:ps -A -o USER,PID,PPID,NAME,ARGS | " +
+                                        "grep -E 'shizuku_server|ShizukuService|app_process' | " +
+                                        "grep -v grep || true"
+                                ) { bytes ->
+                                    snapshot.append(String(bytes))
+                                }
+                            }
+                            if (snapshot.isNotBlank()) {
+                                NtfyReporter.publish(
+                                    "runtime",
+                                    "post-launch ps: ${snapshot.toString().trim().take(700)}"
+                                )
+                            }
                         }
                     }
                     attemptError = null
@@ -448,7 +484,9 @@ object PrivilegedRuntime {
                 }
 
                 if (attemptError == null) break
-                if (launched || isPairingInvalid(attemptError) || attempt >= maxAttempts) break
+                // After a launch (or when adopting a running server) never
+                // re-enter: the process owns its lifecycle from here.
+                if (launched || serverWasRunning || isPairingInvalid(attemptError) || attempt >= maxAttempts) break
 
                 attempt += 1
                 log?.invoke("Tentative ${attempt - 1} échouée : ${attemptError.message} — nouvel essai…")
@@ -470,12 +508,12 @@ object PrivilegedRuntime {
                 return@withContext Result.failure(err)
             }
 
-            if (!launched) {
+            if (!launched && !serverWasRunning) {
                 /*
                  * The connection succeeded but the pipeline never reached the
                  * starter (payload transfer, install or launch-command write
                  * failed and the retries were exhausted). Fail immediately with
-                 * the REAL error instead of silently degrading into a 30 s fake
+                 * the REAL error instead of silently degrading into a long fake
                  * binder wait, which is what made every earlier run look like a
                  * generic "server did not answer" timeout.
                  */
@@ -498,10 +536,12 @@ object PrivilegedRuntime {
              * The native starter detaches the server (fork + setsid) and the
              * launch stream can close before the server is up — or the stream
              * drain can time out while the server still starts fine. Never
-             * report failure without giving the binder a real chance.
+             * report failure without giving the binder a real chance (the fork
+             * manager waits up to 60 s).
              */
             log?.invoke("En attente du binder Shizuku (≤${BINDER_WAIT_MS / 1000} s)…")
             var up = waitForBinder(timeoutMillis = BINDER_WAIT_MS)
+            var remoteLog: String? = null
             if (!up) {
                 /*
                  * Diagnostics take several seconds (logcat dump, process list).
@@ -509,36 +549,71 @@ object PrivilegedRuntime {
                  * binder push during that window, so give the binder one last
                  * short chance before declaring failure.
                  */
-                val remoteLog = readRemoteStartupLog(endpoint, key)
+                remoteLog = readRemoteStartupLog(endpoint, key)
                 up = waitForBinder(timeoutMillis = BINDER_GRACE_MS)
-                if (up) {
-                    _state.value = State.RUNNING
-                    log?.invoke("Privilèges système actifs ✔ (binder arrivé pendant les diagnostics)")
-                    NtfyReporter.publish("runtime", "embedded Shizuku binder is running (late)")
-                    return@withContext Result.success(Unit)
-                }
-                _state.value = State.FAILED
-                val launchSummary = launchOutput.toString().trim()
-                val msg = if (remoteLog.isNullOrBlank()) {
-                    "Le serveur ne répond pas après ${BINDER_WAIT_MS / 1000} s. Vérifie le débogage sans fil."
-                } else {
-                    "Le starter a échoué : ${remoteLog.take(700)}"
-                }
-                log?.invoke(msg)
-                NtfyReporter.publish(
-                    "runtime",
-                    "binder timeout; launch=${launchSummary.take(300)}; " +
-                        "remote log=${remoteLog ?: "empty"}",
-                    "high"
-                )
-                return@withContext Result.failure(AdbException(msg))
+            }
+            if (up) {
+                _state.value = State.RUNNING
+                log?.invoke("Privilèges système actifs ✔")
+                NtfyReporter.publish("runtime", "embedded Shizuku binder is running")
+                return@withContext Result.success(Unit)
             }
 
-            _state.value = State.RUNNING
-            log?.invoke("Privilèges système actifs ✔")
-            NtfyReporter.publish("runtime", "embedded Shizuku binder is running")
+            /*
+             * Binder still missing. Report what the device actually shows
+             * (process alive or dead) and escalate once if the server process
+             * survived the whole window without publishing: such a silent
+             * process will not publish later, so replace it with a fresh one.
+             */
+            val serverAlive = probeShizukuServer(endpoint, key)
+            val launchSummary = launchOutput.toString().trim()
+            val stateLine = if (serverAlive) {
+                "server process ALIVE but binder missing after ${BINDER_WAIT_MS / 1000}s"
+            } else {
+                "server process NOT running"
+            }
+            NtfyReporter.publish(
+                "runtime",
+                "binder timeout; $stateLine; launch=${launchSummary.take(300)}; " +
+                    "remote log=${remoteLog ?: "empty"}",
+                "high"
+            )
 
-            Result.success(Unit)
+            if (!escalated && phase == 0 && (serverAlive || serverWasRunning)) {
+                // One controlled replacement: kill the silent server, clear the
+                // stale remote log and relaunch through the normal pipeline.
+                escalated = true
+                log?.invoke("Serveur muet : redémarrage contrôlé…")
+                NtfyReporter.publish(
+                    "runtime",
+                    "silent server: killing it and relaunching once",
+                    "high"
+                )
+                runCatching {
+                    AdbClient(endpoint.host, endpoint.port, key).use { client ->
+                        client.connect()
+                        killRemoteServer(client)
+                    }
+                }.onFailure {
+                    Log.w(TAG, "could not kill silent server: ${it.message}")
+                }
+                continue
+            }
+
+            _state.value = State.FAILED
+            val msg = if (remoteLog.isNullOrBlank()) {
+                "Le serveur ne répond pas après ${BINDER_WAIT_MS / 1000} s. Vérifie le débogage sans fil."
+            } else if (serverAlive) {
+                "Le serveur tourne mais ne publie pas le binder après " +
+                    "${BINDER_WAIT_MS / 1000} s : ${remoteLog.take(700)}"
+            } else {
+                "Le starter a échoué : ${remoteLog.take(700)}"
+            }
+            log?.invoke(msg)
+            return@withContext Result.failure(AdbException(msg))
+            }
+            // Unreachable: every phase path returns above.
+            throw IllegalStateException("unreachable")
             } catch (e: Throwable) {
                 if (e is CancellationException) throw e
                 val pairingInvalid = isPairingInvalid(e)
@@ -648,6 +723,44 @@ object PrivilegedRuntime {
         false
     }
 
+    /**
+     * True when a detached `shizuku_server` process is alive on the device.
+     * The native starter names the app_process child via `--nice-name`, so its
+     * comm is exactly `shizuku_server` (14 chars, not truncated by the 15-char
+     * comm limit).
+     */
+    private fun isShizukuServerRunning(client: AdbClient): Boolean {
+        return runCatching {
+            val out = StringBuilder()
+            client.command(
+                "shell:toybox pidof shizuku_server 2>/dev/null || " +
+                    "ps -A -o NAME= 2>/dev/null | grep shizuku_server || true"
+            ) { bytes ->
+                out.append(String(bytes))
+            }
+            out.toString().isNotBlank()
+        }.getOrDefault(false)
+    }
+
+    /** Opens a fresh connection just to check whether shizuku_server is alive. */
+    private fun probeShizukuServer(endpoint: AdbEndpoint, key: AdbKey): Boolean = try {
+        AdbClient(endpoint.host, endpoint.port, key).use { client ->
+            client.connect()
+            isShizukuServerRunning(client)
+        }
+    } catch (e: Throwable) {
+        Log.w(TAG, "server liveness probe failed: ${e.message}")
+        false
+    }
+
+    /** Kills a silent shizuku_server and clears the stale remote log. */
+    private fun killRemoteServer(client: AdbClient) {
+        client.command(
+            "shell:pkill -x shizuku_server 2>/dev/null || true; " +
+                "sleep 1; rm -f '$REMOTE_LOG_PATH' 2>/dev/null || true"
+        )
+    }
+
     private fun readRemoteStartupLog(endpoint: AdbEndpoint, key: AdbKey): String? {
         val output = StringBuilder()
         try {
@@ -669,20 +782,31 @@ object PrivilegedRuntime {
                 // The native starter detaches the Java server and redirects its
                 // stdout/stderr to /dev/null, so the server's own logs (and any
                 // fatal crash, SELinux denial, or app_process error) only land
-                // in logcat. Dump the whole ring buffer and filter narrowly:
-                // earlier versions used -t 2000 with a wide pattern that both
-                // missed old lines (Samsung's buffer overflows in seconds) and
-                // matched unrelated noise such as "InterruptionStateProvider".
+                // in logcat. The ring buffer is bounded first (-t 3000) because
+                // Samsung's buffer overflows in seconds and a full dump is both
+                // huge and stale; the filter is narrow enough to skip noise such
+                // as "InterruptionStateProvider" but still catches the fork
+                // server's tags (BinderSender, ShizukuService, ...).
                 collect(
                     "logcat",
-                    "shell:logcat -d -v brief 2>/dev/null | " +
-                        "grep -aiE 'shizuku|app_process|E AndroidRuntime|FATAL EXCEPTION|avc: denied' | " +
+                    "shell:logcat -d -t 3000 -v brief 2>/dev/null | " +
+                        "grep -aiE 'shizuku|BinderSender|sendBinder|manager package|" +
+                        "app_process|E AndroidRuntime|FATAL EXCEPTION|avc: denied' | " +
                         "tail -300"
                 )
                 collect(
                     "processes",
                     "shell:ps -A -o USER,PID,PPID,NAME,ARGS | " +
                         "grep -E 'shizuku_server|ShizukuService|app_process' | grep -v grep || true"
+                )
+                // Decisive for the binder-timeout case: is the detached server
+                // process alive at all? Alive = server is running but the binder
+                // push failed; dead = the server crashed during boot.
+                collect(
+                    "server-process",
+                    "shell:toybox pidof shizuku_server 2>&1; " +
+                        "ps -A -o USER,PID,PPID,NAME,ARGS 2>/dev/null | " +
+                        "grep -w shizuku_server | grep -v grep || true"
                 )
                 // The pushed server publishes its binder into THIS app's
                 // <package>.shizuku provider; verify the provider is actually
