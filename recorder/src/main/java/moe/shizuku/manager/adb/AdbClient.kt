@@ -5,9 +5,14 @@
  * Local adaptations:
  *  - moe.shizuku.manager.ktx.logd replaced with android.util.Log
  *  - rikka.core.util.BuildUtils replaced with Build.VERSION check
- *  - added commandWithStdin() to stream a payload into `shell:cat`-style
- *    commands (used to push the embedded Shizuku server APK through the
- *    paired wireless-debugging connection).
+ *  - added syncSend() to push a payload onto the device through the adb
+ *    `sync:` service (the same SEND/DATA/DONE/QUIT protocol as `adb push`).
+ *    It replaces the earlier commandWithStdin() which streamed bytes into a
+ *    `shell:cat > file` pipeline: adbd tore that stdin pipe down mid-write on
+ *    some ROMs (observed A_CLSE after ~8 KiB on Samsung), truncating the file
+ *    or failing the push silently. The sync service is the transport facility
+ *    adbd itself provides for file transfer, so no shell sits in the path and
+ *    the device answers with a real OKAY/FAIL status.
  */
 package moe.shizuku.manager.adb
 
@@ -41,6 +46,22 @@ private const val TAG = "AdbClient"
 class AdbClient(private val host: String, private val port: Int, private val key: AdbKey) : Closeable {
     companion object {
         private const val PAYLOAD_READ_TIMEOUT_MS = 30_000
+
+        /*
+         * adb sync messages ("SEND", "DATA", "DONE", "QUIT", "OKAY", "FAIL")
+         * are carried inside WRTE packets. Keep each WRTE well under the size
+         * modern adbd advertises (256 KiB) while bounding the buffering on a
+         * wireless link; DATA payloads are SYNC_WRTE_MAX - 8 bytes.
+         */
+        private const val SYNC_WRTE_MAX = 16 * 1024
+
+        private fun syncId(text: String): Int {
+            require(text.length == 4)
+            return text[0].code or
+                (text[1].code shl 8) or
+                (text[2].code shl 16) or
+                (text[3].code shl 24)
+        }
     }
 
     private lateinit var socket: Socket
@@ -121,73 +142,169 @@ class AdbClient(private val host: String, private val port: Int, private val key
     }
 
     /**
-     * Streams [payload] into the stdin of the shell command [cmd] (e.g.
-     * `sh -c 'cat > /data/local/tmp/file'`), then closes the local stream so
-     * the remote command sees EOF. Output produced by the command is drained
-     * via [listener] until the remote closes the stream.
+     * Pushes the whole [payload] stream to [remotePath] on the device using the
+     * adb `sync:` service — the exact SEND/DATA/DONE/QUIT exchange `adb push`
+     * performs. adbd applies [mode] (octal, e.g. 0x1ED -> 0755) when it creates
+     * the remote file and answers with a real sync status: "OKAY" on success or
+     * "FAIL<reason>" on error.
      *
-     * Chunks are capped at A_MAXDATA (4096), the window we advertise in our
-     * CNXN packet, and every WRTE waits for its OKAY before the next one.
+     * Every WRTE waits for its transport OKAY before the next one, so a stalled
+     * wireless link is detected instead of overflowing the device.
      */
-    fun commandWithStdin(cmd: String, payload: InputStream, listener: ((ByteArray) -> Unit)? = null) {
+    fun syncSend(remotePath: String, mode: Int, payload: InputStream, listener: ((ByteArray) -> Unit)? = null) {
         val localId = newLocalId()
-        write(A_OPEN, localId, 0, cmd)
+        write(A_OPEN, localId, 0, "sync:")
 
         val first = read()
         when (first.command) {
             A_CLSE -> {
                 write(A_CLSE, localId, first.arg0)
-                throw AdbException("stream refused by adbd for: $cmd")
+                throw AdbException("sync service refused by adbd")
             }
             A_OKAY -> Unit
-            else -> throw AdbException("expected A_OKAY after A_OPEN for: $cmd, got ${first.toStringShort()}")
+            else -> throw AdbException("expected A_OKAY after A_OPEN sync:, got ${first.toStringShort()}")
         }
         val remoteId = first.arg0
 
-        /*
-         * A multi-megabyte push (the embedded server APK) takes many round
-         * trips over wireless TLS; a stalled WiFi link can easily exceed the
-         * default read timeout. Raise it for the duration of the payload so a
-         * slow-but-alive link is not mistaken for a dead one.
-         */
         val previousTimeout = socket.soTimeout
         try {
             socket.soTimeout = PAYLOAD_READ_TIMEOUT_MS
 
-            // Stream the payload in <=4096-byte chunks with per-message OKAY handshake.
-            val buffer = ByteArray(4096)
-            var sent = 0L
-            while (true) {
-                val n = payload.read(buffer)
-                if (n <= 0) break
-                var off = 0
-                while (off < n) {
-                    val len = minOf(4096, n - off)
-                    write(A_WRTE, localId, remoteId, buffer.copyOfRange(off, off + len))
-                    sent += len
+            // SEND <length> <remotePath>,<octal mode> — adbd opens the file here
+            // and may answer FAIL immediately if the directory is missing.
+            val modeText = mode.toString(8).padStart(4, '0')
+            writeSyncPacket(localId, remoteId, syncMessage("SEND", "$remotePath,$modeText"))
 
-                    val ack = read()
-                    if (ack.command == A_OKAY) {
-                        off += len
-                        continue
+            // DATA <length> <bytes>…
+            val data = ByteArray(SYNC_WRTE_MAX - 8)
+            while (true) {
+                val n = payload.read(data)
+                if (n <= 0) break
+                writeSyncPacket(localId, remoteId, syncMessage("DATA", data.copyOfRange(0, n)))
+            }
+
+            // DONE <mtime u32=0> — after this adbd flushes the file and replies
+            // with a sync status WRTE ("OKAY" or "FAIL<reason>").
+            writeSyncPacket(localId, remoteId, syncMessage("DONE", byteArrayOf(0, 0, 0, 0)))
+
+            // Read the sync status. Transport OKAY acks may interleave, and a
+            // FAIL reason can span more than one WRTE, so collect until the
+            // reply starts with a full OKAY/FAIL marker.
+            val status = StringBuilder()
+            var remoteClosed = false
+            while (true) {
+                val current = status.toString()
+                if (current.startsWith("OKAY") || current.startsWith("FAIL")) break
+                if (status.length > 4096) break
+                val message = read()
+                when (message.command) {
+                    A_OKAY -> Unit // transport ack of our own WRTE — nothing to do
+                    A_WRTE -> {
+                        val chunk = message.data
+                        if (chunk != null && chunk.isNotEmpty()) {
+                            status.append(String(chunk))
+                            write(A_OKAY, localId, remoteId)
+                        }
                     }
-                    if (ack.command == A_CLSE) {
-                        write(A_CLSE, localId, ack.arg0)
-                        throw AdbException("remote closed during payload write ($sent bytes sent): $cmd")
+                    A_CLSE -> {
+                        write(A_CLSE, localId, message.arg0)
+                        remoteClosed = true
+                        break
                     }
-                    throw AdbException("expected A_OKAY after A_WRTE for: $cmd, got ${ack.toStringShort()}")
+                    else -> throw AdbException(
+                        "protocol error while reading sync status for $remotePath: got ${message.toStringShort()}"
+                    )
                 }
+            }
+
+            // QUIT ends the sync session; adbd then closes the stream. Best
+            // effort: if adbd already closed after a FAIL, the write fails and
+            // the drain below must be skipped.
+            var quitAcked = false
+            if (!remoteClosed) {
+                runCatching {
+                    writeSyncPacket(localId, remoteId, syncMessage("QUIT"))
+                    quitAcked = true
+                }
+            }
+
+            if (!remoteClosed) {
+                if (quitAcked) {
+                    // Consume the remaining output (any trailing FAIL bytes) and
+                    // the final CLSE so the connection stays clean for the next
+                    // command.
+                    drainStream(localId, remoteId, listener, "sync:$remotePath")
+                } else {
+                    // QUIT could not be acknowledged (stream already gone) —
+                    // nothing left to drain.
+                    remoteClosed = true
+                }
+            }
+
+            val reply = status.toString()
+            if (!reply.startsWith("OKAY")) {
+                throw AdbException(
+                    "adb push to $remotePath failed: " +
+                        reply.removePrefix("FAIL").trim().take(300)
+                )
             }
         } finally {
             socket.soTimeout = previousTimeout
         }
+    }
 
-        // Close our side: adbd forwards EOF to the shell command's stdin.
-        write(A_CLSE, localId, remoteId)
+    /**
+     * Builds one adb sync message: 4-byte id (ASCII), little-endian payload
+     * length, payload. The whole thing is sent inside a single WRTE.
+     */
+    private fun syncMessage(id: String, payload: ByteArray): ByteArray {
+        val buffer = ByteBuffer.allocate(8 + payload.size).order(ByteOrder.LITTLE_ENDIAN)
+        buffer.putInt(syncId(id))
+        buffer.putInt(payload.size)
+        buffer.put(payload)
+        return buffer.array()
+    }
 
-        // Drain the remote side before returning. Without this handshake,
-        // subsequent commands can consume the old A_CLSE and fail randomly.
-        drainStream(localId, remoteId, listener, cmd)
+    /**
+     * Sends one WRTE (up to [SYNC_WRTE_MAX] bytes) and waits for its transport
+     * OKAY. A CLSE here means adbd tore the stream down mid-push. An early
+     * WRTE is a sync FAIL reply that raced our acks (e.g. SEND could not open
+     * the remote file); the device's reason is surfaced in the exception.
+     */
+    private fun writeSyncPacket(
+        localId: Int,
+        remoteId: Int,
+        packet: ByteArray
+    ) {
+        var off = 0
+        while (off < packet.size) {
+            val len = minOf(SYNC_WRTE_MAX, packet.size - off)
+            write(A_WRTE, localId, remoteId, packet.copyOfRange(off, off + len))
+
+            val ack = read()
+            when (ack.command) {
+                A_OKAY -> off += len
+                A_WRTE -> {
+                    // The transport ack is sent before the sync layer processes
+                    // the message, so a WRTE here is a sync FAIL reply racing
+                    // our acks (e.g. SEND could not open the remote file).
+                    // Stop the push and surface the device's own reason.
+                    val chunk = ack.data
+                    val reason = if (chunk != null) String(chunk) else ""
+                    write(A_OKAY, localId, remoteId)
+                    throw AdbException(
+                        "adb push failed: ${reason.removePrefix("FAIL").trim().take(300)}"
+                    )
+                }
+                A_CLSE -> {
+                    write(A_CLSE, localId, ack.arg0)
+                    throw AdbException("remote closed during sync payload write ($off bytes sent)")
+                }
+                else -> throw AdbException(
+                    "expected A_OKAY after A_WRTE, got ${ack.toStringShort()}"
+                )
+            }
+        }
     }
 
     /**

@@ -872,7 +872,11 @@ object PrivilegedRuntime {
 
         log?.invoke("Transfert du serveur embarqué (~3,6 Mo)…")
         context.assets.open(BuildConfig.SHIZUKU_ASSET_PATH).use { input ->
-            client.commandWithStdin("shell:cat > '$REMOTE_APK_PATH.tmp'", input)
+            // adb sync service push (the SEND/DATA/DONE exchange `adb push`
+            // uses). shell:cat was torn down by adbd mid-write on this device,
+            // truncating the file; the sync service keeps no shell in the path
+            // and reports a real OKAY/FAIL status.
+            client.syncSend("$REMOTE_APK_PATH.tmp", 0x1A4 /* 0644 */, input)
         }
         client.command("shell:mv '$REMOTE_APK_PATH.tmp' '$REMOTE_APK_PATH' && chmod 644 '$REMOTE_APK_PATH'")
 
@@ -948,11 +952,11 @@ object PrivilegedRuntime {
 
         log?.invoke("Transfert du starter Shizuku…")
         localStarter.inputStream().use { input ->
-            // Keep cat as the only command that receives stdin. On some
-            // adbd implementations, closing the stdin stream also terminates
-            // a shell command chain, so commands placed after cat may never
-            // run. Copying creates a fresh executable inode, avoiding ETXTBSY.
-            client.commandWithStdin("shell:cat > '$remoteStarterTempPath'", input)
+            // adb sync service push: adbd itself creates the temp file, so the
+            // old shell:cat stdin pipe (which adbd tore down mid-write on this
+            // device) is gone. 0644 is enough for the later `cp`, which creates
+            // a fresh executable inode and avoids ETXTBSY.
+            client.syncSend(remoteStarterTempPath, 0x1A4 /* 0644 */, input)
         }
 
         fun remoteOutput(command: String): String {
