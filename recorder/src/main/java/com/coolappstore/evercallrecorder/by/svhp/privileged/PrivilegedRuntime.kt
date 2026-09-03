@@ -633,19 +633,25 @@ object PrivilegedRuntime {
         }
         val launchId = System.nanoTime().toString(16)
         val remoteStarterPath = "$REMOTE_DIR/shizuku-starter-${expectedSha.take(12)}-$launchId"
+        val remoteStarterTempPath = "$remoteStarterPath.tmp"
 
         log?.invoke("Transfert du starter Shizuku…")
         localStarter.inputStream().use { input ->
-            client.commandWithStdin("shell:cat > '$remoteStarterPath.tmp'", input)
+            // Keep the whole install sequence in the same remote shell. Some
+            // Android adbd/vendor combinations expose a newly written file
+            // asynchronously between two separate shell commands, causing
+            // chmod to see ENOENT and leaving the copied file at mode 0666.
+            // Copying still creates a fresh executable inode, avoiding ETXTBSY
+            // from executing the inode that cat was writing.
+            client.commandWithStdin(
+                "shell:cat > '$remoteStarterTempPath' && " +
+                    "toybox cp '$remoteStarterTempPath' '$remoteStarterPath' && " +
+                    "toybox chmod 0755 '$remoteStarterPath' && " +
+                    "sync && toybox rm -f '$remoteStarterTempPath' && " +
+                    "toybox test -x '$remoteStarterPath' && sleep 1",
+                input
+            )
         }
-        client.command(
-            // Do not rename the inode written by cat: Android can keep that
-            // inode busy for a short time after the ADB stream closes. Copying
-            // creates a fresh executable inode before the temporary is removed.
-            "shell:toybox cp '$remoteStarterPath.tmp' '$remoteStarterPath' && " +
-                "toybox rm -f '$remoteStarterPath.tmp' && " +
-                "toybox chmod 0755 '$remoteStarterPath' && sync && sleep 1"
-        )
         log?.invoke("Starter transféré.")
         return remoteStarterPath
     }
