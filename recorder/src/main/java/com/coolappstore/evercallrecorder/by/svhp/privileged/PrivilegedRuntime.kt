@@ -981,13 +981,11 @@ object PrivilegedRuntime {
         val remoteStarterTempPath = "$remoteStarterPath.tmp"
 
         log?.invoke("Transfert du starter Shizuku…")
-        localStarter.inputStream().use { input ->
-            // adb sync service push: adbd itself creates the temp file, so the
-            // old shell:cat stdin pipe (which adbd tore down mid-write on this
-            // device) is gone. 0644 is enough for the later `cp`, which creates
-            // a fresh executable inode and avoids ETXTBSY.
-            client.syncSend(remoteStarterTempPath, 0x1A4 /* 0644 */, input)
-        }
+        // Upload via short one-shot shell commands (base64 chunks) instead of a
+        // single long write stream: this device's adbd tears sustained write
+        // streams down mid-transfer (shell:cat cut after ~8 KiB, the sync
+        // service closed at 0 bytes) while short commands have never failed.
+        pushStarterViaShellChunks(client, localStarter, remoteStarterTempPath)
 
         fun remoteOutput(command: String): String {
             val output = StringBuilder()
@@ -1049,6 +1047,37 @@ object PrivilegedRuntime {
         NtfyReporter.publish("runtime", "starter install: ${modeCheck.take(300)}")
         log?.invoke("Starter transféré.")
         return remoteStarterPath
+    }
+
+    /**
+     * Uploads the (small) starter binary to [remotePath] as a sequence of
+     * short `printf | base64 -d >>` shell commands, chunk by chunk.
+     *
+     * One-shot commands are the only adb channel this ROM has never torn
+     * down: sustained write streams (shell:cat stdin, the sync service) are
+     * cut after a few KiB / immediately. The starter is ~17 KiB, i.e. ~6
+     * chunks of 3 KiB (4 KiB of base64 text each) — cheap and resumable, and
+     * the final size check below still guards the whole file.
+     */
+    private fun pushStarterViaShellChunks(
+        client: AdbClient,
+        localStarter: File,
+        remotePath: String
+    ) {
+        client.command("shell:rm -f '$remotePath' 2>/dev/null || true")
+        val chunkSize = 3 * 1024
+        localStarter.inputStream().buffered().use { input ->
+            val buffer = ByteArray(chunkSize)
+            while (true) {
+                val n = input.read(buffer)
+                if (n <= 0) break
+                val bytes = if (n == buffer.size) buffer else buffer.copyOf(n)
+                val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                client.command(
+                    "shell:printf '%s' '$b64' | base64 -d >> '$remotePath'"
+                )
+            }
+        }
     }
 
     /**
