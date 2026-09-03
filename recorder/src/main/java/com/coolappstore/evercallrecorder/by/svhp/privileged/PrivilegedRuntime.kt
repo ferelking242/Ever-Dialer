@@ -507,22 +507,32 @@ object PrivilegedRuntime {
                 client.command("shell:tail -c 2000 '$REMOTE_LOG_PATH' 2>/dev/null") { bytes ->
                     output.append(String(bytes))
                 }
-                if (output.toString().isBlank()) {
-                    // The native starter detaches the Java server, so its
-                    // stdout is no longer available on the launch stream.
-                    // Read the Android log buffer to expose server/provider
-                    // failures instead of reporting an unhelpful empty log.
-                    client.command(
-                        "shell:logcat -d -t 300 -v brief | " +
-                            "grep -iE 'shizuku|binder|provider' | tail -80"
-                    ) { bytes ->
-                        output.append(String(bytes))
-                    }
+                // The native starter detaches the Java server, so its stdout
+                // is no longer available on the launch stream. Always collect
+                // the process and provider state as well as all log buffers;
+                // notification noise in the main buffer can otherwise hide
+                // the actual server crash.
+                output.append("\n-- logcat --\n")
+                client.command(
+                    "shell:logcat -b all -d -t 1200 -v brief | " +
+                        "grep -iE 'shizuku|binder|provider|app_process|denied|exception|fatal' | " +
+                        "tail -160"
+                ) { bytes ->
+                    output.append(String(bytes))
                 }
-                if (output.toString().isBlank()) {
-                    client.command("shell:ps -A | grep -i shizuku") { bytes ->
-                        output.append(String(bytes))
-                    }
+                output.append("\n-- processes --\n")
+                client.command(
+                    "shell:ps -A -o USER,PID,PPID,NAME,ARGS | " +
+                        "grep -iE 'shizuku|app_process' | grep -v grep"
+                ) { bytes ->
+                    output.append(String(bytes))
+                }
+                output.append("\n-- provider --\n")
+                client.command(
+                    "shell:cmd package resolve-content-provider " +
+                        "'${REMOTE_DIR.substringAfterLast('/')}.shizuku' 0 2>&1"
+                ) { bytes ->
+                    output.append(String(bytes))
                 }
             }
             output.toString().trim().takeIf { it.isNotBlank() }
