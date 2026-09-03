@@ -367,7 +367,7 @@ object PrivilegedRuntime {
              */
             var attempt = 1
             while (attempt <= maxAttempts) {
-                val attemptError: Throwable?
+                var attemptError: Throwable? = null
                 try {
                     AdbClient(endpoint.host, endpoint.port, key).use { client ->
                         client.connect()
