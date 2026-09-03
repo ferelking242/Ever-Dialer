@@ -636,38 +636,53 @@ object PrivilegedRuntime {
         val remoteStarterTempPath = "$remoteStarterPath.tmp"
 
         log?.invoke("Transfert du starter Shizuku…")
-        val installOutput = StringBuilder()
         localStarter.inputStream().use { input ->
-            // Keep the whole install sequence in the same remote shell. Some
-            // Android adbd/vendor combinations expose a newly written file
-            // asynchronously between two separate shell commands, causing
-            // chmod to see ENOENT and leaving the copied file at mode 0666.
-            // Copying still creates a fresh executable inode, avoiding ETXTBSY
-            // from executing the inode that cat was writing.
-            client.commandWithStdin(
-                "shell:cat > '$remoteStarterTempPath' 2>&1 && " +
-                    "toybox cp '$remoteStarterTempPath' '$remoteStarterPath' && " +
-                    "toybox chmod 0755 '$remoteStarterPath' && " +
-                    "sync && toybox rm -f '$remoteStarterTempPath' && " +
-                    "toybox test -x '$remoteStarterPath' && " +
-                    "echo EVER_STARTER_INSTALL_OK || " +
-                    "{ echo EVER_STARTER_INSTALL_FAILED; " +
-                    "toybox ls -l '$REMOTE_DIR' 2>&1; }",
-                input
-            ) { bytes ->
-                installOutput.append(String(bytes))
-            }
+            // Keep cat as the only command that receives stdin. On some
+            // adbd implementations, closing the stdin stream also terminates
+            // a shell command chain, so commands placed after cat may never
+            // run. Copying creates a fresh executable inode, avoiding ETXTBSY.
+            client.commandWithStdin("shell:cat > '$remoteStarterTempPath'", input)
         }
-        val installSummary = installOutput.toString().trim()
-        if (!installSummary.contains("EVER_STARTER_INSTALL_OK")) {
-            val details = installSummary.takeLast(700)
-                .ifBlank { "aucune sortie du shell distant" }
-            NtfyReporter.publish("runtime", "starter install failed: $details", "high")
-            throw AdbException("Installation du starter échouée : $details")
+
+        fun remoteOutput(command: String): String {
+            val output = StringBuilder()
+            client.command(command) { bytes -> output.append(String(bytes)) }
+            return output.toString().trim()
         }
-        if (installSummary.isNotBlank()) {
-            NtfyReporter.publish("runtime", "starter install: ${installSummary.take(300)}")
+
+        val tempCheck = remoteOutput(
+            "shell:toybox ls -l '$remoteStarterTempPath' 2>&1"
+        )
+        if (!tempCheck.contains(remoteStarterTempPath)) {
+            val details = tempCheck.ifBlank { "fichier temporaire absent" }.takeLast(700)
+            NtfyReporter.publish("runtime", "starter temp check failed: $details", "high")
+            throw AdbException("Transfert du starter incomplet : $details")
         }
+
+        val copyCheck = remoteOutput(
+            "shell:toybox cp '$remoteStarterTempPath' '$remoteStarterPath' 2>&1; " +
+                "sync; sleep 1; toybox ls -l '$remoteStarterPath' 2>&1"
+        )
+        if (!copyCheck.contains(remoteStarterPath)) {
+            val details = copyCheck.ifBlank { "copie distante absente" }.takeLast(700)
+            NtfyReporter.publish("runtime", "starter copy failed: $details", "high")
+            throw AdbException("Copie du starter échouée : $details")
+        }
+
+        val modeCheck = remoteOutput(
+            "shell:toybox chmod 0755 '$remoteStarterPath' 2>&1; " +
+                "sync; toybox stat -c '%A %a %U:%G %n' '$remoteStarterPath' 2>&1; " +
+                "if toybox test -x '$remoteStarterPath'; then " +
+                "echo EVER_STARTER_INSTALL_OK; else " +
+                "echo EVER_STARTER_INSTALL_FAILED; fi"
+        )
+        if (!modeCheck.contains("EVER_STARTER_INSTALL_OK")) {
+            val details = modeCheck.ifBlank { "permission exécutable absente" }.takeLast(700)
+            NtfyReporter.publish("runtime", "starter chmod failed: $details", "high")
+            throw AdbException("Permission du starter échouée : $details")
+        }
+        remoteOutput("shell:toybox rm -f '$remoteStarterTempPath' 2>&1")
+        NtfyReporter.publish("runtime", "starter install: ${modeCheck.take(300)}")
         log?.invoke("Starter transféré.")
         return remoteStarterPath
     }
