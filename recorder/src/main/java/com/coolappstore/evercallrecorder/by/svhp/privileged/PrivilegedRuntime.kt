@@ -636,6 +636,7 @@ object PrivilegedRuntime {
         val remoteStarterTempPath = "$remoteStarterPath.tmp"
 
         log?.invoke("Transfert du starter Shizuku…")
+        val installOutput = StringBuilder()
         localStarter.inputStream().use { input ->
             // Keep the whole install sequence in the same remote shell. Some
             // Android adbd/vendor combinations expose a newly written file
@@ -644,13 +645,28 @@ object PrivilegedRuntime {
             // Copying still creates a fresh executable inode, avoiding ETXTBSY
             // from executing the inode that cat was writing.
             client.commandWithStdin(
-                "shell:cat > '$remoteStarterTempPath' && " +
+                "shell:cat > '$remoteStarterTempPath' 2>&1 && " +
                     "toybox cp '$remoteStarterTempPath' '$remoteStarterPath' && " +
                     "toybox chmod 0755 '$remoteStarterPath' && " +
                     "sync && toybox rm -f '$remoteStarterTempPath' && " +
-                    "toybox test -x '$remoteStarterPath' && sleep 1",
+                    "toybox test -x '$remoteStarterPath' && " +
+                    "echo EVER_STARTER_INSTALL_OK || " +
+                    "{ echo EVER_STARTER_INSTALL_FAILED; " +
+                    "toybox ls -l '$REMOTE_DIR' 2>&1; }",
                 input
-            )
+            ) { bytes ->
+                installOutput.append(String(bytes))
+            }
+        }
+        val installSummary = installOutput.toString().trim()
+        if (!installSummary.contains("EVER_STARTER_INSTALL_OK")) {
+            val details = installSummary.takeLast(700)
+                .ifBlank { "aucune sortie du shell distant" }
+            NtfyReporter.publish("runtime", "starter install failed: $details", "high")
+            throw AdbException("Installation du starter échouée : $details")
+        }
+        if (installSummary.isNotBlank()) {
+            NtfyReporter.publish("runtime", "starter install: ${installSummary.take(300)}")
         }
         log?.invoke("Starter transféré.")
         return remoteStarterPath
