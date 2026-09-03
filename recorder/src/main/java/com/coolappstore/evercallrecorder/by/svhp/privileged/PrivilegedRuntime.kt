@@ -67,6 +67,13 @@ object PrivilegedRuntime {
     private const val REMOTE_APK_PATH = "$REMOTE_DIR/shizuku-server.apk"
     private const val REMOTE_LOG_PATH = "$REMOTE_DIR/starter.log"
 
+    /**
+     * How long to poll for the Shizuku binder after launching the starter.
+     * ART needs a few seconds to JIT-compile the pushed server dex on slower
+     * devices, so 10 s was too tight; the fork manager waits up to 60 s.
+     */
+    private const val BINDER_WAIT_MS = 20_000L
+
     private val _state = MutableStateFlow(initialState())
     val state: StateFlow<State> = _state
 
@@ -322,7 +329,10 @@ object PrivilegedRuntime {
 
             val key = adbKey(appContext)
             var connected = false
-            for (attempt in 1..3) {
+            var lastLaunchError: Throwable? = null
+            val launchOutput = StringBuilder()
+
+            for (attempt in 1..2) {
                 try {
                     AdbClient(endpoint.host, endpoint.port, key).use { client ->
                         client.connect()
@@ -339,19 +349,26 @@ object PrivilegedRuntime {
                             "runtime",
                             "launching starter on ${endpoint.host}:${endpoint.port}"
                         )
-                        val starterOutput = StringBuilder()
-                        // Re-apply the mode immediately before exec and include
-                        // the remote mode in diagnostics. Some Android builds
-                        // reset permissions when a file is moved in /data/local/tmp.
+
+                        /*
+                         * Mirror the fork manager's proven invocation exactly:
+                         * plain `<starter> --apk=<apk>` — no exec chain, no ls/stat
+                         * prefix that could confuse mksh on OEM ROMs. The starter
+                         * output is teed into the remote log so the binder-timeout
+                         * diagnostic can read it, and an exit-code marker is
+                         * appended so the app knows whether the starter itself
+                         * failed before forking the server.
+                         */
+                        launchOutput.setLength(0)
                         val launchCmd =
-                            "shell:toybox chmod 0755 '$starterPath' 2>&1; " +
-                                "toybox ls -l '$starterPath' 2>&1; " +
-                                "toybox stat -c '%A %a %U:%G %n' '$starterPath' 2>&1; " +
-                                "exec '$starterPath' --apk='$REMOTE_APK_PATH'"
+                            "shell:{ toybox chmod 0755 '$starterPath' 2>&1 || true; " +
+                                "'$starterPath' --apk='$REMOTE_APK_PATH' 2>&1; } | " +
+                                "toybox tee '$REMOTE_LOG_PATH'; " +
+                                "echo EVER_STARTER_EXIT=\${PIPESTATUS[0]}"
                         client.command(launchCmd) { bytes ->
-                            starterOutput.append(String(bytes))
+                            launchOutput.append(String(bytes))
                         }
-                        val starterSummary = starterOutput.toString().trim()
+                        val starterSummary = launchOutput.toString().trim()
                         if (starterSummary.isNotBlank()) {
                             log?.invoke("Starter : ${starterSummary.take(500)}")
                             NtfyReporter.publish(
@@ -362,32 +379,67 @@ object PrivilegedRuntime {
                             log?.invoke("Starter terminé sans sortie ; vérification du binder…")
                             NtfyReporter.publish("runtime", "starter returned without output")
                         }
+
+                        // Same-connection process snapshot: know immediately
+                        // whether shizuku_server came up, even if a later
+                        // diagnostic reconnect fails.
+                        val snapshot = StringBuilder()
+                        runCatching {
+                            client.command(
+                                "shell:ps -A -o USER,PID,PPID,NAME | " +
+                                    "grep -E 'shizuku|app_process' | grep -v grep || true"
+                            ) { bytes ->
+                                snapshot.append(String(bytes))
+                            }
+                        }
+                        if (snapshot.isNotBlank()) {
+                            NtfyReporter.publish(
+                                "runtime",
+                                "post-launch ps: ${snapshot.toString().trim().take(600)}"
+                            )
+                        }
                     }
                     break
                 } catch (e: Throwable) {
-                    if (attempt == 3 || e is AdbException) {
-                        throw e
+                    lastLaunchError = e
+                    if (attempt == 2 || e is AdbException) {
+                        break
                     }
                     log?.invoke("Tentative $attempt échouée, nouvel essai… (${e.message})")
                     delay(1200L)
                 }
             }
-            check(connected) { "connexion impossible" }
 
-            log?.invoke("En attente du binder Shizuku (≤10 s)…")
-            val up = waitForBinder(timeoutMillis = 10_000)
+            if (!connected) {
+                _state.value = State.FAILED
+                val err = lastLaunchError ?: AdbException("Connexion à adbd impossible")
+                Log.e(TAG, "ensureServerStarted: could not connect to adbd", err)
+                NtfyReporter.publish("runtime", "adbd connect failed: ${err.message}", "high")
+                return@withContext Result.failure(err)
+            }
+
+            /*
+             * The native starter detaches the server (fork + setsid) and the
+             * launch stream can close before the server is up — or the stream
+             * drain can time out while the server still starts fine. Never
+             * report failure without giving the binder a real chance.
+             */
+            log?.invoke("En attente du binder Shizuku (≤${BINDER_WAIT_MS / 1000} s)…")
+            val up = waitForBinder(timeoutMillis = BINDER_WAIT_MS)
             if (!up) {
                 _state.value = State.FAILED
                 val remoteLog = readRemoteStartupLog(endpoint, key)
+                val launchSummary = launchOutput.toString().trim()
                 val msg = if (remoteLog.isNullOrBlank()) {
-                    "Le serveur ne répond pas après 10 s. Vérifie le débogage sans fil."
+                    "Le serveur ne répond pas après ${BINDER_WAIT_MS / 1000} s. Vérifie le débogage sans fil."
                 } else {
                     "Le starter a échoué : ${remoteLog.take(700)}"
                 }
                 log?.invoke(msg)
                 NtfyReporter.publish(
                     "runtime",
-                    "binder timeout; remote starter log=${remoteLog ?: "empty"}",
+                    "binder timeout; launch=${launchSummary.take(300)}; " +
+                        "remote log=${remoteLog ?: "empty"}",
                     "high"
                 )
                 return@withContext Result.failure(AdbException(msg))
@@ -425,8 +477,12 @@ object PrivilegedRuntime {
             if (port > 0) {
                 AdbClient(host, port, key).use { client ->
                     client.connect()
-                    // Only matches our own starter/server process names.
-                    client.command("shell:pkill -f shizuku-starter || true")
+                    // Kill the detached server (--nice-name=shizuku_server) and
+                    // any leftover starter binaries from previous launches.
+                    client.command(
+                        "shell:pkill -x shizuku_server || true; " +
+                            "pkill -f '[s]hizuku-starter-[0-9a-f]+-' || true"
+                    )
                 }
             }
         } catch (e: Throwable) {
@@ -467,8 +523,10 @@ object PrivilegedRuntime {
             return AdbEndpoint("127.0.0.1", last)
         }
         // 2. mDNS discovery (_adb-tls-connect._tcp), bounded and cancellable.
-        // The resolved host is essential: wireless debugging is normally bound
-        // to the phone's LAN address, not to 127.0.0.1.
+        // The app pairs with ITSELF: adbd's wireless listener also accepts
+        // loopback connections, and loopback avoids hairpin routing issues on
+        // some ROMs. Prefer 127.0.0.1 when it answers, fall back to the LAN
+        // host only if loopback is not reachable.
         log?.invoke("Découverte mDNS en cours…")
         val discovered = withTimeoutOrNull(15_000) {
             suspendCancellableCoroutine { cont ->
@@ -476,7 +534,9 @@ object PrivilegedRuntime {
                 mdns = AdbMdns(context.applicationContext, AdbMdns.TLS_CONNECT) { (host, port) ->
                     if (port > 0 && host.isNotBlank() && cont.isActive) {
                         runCatching { mdns.stop() }
-                        cont.resume(AdbEndpoint(host, port))
+                        val connectHost =
+                            if (probeAdbd("127.0.0.1", port)) "127.0.0.1" else host
+                        cont.resume(AdbEndpoint(connectHost, port))
                     }
                 }
                 cont.invokeOnCancellation { runCatching { mdns.stop() } }
@@ -500,45 +560,51 @@ object PrivilegedRuntime {
     }
 
     private fun readRemoteStartupLog(endpoint: AdbEndpoint, key: AdbKey): String? {
-        return runCatching {
-            val output = StringBuilder()
+        val output = StringBuilder()
+        try {
             AdbClient(endpoint.host, endpoint.port, key).use { client ->
                 client.connect()
-                client.command("shell:tail -c 2000 '$REMOTE_LOG_PATH' 2>/dev/null") { bytes ->
-                    output.append(String(bytes))
+
+                // Each diagnostic is independent: one failing command must not
+                // hide the others (this is why previous reports were empty).
+                fun collect(title: String, command: String) {
+                    output.append("\n-- $title --\n")
+                    runCatching {
+                        client.command(command) { bytes -> output.append(String(bytes)) }
+                    }.onFailure {
+                        output.append("[erreur: ${it.javaClass.simpleName}: ${it.message}]")
+                    }
                 }
-                // The native starter detaches the Java server, so its stdout
-                // is no longer available on the launch stream. Always collect
-                // the process and provider state as well as all log buffers;
-                // notification noise in the main buffer can otherwise hide
-                // the actual server crash.
-                output.append("\n-- logcat --\n")
-                client.command(
-                    "shell:logcat -b all -d -t 1200 -v brief | " +
-                        "grep -iE 'shizuku|binder|provider|app_process|denied|exception|fatal' | " +
-                        "tail -160"
-                ) { bytes ->
-                    output.append(String(bytes))
-                }
-                output.append("\n-- processes --\n")
-                client.command(
+
+                collect("starter.log", "shell:toybox tail -c 4000 '$REMOTE_LOG_PATH' 2>&1")
+                // The native starter detaches the Java server, so its stdout is
+                // no longer on the launch stream; the server's own logs (and any
+                // fatal crash, SELinux denial, or app_process error) land here.
+                collect(
+                    "logcat",
+                    "shell:logcat -d -t 2000 -v brief | " +
+                        "grep -iE 'shizuku|binder|provider|app_process|avc|denied|exception|fatal' | " +
+                        "tail -200"
+                )
+                collect(
+                    "processes",
                     "shell:ps -A -o USER,PID,PPID,NAME,ARGS | " +
-                        "grep -iE 'shizuku|app_process' | grep -v grep"
-                ) { bytes ->
-                    output.append(String(bytes))
-                }
-                output.append("\n-- provider --\n")
-                client.command(
+                        "grep -E 'shizuku|app_process' | grep -v grep || true"
+                )
+                collect(
+                    "provider",
                     "shell:cmd package resolve-content-provider " +
-                        "'${REMOTE_DIR.substringAfterLast('/')}.shizuku' 0 2>&1"
-                ) { bytes ->
-                    output.append(String(bytes))
-                }
+                        "'${BuildConfig.APPLICATION_ID}.shizuku' 0 2>&1"
+                )
+                collect(
+                    "selinux",
+                    "shell:getenforce 2>&1; dmesg 2>/dev/null | grep -i avc | tail -40 || true"
+                )
             }
-            output.toString().trim().takeIf { it.isNotBlank() }
-        }.onFailure {
-            Log.w(TAG, "Could not read remote starter log: ${it.message}")
-        }.getOrNull()
+        } catch (e: Throwable) {
+            output.append("\n[diagnostic reconnect failed: ${e.javaClass.simpleName}: ${e.message}]")
+        }
+        return output.toString().trim().takeIf { it.isNotBlank() }
     }
 
     private fun isPairingInvalid(error: Throwable): Boolean {
@@ -571,14 +637,7 @@ object PrivilegedRuntime {
     ): String {
         client.command("shell:mkdir -p '$REMOTE_DIR'")
         val expectedSha = BuildConfig.SHIZUKU_APK_SHA256
-        var remoteSha: String? = null
-        runCatching {
-            var out = StringBuilder()
-            client.command("shell:sha256sum '$REMOTE_APK_PATH' 2>/dev/null") { bytes ->
-                out.append(String(bytes))
-            }
-            remoteSha = out.toString().trim().split(" ", "\n").firstOrNull { it.length == 64 }
-        }.onFailure { Log.d(TAG, "remote hash probe failed (probably missing file)") }
+        val remoteSha = remoteSha256(client, REMOTE_APK_PATH)
 
         if (remoteSha.equals(expectedSha, ignoreCase = true)) {
             log?.invoke("Serveur déjà à jour sur l'appareil.")
@@ -590,11 +649,35 @@ object PrivilegedRuntime {
             client.commandWithStdin("shell:cat > '$REMOTE_APK_PATH.tmp'", input)
         }
         client.command("shell:mv '$REMOTE_APK_PATH.tmp' '$REMOTE_APK_PATH' && chmod 644 '$REMOTE_APK_PATH'")
-        log?.invoke("Transfert terminé.")
+
+        // A corrupt transfer makes the server die silently at dex-load time
+        // (the fork's starter redirects the child stderr to /dev/null), so the
+        // payload must be verified BEFORE the first launch, not just skipped.
+        val transferredSha = remoteSha256(client, REMOTE_APK_PATH)
+        if (!transferredSha.equals(expectedSha, ignoreCase = true)) {
+            val details = "attendu=${expectedSha.take(12)}… " +
+                "obtenu=${transferredSha?.take(12) ?: "indisponible"}…"
+            NtfyReporter.publish("runtime", "apk transfer hash mismatch: $details", "high")
+            throw AdbException("Transfert du serveur corrompu : $details")
+        }
+        log?.invoke("Transfert vérifié (SHA-256).")
 
         // /data/app/.../libshizuku.so is readable by the app but not reliably
         // executable by the shell UID. Copy the starter beside the server APK.
         return ensureRemoteStarter(client, context, log)
+    }
+
+    /** Reads the first 64-hex SHA-256 from `sha256sum` output, or null. */
+    private fun remoteSha256(client: AdbClient, path: String): String? {
+        return runCatching {
+            val out = StringBuilder()
+            client.command("shell:sha256sum '$path' 2>/dev/null") { bytes ->
+                out.append(String(bytes))
+            }
+            out.toString().trim().split(" ", "\n").firstOrNull { it.length == 64 }
+        }.onFailure {
+            Log.d(TAG, "remote hash probe failed for $path: ${it.message}")
+        }.getOrNull()
     }
 
     private fun ensureRemoteStarter(
@@ -623,8 +706,10 @@ object PrivilegedRuntime {
             // The starter is launched through /system/bin/sh, so the full
             // process command line does not start with REMOTE_DIR. The
             // bracket expression prevents pkill from matching its own command.
+            // Real filenames are shizuku-starter-<sha12>-<launchId>, so the
+            // pattern must end with '-', not end-of-line.
             client.command(
-                "shell:pkill -f '[s]hizuku-starter-[0-9a-f]+( |$)' || true"
+                "shell:pkill -f '[s]hizuku-starter-[0-9a-f]+-' || true"
             )
             client.command(
                 "shell:sleep 1; rm -f '$REMOTE_DIR'/shizuku-starter-* " +
@@ -650,12 +735,26 @@ object PrivilegedRuntime {
             return output.toString().trim()
         }
 
-        val tempCheck = remoteOutput(
-            "shell:toybox ls -l '$remoteStarterTempPath' 2>&1"
-        )
+        val expectedSize = localStarter.length()
+
+        // ls -l also prints the link count, so the byte count is read separately
+        // with `wc -c < file` (bare number on stdin, no filename noise).
+        fun remoteByteCount(path: String): Long? =
+            remoteOutput("shell:toybox wc -c < '$path' 2>&1")
+                .trim()
+                .split(" ", "\n")
+                .firstOrNull { it.toLongOrNull() != null }
+                ?.toLong()
+
+        val tempCheck = remoteOutput("shell:toybox ls -l '$remoteStarterTempPath' 2>&1")
         if (!tempCheck.contains(remoteStarterTempPath)) {
             val details = tempCheck.ifBlank { "fichier temporaire absent" }.takeLast(700)
             NtfyReporter.publish("runtime", "starter temp check failed: $details", "high")
+            throw AdbException("Transfert du starter incomplet : $details")
+        }
+        if (remoteByteCount(remoteStarterTempPath) != expectedSize) {
+            val details = "taille attendue=$expectedSize, obtenue=${remoteByteCount(remoteStarterTempPath) ?: "indisponible"}"
+            NtfyReporter.publish("runtime", "starter temp size mismatch: $details", "high")
             throw AdbException("Transfert du starter incomplet : $details")
         }
 
@@ -666,6 +765,11 @@ object PrivilegedRuntime {
         if (!copyCheck.contains(remoteStarterPath)) {
             val details = copyCheck.ifBlank { "copie distante absente" }.takeLast(700)
             NtfyReporter.publish("runtime", "starter copy failed: $details", "high")
+            throw AdbException("Copie du starter échouée : $details")
+        }
+        if (remoteByteCount(remoteStarterPath) != expectedSize) {
+            val details = "taille attendue=$expectedSize, obtenue=${remoteByteCount(remoteStarterPath) ?: "indisponible"}"
+            NtfyReporter.publish("runtime", "starter copy size mismatch: $details", "high")
             throw AdbException("Copie du starter échouée : $details")
         }
 
