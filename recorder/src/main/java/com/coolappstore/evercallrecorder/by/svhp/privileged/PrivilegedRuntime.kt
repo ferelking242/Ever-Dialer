@@ -929,13 +929,13 @@ object PrivilegedRuntime {
         /*
          * Stop the per-launch delete-and-repush of the starter.
          *
-         * This ROM's adbd tears bulk write-streams down mid-transfer
-         * (observed as "remote closed during payload write (8192 bytes sent)"
-         * on shell:cat and "remote closed during sync payload write (0 bytes
-         * sent)" on the sync service), so re-crossing that channel on EVERY
-         * startup made most launches die before the server was even started.
-         * The APK already gets a SHA check before any upload; give the starter
-         * the same treatment: keep the verified file on the device and reuse it.
+         * Earlier builds re-uploaded the starter on every launch over an adb
+         * channel whose WRTE packets exceeded the negotiated maxdata (see
+         * AdbClient), which adbd killed deterministically mid-push. With the
+         * transfer now protocol-legal, uploading once per app build is
+         * enough: the APK already gets a SHA check before any upload; give
+         * the starter the same treatment — keep the verified file on the
+         * device and reuse it.
          */
         runCatching {
             // Kill stale starter processes (which would hold an executing file
@@ -981,11 +981,15 @@ object PrivilegedRuntime {
         val remoteStarterTempPath = "$remoteStarterPath.tmp"
 
         log?.invoke("Transfert du starter Shizuku…")
-        // Upload via short one-shot shell commands (base64 chunks) instead of a
-        // single long write stream: this device's adbd tears sustained write
-        // streams down mid-transfer (shell:cat cut after ~8 KiB, the sync
-        // service closed at 0 bytes) while short commands have never failed.
-        pushStarterViaShellChunks(client, localStarter, remoteStarterTempPath)
+        // Direct sync-service push, the same legal SEND/DATA/DONE exchange as
+        // the server APK. (The earlier "adbd tears write streams down"
+        // failures were NOT a ROM quirk: our client advertised a 4096-byte
+        // maxdata in CNXN but sent 16 KiB WRTE packets, so adbd rejected the
+        // stream — AOSP adbd enforces the negotiated maxdata in
+        // transport.cpp check_header(). Fixed in AdbClient.)
+        localStarter.inputStream().buffered().use { input ->
+            client.syncSend(remoteStarterTempPath, 0x1ED /* 0755 */, input)
+        }
 
         fun remoteOutput(command: String): String {
             val output = StringBuilder()
@@ -1047,37 +1051,6 @@ object PrivilegedRuntime {
         NtfyReporter.publish("runtime", "starter install: ${modeCheck.take(300)}")
         log?.invoke("Starter transféré.")
         return remoteStarterPath
-    }
-
-    /**
-     * Uploads the (small) starter binary to [remotePath] as a sequence of
-     * short `printf | base64 -d >>` shell commands, chunk by chunk.
-     *
-     * One-shot commands are the only adb channel this ROM has never torn
-     * down: sustained write streams (shell:cat stdin, the sync service) are
-     * cut after a few KiB / immediately. The starter is ~17 KiB, i.e. ~6
-     * chunks of 3 KiB (4 KiB of base64 text each) — cheap and resumable, and
-     * the final size check below still guards the whole file.
-     */
-    private fun pushStarterViaShellChunks(
-        client: AdbClient,
-        localStarter: File,
-        remotePath: String
-    ) {
-        client.command("shell:rm -f '$remotePath' 2>/dev/null || true")
-        val chunkSize = 3 * 1024
-        localStarter.inputStream().buffered().use { input ->
-            val buffer = ByteArray(chunkSize)
-            while (true) {
-                val n = input.read(buffer)
-                if (n <= 0) break
-                val bytes = if (n == buffer.size) buffer else buffer.copyOf(n)
-                val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                client.command(
-                    "shell:printf '%s' '$b64' | base64 -d >> '$remotePath'"
-                )
-            }
-        }
     }
 
     /**

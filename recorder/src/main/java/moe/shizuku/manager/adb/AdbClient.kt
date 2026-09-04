@@ -24,7 +24,6 @@ import moe.shizuku.manager.adb.AdbProtocol.ADB_AUTH_TOKEN
 import moe.shizuku.manager.adb.AdbProtocol.A_AUTH
 import moe.shizuku.manager.adb.AdbProtocol.A_CLSE
 import moe.shizuku.manager.adb.AdbProtocol.A_CNXN
-import moe.shizuku.manager.adb.AdbProtocol.A_MAXDATA
 import moe.shizuku.manager.adb.AdbProtocol.A_OKAY
 import moe.shizuku.manager.adb.AdbProtocol.A_OPEN
 import moe.shizuku.manager.adb.AdbProtocol.A_STLS
@@ -48,12 +47,26 @@ class AdbClient(private val host: String, private val port: Int, private val key
         private const val PAYLOAD_READ_TIMEOUT_MS = 30_000
 
         /*
-         * adb sync messages ("SEND", "DATA", "DONE", "QUIT", "OKAY", "FAIL")
-         * are carried inside WRTE packets. Keep each WRTE well under the size
-         * modern adbd advertises (256 KiB) while bounding the buffering on a
-         * wireless link; DATA payloads are SYNC_WRTE_MAX - 8 bytes.
+         * Maxdata advertised in our CNXN, and the ceiling for every packet we
+         * send afterwards. adbd derives the negotiated limit from this value
+         * (min(advertised, its own MAX_PAYLOAD)) and then ENFORCES it: AOSP
+         * adb/transport.cpp check_header() rejects any WRTE or OPEN whose
+         * data_length exceeds the negotiated maxdata and tears the stream
+         * down ("remote read: bad header").
+         *
+         * The vendored upstream client advertised A_MAXDATA = 4096 but wrote
+         * sync DATA packets of 16 KiB, so every file push was a protocol
+         * violation: adbd killed the stream on the first oversized WRTE
+         * ("remote closed during sync payload write (0 bytes sent)"). The
+         * same violation explains the older shell:cat deaths (payloads > 4
+         * KiB) while short commands always worked (they fit under 4096).
+         *
+         * Advertising 64 KiB mirrors what a real `adb push` does (the host
+         * client advertises 256 KiB) while staying conservative; every packet
+         * below is then split to the negotiated cap.
          */
-        private const val SYNC_WRTE_MAX = 16 * 1024
+        private const val ADVERTISED_MAXDATA = 64 * 1024
+        private const val MIN_MAXDATA = 4096
 
         private fun syncId(text: String): Int {
             require(text.length == 4)
@@ -76,6 +89,13 @@ class AdbClient(private val host: String, private val port: Int, private val key
     private val inputStream get() = if (useTls) tlsInputStream else plainInputStream
     private val outputStream get() = if (useTls) tlsOutputStream else plainOutputStream
 
+    /**
+     * Negotiated per-packet payload cap, set from adbd's CNXN reply. Every
+     * A_OPEN and A_WRTE we send must carry at most this many payload bytes;
+     * adbd rejects anything larger (see the companion object note).
+     */
+    private var maxPayload = MIN_MAXDATA
+
     fun connect() {
         socket = Socket()
         val address = InetSocketAddress(host, port)
@@ -86,7 +106,7 @@ class AdbClient(private val host: String, private val port: Int, private val key
         plainInputStream = DataInputStream(socket.getInputStream())
         plainOutputStream = DataOutputStream(socket.getOutputStream())
 
-        write(A_CNXN, A_VERSION, A_MAXDATA, "host::")
+        write(A_CNXN, A_VERSION, ADVERTISED_MAXDATA, "host::")
 
         var message = read()
 
@@ -123,9 +143,23 @@ class AdbClient(private val host: String, private val port: Int, private val key
         }
 
         if (message.command != A_CNXN) error("not A_CNXN")
+
+        /*
+         * adbd replies with the limit it will enforce on our packets
+         * (min(our advertisement, its MAX_PAYLOAD)). Honor whatever it echoed
+         * back so we never trip check_header() again.
+         */
+        maxPayload = message.arg1.coerceIn(MIN_MAXDATA, ADVERTISED_MAXDATA)
     }
 
     fun command(cmd: String, listener: ((ByteArray) -> Unit)? = null) {
+        // The A_OPEN payload (the NUL-terminated command line) is a packet
+        // like any other: adbd rejects it if it exceeds the negotiated
+        // maxdata. All real commands are a few hundred bytes, so this only
+        // guards against regressions that would kill the connection silently.
+        require(cmd.toByteArray(Charsets.UTF_8).size + 1 <= maxPayload) {
+            "command is ${cmd.length} bytes, over the negotiated adb maxdata ($maxPayload)"
+        }
         val localId = newLocalId()
         write(A_OPEN, localId, 0, cmd)
 
@@ -176,8 +210,10 @@ class AdbClient(private val host: String, private val port: Int, private val key
             val header = "$remotePath,$modeText".toByteArray(Charsets.UTF_8)
             writeSyncPacket(localId, remoteId, syncMessage("SEND", header))
 
-            // DATA <length> <bytes>…
-            val data = ByteArray(SYNC_WRTE_MAX - 8)
+            // DATA <length> <bytes>… — one sync message per WRTE, sized so the
+            // WRTE payload (8-byte sync header + data) never exceeds the
+            // negotiated maxdata adbd enforces.
+            val data = ByteArray(maxPayload - 8)
             while (true) {
                 val n = payload.read(data)
                 if (n <= 0) break
@@ -267,10 +303,12 @@ class AdbClient(private val host: String, private val port: Int, private val key
     }
 
     /**
-     * Sends one WRTE (up to [SYNC_WRTE_MAX] bytes) and waits for its transport
-     * OKAY. A CLSE here means adbd tore the stream down mid-push. An early
-     * WRTE is a sync FAIL reply that raced our acks (e.g. SEND could not open
-     * the remote file); the device's reason is surfaced in the exception.
+     * Sends one sync message as a sequence of WRTE packets of at most
+     * [maxPayload] payload bytes each (the negotiated adb limit), waiting for
+     * each transport OKAY. A CLSE here means adbd tore the stream down
+     * mid-push. An early WRTE is a sync FAIL reply that raced our acks (e.g.
+     * SEND could not open the remote file); the device's reason is surfaced
+     * in the exception.
      */
     private fun writeSyncPacket(
         localId: Int,
@@ -279,7 +317,7 @@ class AdbClient(private val host: String, private val port: Int, private val key
     ) {
         var off = 0
         while (off < packet.size) {
-            val len = minOf(SYNC_WRTE_MAX, packet.size - off)
+            val len = minOf(maxPayload, packet.size - off)
             write(A_WRTE, localId, remoteId, packet.copyOfRange(off, off + len))
 
             val ack = read()
