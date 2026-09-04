@@ -870,15 +870,31 @@ object PrivilegedRuntime {
             return ensureRemoteStarter(client, context, log)
         }
 
-        log?.invoke("Transfert du serveur embarqué (~3,6 Mo)…")
-        context.assets.open(BuildConfig.SHIZUKU_ASSET_PATH).use { input ->
-            // adb sync service push (the SEND/DATA/DONE exchange `adb push`
-            // uses). shell:cat was torn down by adbd mid-write on this device,
-            // truncating the file; the sync service keeps no shell in the path
-            // and reports a real OKAY/FAIL status.
-            client.syncSend("$REMOTE_APK_PATH.tmp", 0x1A4 /* 0644 */, input)
-        }
-        client.command("shell:mv '$REMOTE_APK_PATH.tmp' '$REMOTE_APK_PATH' && chmod 644 '$REMOTE_APK_PATH'")
+        // Push the server APK to the device.
+        //
+        // On Samsung ROMs the adb sync: service silently drops every WRTE
+        // (adbd CLSEs the stream on the first SEND — we observed this
+        // deterministically across 15+ attempts). The shell:cat pipe was
+        // also torn down mid-write on the same ROMs.  Both approaches
+        // transfer file bytes over the adb channel.
+        //
+        // The fix: ask the *device itself* to copy the file locally.
+        // The shell UID can read /data/app/ (pm install, adb backup etc.
+        // rely on it), and it can write /data/local/tmp/.  A single
+        // `toybox cp` moves the bytes entirely on-device — zero adb
+        // channel traffic for the file payload.
+        val apkSource = context.applicationInfo.sourceDir
+        log?.invoke("Copie locale du serveur embarqué (~3,6 Mo)…")
+        NtfyReporter.publish("runtime", "cp local: $apkSource → $REMOTE_APK_PATH.tmp")
+        client.command(
+            "shell:toybox cp '$apkSource' '$REMOTE_APK_PATH.tmp' && " +
+                "toybox chmod 644 '$REMOTE_APK_PATH.tmp'"
+        )
+        // Atomic rename after the copy is complete and fsynced.
+        client.command(
+            "shell:toybox mv '$REMOTE_APK_PATH.tmp' '$REMOTE_APK_PATH' && " +
+                "toybox sync"
+        )
 
         // A corrupt transfer makes the server die silently at dex-load time
         // (the fork's starter redirects the child stderr to /dev/null), so the
@@ -980,16 +996,13 @@ object PrivilegedRuntime {
         val remoteStarterPath = "$REMOTE_DIR/shizuku-starter-${expectedSha.take(12)}-$launchId"
         val remoteStarterTempPath = "$remoteStarterPath.tmp"
 
-        log?.invoke("Transfert du starter Shizuku…")
-        // Direct sync-service push, the same legal SEND/DATA/DONE exchange as
-        // the server APK. (The earlier "adbd tears write streams down"
-        // failures were NOT a ROM quirk: our client advertised a 4096-byte
-        // maxdata in CNXN but sent 16 KiB WRTE packets, so adbd rejected the
-        // stream — AOSP adbd enforces the negotiated maxdata in
-        // transport.cpp check_header(). Fixed in AdbClient.)
-        localStarter.inputStream().buffered().use { input ->
-            client.syncSend(remoteStarterTempPath, 0x1ED /* 0755 */, input)
-        }
+        log?.invoke("Copie locale du starter Shizuku…")
+        // Same as the APK: copy on-device via toybox cp instead of pushing
+        // over the adb channel, which Samsung adbd breaks.
+        client.command(
+            "shell:toybox cp '$localStarter' '$remoteStarterTempPath' && " +
+                "toybox chmod 755 '$remoteStarterTempPath' && toybox sync"
+        )
 
         fun remoteOutput(command: String): String {
             val output = StringBuilder()
