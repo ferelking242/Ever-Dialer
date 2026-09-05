@@ -112,6 +112,19 @@ object PrivilegedRuntime {
         }.getOrDefault(false)
     }
 
+    private fun pairingIdentity(context: Context): String {
+        val versionCode = runCatching {
+            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                packageInfo.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                packageInfo.versionCode.toLong()
+            }
+        }.getOrDefault(-1L)
+        return "$versionCode:$BUILD_FINGERPRINT"
+    }
+
     /**
      * Invalidates a pairing created by an older embedded-runtime build.
      *
@@ -134,13 +147,14 @@ object PrivilegedRuntime {
         }.getOrDefault(false)
         if (!hasKey) return false
 
-        val storedBuild = preferences.getString(KEY_PAIRING_BUILD, null)
-        if (storedBuild == BUILD_FINGERPRINT) return false
+        val currentIdentity = pairingIdentity(appContext)
+        val storedIdentity = preferences.getString(KEY_PAIRING_BUILD, null)
+        if (storedIdentity == currentIdentity) return false
 
-        val previous = storedBuild ?: "legacy build"
+        val previous = storedIdentity ?: "legacy build"
         NtfyReporter.publish(
             "pairing",
-            "app update detected ($previous -> $BUILD_FINGERPRINT); invalidating stored ADB pairing",
+            "app update detected ($previous -> $currentIdentity); invalidating stored ADB pairing",
             "high"
         )
         forgetPairing(appContext)
@@ -298,13 +312,14 @@ object PrivilegedRuntime {
                 val ok = client.use { it.start() }
                 if (ok) {
                     Log.i(TAG, "Pairing succeeded")
+                    val identity = pairingIdentity(context)
                     prefs(context).edit()
-                        .putString(KEY_PAIRING_BUILD, BUILD_FINGERPRINT)
+                        .putString(KEY_PAIRING_BUILD, identity)
                         .apply()
                     NtfyReporter.publish("pairing", "SPAKE2+ handshake succeeded")
                     NtfyReporter.publish(
                         "pairing",
-                        "pairing stored for build $BUILD_FINGERPRINT"
+                        "pairing stored for build $identity"
                     )
                     _state.value = State.PAIRED_IDLE
                     Result.success(Unit)
