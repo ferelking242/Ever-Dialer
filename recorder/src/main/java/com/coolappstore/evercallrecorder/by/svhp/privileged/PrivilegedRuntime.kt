@@ -54,7 +54,7 @@ object PrivilegedRuntime {
      * actually running on the phone. Updated every release that changes the
      * embedded runtime or its pairing state.
      */
-    private const val BUILD_FINGERPRINT = "build-20260905-adb-endpoint-guard-v5"
+    private const val BUILD_FINGERPRINT = "build-20260905-adb-endpoint-guard-v6"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
@@ -771,30 +771,25 @@ object PrivilegedRuntime {
         key: AdbKey,
         log: ((String) -> Unit)?
     ): AdbEndpoint? {
-        // 1. Try the remembered endpoint, but validate a real shell stream.
+        /*
+         * A previous build could have stored 127.0.0.1 for the right ADB port.
+         * Keep a non-loopback remembered endpoint as a fast path, but do not
+         * let loopback win before mDNS has had a chance to give us the actual
+         * wireless-debugging address. This makes the selected endpoint
+         * observable and avoids accidentally treating a local listener as the
+         * transport advertised by Android.
+         */
         val last = prefs(context).getInt(KEY_LAST_PORT, -1)
         val lastHost = prefs(context).getString(KEY_LAST_HOST, null)
             ?.takeIf { it.isNotBlank() }
-        if (last > 0 && lastHost != null) {
+        if (last > 0 && lastHost != null && lastHost != "127.0.0.1") {
             val remembered = AdbEndpoint(lastHost, last)
             if (validateAdbEndpoint(remembered, key)) {
                 log?.invoke("Connexion mémorisée $lastHost:$last validée.")
                 return remembered
             }
         }
-        // Compatibility with builds that remembered only the port.
-        if (last > 0 && lastHost != "127.0.0.1") {
-            val loopback = AdbEndpoint("127.0.0.1", last)
-            if (validateAdbEndpoint(loopback, key)) {
-                log?.invoke("Port mémorisé 127.0.0.1:$last validé.")
-                return loopback
-            }
-        }
-        // 2. mDNS discovery (_adb-tls-connect._tcp), bounded and cancellable.
-        // The app pairs with ITSELF: adbd's wireless listener also accepts
-        // loopback connections, and loopback avoids hairpin routing issues on
-        // some ROMs. Discovery only finds candidates; validation below is the
-        // authority and must pass a real shell command.
+        // mDNS discovery (_adb-tls-connect._tcp), bounded and cancellable.
         log?.invoke("Découverte mDNS en cours…")
         val discovered = withTimeoutOrNull(15_000) {
             suspendCancellableCoroutine { cont ->
@@ -813,13 +808,22 @@ object PrivilegedRuntime {
                     }
             }
         }
-        if (discovered == null) return null
-
         val candidates = buildList {
-            add(AdbEndpoint("127.0.0.1", discovered.port))
-            if (discovered.host != "127.0.0.1") add(discovered)
+            if (discovered != null) {
+                // Prefer Android's advertised address. Loopback is only a
+                // fallback for ROMs that reject a same-device hairpin route.
+                add(discovered)
+                if (discovered.host != "127.0.0.1") {
+                    add(AdbEndpoint("127.0.0.1", discovered.port))
+                }
+            }
+            if (last > 0 && lastHost != null) {
+                add(AdbEndpoint(lastHost, last))
+            }
+            // Compatibility with builds that remembered only a port.
+            if (last > 0) add(AdbEndpoint("127.0.0.1", last))
         }
-        for (candidate in candidates) {
+        for (candidate in candidates.distinct()) {
             if (validateAdbEndpoint(candidate, key)) {
                 log?.invoke("ADB validé sur ${candidate.host}:${candidate.port}.")
                 return candidate
@@ -974,10 +978,7 @@ object PrivilegedRuntime {
                 "invalid key" in text ||
                 "tls alert" in text ||
                 "ssl" in text ||
-                "certificate" in text ||
-                "stream refused by adbd" in text ||
-                "not a_cnxn" in text ||
-                "adb endpoint" in text
+                "certificate" in text
             ) {
                 return true
             }

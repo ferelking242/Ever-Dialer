@@ -64,10 +64,23 @@ class EmbeddedShizukuService : Service() {
                     if (result.isSuccess) {
                         PairingNotifier.onPairingSucceeded(this@EmbeddedShizukuService)
                     } else {
-                        PairingNotifier.onPairingFailed(
-                            this@EmbeddedShizukuService,
-                            result.exceptionOrNull()?.message ?: "Erreur de démarrage"
-                        )
+                        val error = result.exceptionOrNull() ?: IllegalStateException("Erreur de démarrage")
+                        /*
+                         * The SPAKE2+ pairing may already have succeeded while
+                         * the later Shizuku launch fails. Do not label that as a
+                         * pairing failure or ask for a second code when the key
+                         * is still valid. A transport/auth failure clears the
+                         * key in PrivilegedRuntime, so only that path returns
+                         * to the pairing notification.
+                         */
+                        if (PrivilegedRuntime.isPaired(applicationContext)) {
+                            PairingNotifier.onRuntimeFailed(this@EmbeddedShizukuService, error)
+                        } else {
+                            PairingNotifier.onPairingFailed(
+                                this@EmbeddedShizukuService,
+                                error.message ?: "Erreur de pairing"
+                            )
+                        }
                         stopSelf()
                     }
                     startupJob = null

@@ -98,6 +98,10 @@ class AdbClient(private val host: String, private val port: Int, private val key
     private var maxPayload = MIN_MAXDATA
 
     fun connect() {
+        // Reset transport-local state before a fresh TLS handshake.
+        useTls = false
+        maxPayload = MIN_MAXDATA
+        nextLocalId = 0
         socket = Socket()
         val address = InetSocketAddress(host, port)
         socket.connect(address, 5000)
@@ -161,6 +165,25 @@ class AdbClient(private val host: String, private val port: Int, private val key
         require(cmd.toByteArray(Charsets.UTF_8).size + 1 <= maxPayload) {
             "command is ${cmd.length} bytes, over the negotiated adb maxdata ($maxPayload)"
         }
+        try {
+            commandOnce(cmd, listener)
+        } catch (error: AdbException) {
+            /*
+             * Some Android adbd builds occasionally refuse a new shell stream
+             * after several short streams on the same TLS transport. This is a
+             * transport/session problem, not proof that the ADB key is invalid.
+             */
+            if (!error.message.orEmpty().startsWith("stream refused by adbd")) {
+                throw error
+            }
+            Log.w(TAG, "Shell stream refused; reconnecting before retry")
+            close()
+            connect()
+            commandOnce(cmd, listener)
+        }
+    }
+
+    private fun commandOnce(cmd: String, listener: ((ByteArray) -> Unit)?) {
         val localId = newLocalId()
         write(A_OPEN, localId, 0, cmd)
 
