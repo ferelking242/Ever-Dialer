@@ -54,7 +54,7 @@ object PrivilegedRuntime {
      * actually running on the phone. Updated every release that changes the
      * embedded runtime or its pairing state.
      */
-    private const val BUILD_FINGERPRINT = "build-20260905-pairing-reset-v4"
+    private const val BUILD_FINGERPRINT = "build-20260905-adb-endpoint-guard-v5"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
@@ -406,25 +406,40 @@ object PrivilegedRuntime {
             }
 
             _state.value = State.STARTING
-            log?.invoke("Recherche du port du débogage sans fil…")
             NtfyReporter.publish("runtime", "*** FINGERPRINT=$BUILD_FINGERPRINT ***")
-            NtfyReporter.publish("runtime", "starting embedded Shizuku server")
             NtfyReporter.publish(
                 "runtime",
                 "app binder pre-start: ping=${ShizukuConnectionManager.isAvailable()} " +
                     "perm=${ShizukuConnectionManager.hasPermission(appContext)}"
             )
 
-            val endpoint = resolveConnectEndpoint(appContext, log)
+            /*
+             * A TCP connection is not enough here. Android exposes two
+             * different TLS services during wireless debugging: the one-shot
+             * pairing service and the normal ADB transport. Some devices also
+             * accept TLS on a stale transport port while refusing every shell
+             * stream. Do not copy or launch any payload until a real ADB shell
+             * command has completed successfully.
+             */
+            val key = adbKey(appContext)
+            log?.invoke("Recherche et validation du port ADB…")
+            val endpoint = resolveConnectEndpoint(appContext, key, log)
                 ?: run {
                     _state.value = State.FAILED
-                    val msg = "Port introuvable. Active « Débogage sans fil » puis réessaie."
+                    val msg =
+                        "Aucun transport ADB valide. Active « Débogage sans fil », " +
+                            "termine le pairing, puis réessaie."
                     log?.invoke(msg)
+                    NtfyReporter.publish("runtime", "ADB endpoint validation failed; startup blocked", "high")
                     return@withContext Result.failure(AdbException(msg))
                 }
+            NtfyReporter.publish(
+                "runtime",
+                "ADB endpoint validated with shell on ${endpoint.host}:${endpoint.port}"
+            )
+            NtfyReporter.publish("runtime", "starting embedded Shizuku server")
             log?.invoke("Connexion à adbd sur ${endpoint.host}:${endpoint.port}…")
 
-            val key = adbKey(appContext)
             var connected = false
             var lastLaunchError: Throwable? = null
             val launchOutput = StringBuilder()
@@ -718,10 +733,11 @@ object PrivilegedRuntime {
                 AdbClient(host, port, key).use { client ->
                     client.connect()
                     // Kill the detached server (--nice-name=shizuku_server) and
-                    // any leftover starter binaries from previous launches.
+                // remove leftover starter binaries from previous launches.
                     client.command(
                         "shell:pkill -x shizuku_server || true; " +
-                            "pkill -f '[s]hizuku-starter-[0-9a-f]+-' || true"
+                        "rm -f '$REMOTE_DIR'/shizuku-starter-* " +
+                        "'$REMOTE_DIR'/shizuku-starter-*.tmp 2>/dev/null || true"
                     )
                 }
             }
@@ -747,26 +763,33 @@ object PrivilegedRuntime {
 
     private suspend fun resolveConnectEndpoint(
         context: Context,
+        key: AdbKey,
         log: ((String) -> Unit)?
     ): AdbEndpoint? {
-        // 1. Try the remembered endpoint with a cheap probe.
+        // 1. Try the remembered endpoint, but validate a real shell stream.
         val last = prefs(context).getInt(KEY_LAST_PORT, -1)
         val lastHost = prefs(context).getString(KEY_LAST_HOST, null)
             ?.takeIf { it.isNotBlank() }
-        if (last > 0 && lastHost != null && probeAdbd(lastHost, last)) {
-            log?.invoke("Connexion mémorisée $lastHost:$last opérationnel.")
-            return AdbEndpoint(lastHost, last)
+        if (last > 0 && lastHost != null) {
+            val remembered = AdbEndpoint(lastHost, last)
+            if (validateAdbEndpoint(remembered, key)) {
+                log?.invoke("Connexion mémorisée $lastHost:$last validée.")
+                return remembered
+            }
         }
         // Compatibility with builds that remembered only the port.
-        if (last > 0 && probeAdbd("127.0.0.1", last)) {
-            log?.invoke("Port mémorisé 127.0.0.1:$last opérationnel.")
-            return AdbEndpoint("127.0.0.1", last)
+        if (last > 0 && lastHost != "127.0.0.1") {
+            val loopback = AdbEndpoint("127.0.0.1", last)
+            if (validateAdbEndpoint(loopback, key)) {
+                log?.invoke("Port mémorisé 127.0.0.1:$last validé.")
+                return loopback
+            }
         }
         // 2. mDNS discovery (_adb-tls-connect._tcp), bounded and cancellable.
         // The app pairs with ITSELF: adbd's wireless listener also accepts
         // loopback connections, and loopback avoids hairpin routing issues on
-        // some ROMs. Prefer 127.0.0.1 when it answers, fall back to the LAN
-        // host only if loopback is not reachable.
+        // some ROMs. Discovery only finds candidates; validation below is the
+        // authority and must pass a real shell command.
         log?.invoke("Découverte mDNS en cours…")
         val discovered = withTimeoutOrNull(15_000) {
             suspendCancellableCoroutine { cont ->
@@ -774,9 +797,7 @@ object PrivilegedRuntime {
                 mdns = AdbMdns(context.applicationContext, AdbMdns.TLS_CONNECT) { (host, port) ->
                     if (port > 0 && host.isNotBlank() && cont.isActive) {
                         runCatching { mdns.stop() }
-                        val connectHost =
-                            if (probeAdbd("127.0.0.1", port)) "127.0.0.1" else host
-                        cont.resume(AdbEndpoint(connectHost, port))
+                        cont.resume(AdbEndpoint(host, port))
                     }
                 }
                 cont.invokeOnCancellation { runCatching { mdns.stop() } }
@@ -787,15 +808,42 @@ object PrivilegedRuntime {
                     }
             }
         }
-        return discovered
+        if (discovered == null) return null
+
+        val candidates = buildList {
+            add(AdbEndpoint("127.0.0.1", discovered.port))
+            if (discovered.host != "127.0.0.1") add(discovered)
+        }
+        for (candidate in candidates) {
+            if (validateAdbEndpoint(candidate, key)) {
+                log?.invoke("ADB validé sur ${candidate.host}:${candidate.port}.")
+                return candidate
+            }
+        }
+        return null
     }
 
-    private fun probeAdbd(host: String, port: Int): Boolean = try {
-        java.net.Socket().use { socket ->
-            socket.connect(java.net.InetSocketAddress(host, port), 1200)
-            true
+    /**
+     * Validates the complete ADB transport, not just its TCP listener.
+     *
+     * A pairing service can complete a TLS handshake but it is not an ADB
+     * shell transport. The old raw Socket probe therefore accepted the wrong
+     * service and let startup reach payload transfer before adbd rejected the
+     * first shell stream. This probe is deliberately the same command path
+     * used by the runtime, with a unique marker that cannot be confused with
+     * an empty or unrelated response.
+     */
+    private fun validateAdbEndpoint(endpoint: AdbEndpoint, key: AdbKey): Boolean = try {
+        AdbClient(endpoint.host, endpoint.port, key).use { client ->
+            client.connect()
+            val output = StringBuilder()
+            client.command("shell:echo EVER_ADB_READY") { bytes ->
+                output.append(String(bytes))
+            }
+            output.toString().contains("EVER_ADB_READY")
         }
     } catch (e: Exception) {
+        Log.w(TAG, "ADB endpoint rejected ${endpoint.host}:${endpoint.port}: ${e.message}")
         false
     }
 
@@ -1036,14 +1084,10 @@ object PrivilegedRuntime {
          * the starter the same treatment — keep the verified file on the
          * device and reuse it.
          */
-        runCatching {
-            // Kill stale starter processes (which would hold an executing file
-            // open and cause ETXTBSY on the next exec), but DO NOT remove the
-            // installed files here.
-            client.command(
-                "shell:pkill -f '[s]hizuku-starter-[0-9a-f]+-' || true; sleep 1"
-            )
-        }
+        // Do not run pkill -f here. Its pattern is present in its own shell
+        // command line on some toybox builds and can kill the command stream
+        // itself. Each install uses a fresh inode/path, so an old detached
+        // starter cannot block this transfer.
         findMatchingRemoteStarter(client, shaPrefix, expectedSha)?.let { existing ->
             // Cheap sanity pass on the reused file: mode may have been lost
             // (adb push defaults, fs quirks); re-chmod is idempotent and safe.
@@ -1110,8 +1154,9 @@ object PrivilegedRuntime {
             NtfyReporter.publish("runtime", "starter temp check failed: $details", "high")
             throw AdbException("Transfert du starter incomplet : $details")
         }
-        if (remoteByteCount(remoteStarterTempPath) != expectedSize) {
-            val details = "taille attendue=$expectedSize, obtenue=${remoteByteCount(remoteStarterTempPath) ?: "indisponible"}"
+        val tempSize = remoteByteCount(remoteStarterTempPath)
+        if (tempSize != expectedSize) {
+            val details = "taille attendue=$expectedSize, obtenue=${tempSize ?: "indisponible"}"
             NtfyReporter.publish("runtime", "starter temp size mismatch: $details", "high")
             throw AdbException("Transfert du starter incomplet : $details")
         }
@@ -1125,8 +1170,9 @@ object PrivilegedRuntime {
             NtfyReporter.publish("runtime", "starter copy failed: $details", "high")
             throw AdbException("Copie du starter échouée : $details")
         }
-        if (remoteByteCount(remoteStarterPath) != expectedSize) {
-            val details = "taille attendue=$expectedSize, obtenue=${remoteByteCount(remoteStarterPath) ?: "indisponible"}"
+        val installedSize = remoteByteCount(remoteStarterPath)
+        if (installedSize != expectedSize) {
+            val details = "taille attendue=$expectedSize, obtenue=${installedSize ?: "indisponible"}"
             NtfyReporter.publish("runtime", "starter copy size mismatch: $details", "high")
             throw AdbException("Copie du starter échouée : $details")
         }
