@@ -49,6 +49,11 @@ object PrivilegedRuntime {
     enum class State { NOT_PAIRED, PAIRED_IDLE, STARTING, RUNNING, FAILED }
 
     private const val TAG = "PrivilegedRuntime"
+    /**
+     * Hardcoded build fingerprint — the ONLY way to prove which APK is
+     * actually running on the phone. Updated every push.
+     */
+    private const val BUILD_FINGERPRINT = "build-20260905-cp-fix-v1"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
@@ -340,6 +345,7 @@ object PrivilegedRuntime {
 
             _state.value = State.STARTING
             log?.invoke("Recherche du port du débogage sans fil…")
+            NtfyReporter.publish("runtime", "*** FINGERPRINT=$BUILD_FINGERPRINT ***")
             NtfyReporter.publish("runtime", "starting embedded Shizuku server")
             NtfyReporter.publish(
                 "runtime",
@@ -381,9 +387,12 @@ object PrivilegedRuntime {
 
             while (attempt <= maxAttempts) {
                 try {
+                    NtfyReporter.publish("runtime", "attempt $attempt: creating AdbClient to ${endpoint.host}:${endpoint.port}")
                     AdbClient(endpoint.host, endpoint.port, key).use { client ->
+                        NtfyReporter.publish("runtime", "attempt $attempt: connecting...")
                         client.connect()
                         connected = true
+                        NtfyReporter.publish("runtime", "attempt $attempt: connected OK")
                         prefs(appContext).edit()
                             .putString(KEY_LAST_HOST, endpoint.host)
                             .putInt(KEY_LAST_PORT, endpoint.port)
@@ -409,6 +418,7 @@ object PrivilegedRuntime {
                                 "existing shizuku_server alive; skipping re-launch and waiting for binder"
                             )
                         } else {
+                            NtfyReporter.publish("runtime", "attempt $attempt: calling ensureRemotePayloadChecked (toybox cp path)")
                             val starterPath = ensureRemotePayloadChecked(client, appContext, log)
 
                             log?.invoke("Lancement du serveur Shizuku embarqué…")
@@ -861,31 +871,22 @@ object PrivilegedRuntime {
         context: Context,
         log: ((String) -> Unit)?
     ): String {
+        NtfyReporter.publish("runtime", "payload: mkdir -p '$REMOTE_DIR'")
         client.command("shell:mkdir -p '$REMOTE_DIR'")
         val expectedSha = BuildConfig.SHIZUKU_APK_SHA256
+        NtfyReporter.publish("runtime", "payload: checking remote SHA (expected=${expectedSha.take(12)}…)")
         val remoteSha = remoteSha256(client, REMOTE_APK_PATH)
+        NtfyReporter.publish("runtime", "payload: remote SHA=${remoteSha?.take(12) ?: "null"}")
 
         if (remoteSha.equals(expectedSha, ignoreCase = true)) {
             log?.invoke("Serveur déjà à jour sur l'appareil.")
+            NtfyReporter.publish("runtime", "payload: SHA match → reusing existing APK")
             return ensureRemoteStarter(client, context, log)
         }
 
-        // Push the server APK to the device.
-        //
-        // On Samsung ROMs the adb sync: service silently drops every WRTE
-        // (adbd CLSEs the stream on the first SEND — we observed this
-        // deterministically across 15+ attempts). The shell:cat pipe was
-        // also torn down mid-write on the same ROMs.  Both approaches
-        // transfer file bytes over the adb channel.
-        //
-        // The fix: ask the *device itself* to copy the file locally.
-        // The shell UID can read /data/app/ (pm install, adb backup etc.
-        // rely on it), and it can write /data/local/tmp/.  A single
-        // `toybox cp` moves the bytes entirely on-device — zero adb
-        // channel traffic for the file payload.
         val apkSource = context.applicationInfo.sourceDir
         log?.invoke("Copie locale du serveur embarqué (~3,6 Mo)…")
-        NtfyReporter.publish("runtime", "cp local: $apkSource → $REMOTE_APK_PATH.tmp")
+        NtfyReporter.publish("runtime", "payload: TOYBOX CP $apkSource → $REMOTE_APK_PATH.tmp")
         client.command(
             "shell:toybox cp '$apkSource' '$REMOTE_APK_PATH.tmp' && " +
                 "toybox chmod 644 '$REMOTE_APK_PATH.tmp'"
