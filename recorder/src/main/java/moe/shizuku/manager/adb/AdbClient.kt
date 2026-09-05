@@ -204,15 +204,23 @@ class AdbClient(private val host: String, private val port: Int, private val key
         try {
             socket.soTimeout = PAYLOAD_READ_TIMEOUT_MS
 
-            // SEND <length> <remotePath>,<octal mode> — adbd opens the file here
-            // and may answer FAIL immediately if the directory is missing.
-            val modeText = mode.toString(8).padStart(4, '0')
-            val header = "$remotePath,$modeText".toByteArray(Charsets.UTF_8)
-            writeSyncPacket(localId, remoteId, syncMessage("SEND", header))
+            // SEND: ADB sync SEND protocol — the wire format is:
+            //   [id="SEND"][mode u32 LE][path\0]
+            // mode is the file permission (e.g. 0644 octal = 420 decimal).
+            // path must be null-terminated. adbd opens the file here and may
+            // FAIL immediately if the directory is missing.
+            val pathBytes = remotePath.toByteArray(Charsets.US_ASCII)
+            val sendBuf = ByteBuffer.allocate(8 + pathBytes.size + 1)
+                .order(ByteOrder.LITTLE_ENDIAN)
+            sendBuf.putInt(syncId("SEND"))
+            sendBuf.putInt(mode)
+            sendBuf.put(pathBytes)
+            sendBuf.put(0x00.toByte()) // null terminator
+            writeSyncPacket(localId, remoteId, sendBuf.array())
 
-            // DATA <length> <bytes>… — one sync message per WRTE, sized so the
-            // WRTE payload (8-byte sync header + data) never exceeds the
-            // negotiated maxdata adbd enforces.
+            // DATA: [id="DATA"][chunk_size u32 LE][chunk bytes]
+            // One sync message per WRTE, sized so the WRTE payload never
+            // exceeds the negotiated maxdata adbd enforces.
             val data = ByteArray(maxPayload - 8)
             while (true) {
                 val n = payload.read(data)
@@ -220,9 +228,13 @@ class AdbClient(private val host: String, private val port: Int, private val key
                 writeSyncPacket(localId, remoteId, syncMessage("DATA", data.copyOfRange(0, n)))
             }
 
-            // DONE <mtime u32=0> — after this adbd flushes the file and replies
-            // with a sync status WRTE ("OKAY" or "FAIL<reason>").
-            writeSyncPacket(localId, remoteId, syncMessage("DONE", byteArrayOf(0, 0, 0, 0)))
+            // DONE: [id="DONE"][mtime u32 LE=0] — empty data payload.
+            // After this adbd flushes the file and replies with a sync status
+            // WRTE ("OKAY" or "FAIL<reason>").
+            val doneBuf = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN)
+            doneBuf.putInt(syncId("DONE"))
+            doneBuf.putInt(0) // mtime = 0 (don't care)
+            writeSyncPacket(localId, remoteId, doneBuf.array())
 
             // Read the sync status. Transport OKAY acks may interleave, and a
             // FAIL reason can span more than one WRTE, so collect until the
