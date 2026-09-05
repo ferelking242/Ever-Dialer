@@ -393,8 +393,17 @@ object PrivilegedRuntime {
      */
     suspend fun ensureServerStarted(
         context: Context,
-        log: ((String) -> Unit)? = null,
-        pairingAlreadySucceeded: Boolean = false
+        log: ((String) -> Unit)? = null
+    ): Result<Unit> = ensureServerStarted(
+        context = context,
+        pairingAlreadySucceeded = false,
+        log = log
+    )
+
+    private suspend fun ensureServerStarted(
+        context: Context,
+        pairingAlreadySucceeded: Boolean,
+        log: ((String) -> Unit)? = null
     ): Result<Unit> = startMutex.withLock {
         withContext(Dispatchers.IO) {
             startingJobCount++
