@@ -426,6 +426,11 @@ object PrivilegedRuntime {
             val endpoint = resolveConnectEndpoint(appContext, key, log)
                 ?: run {
                     _state.value = State.FAILED
+                    // A remembered key without a shell-capable transport is
+                    // not usable. Keeping it would make the UI report
+                    // "paired" forever after Wireless debugging was reset.
+                    forgetPairing(appContext)
+                    PairingNotifier.showWaitingNotification(appContext)
                     val msg =
                         "Aucun transport ADB valide. Active « Débogage sans fil », " +
                             "termine le pairing, puis réessaie."
@@ -969,7 +974,10 @@ object PrivilegedRuntime {
                 "invalid key" in text ||
                 "tls alert" in text ||
                 "ssl" in text ||
-                "certificate" in text
+                "certificate" in text ||
+                "stream refused by adbd" in text ||
+                "not a_cnxn" in text ||
+                "adb endpoint" in text
             ) {
                 return true
             }

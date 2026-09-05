@@ -207,7 +207,7 @@
         <receiver
             android:name=".privileged.PrivilegedBroadcastReceiver"
             android:enabled="true"
-            android:exported="true">
+            android:exported="false">
             <intent-filter>
                 <action android:name="moe.shizuku.privileged.api.START" />
                 <action android:name="moe.shizuku.privileged.api.STOP" />

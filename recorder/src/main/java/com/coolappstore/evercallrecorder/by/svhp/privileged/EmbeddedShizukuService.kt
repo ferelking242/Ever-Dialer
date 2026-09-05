@@ -101,6 +101,9 @@ class EmbeddedShizukuService : Service() {
                     applicationContext,
                     result.exceptionOrNull() ?: IllegalStateException("Démarrage refusé")
                 )
+                if (!PrivilegedRuntime.isPaired(applicationContext)) {
+                    PairingNotifier.showWaitingNotification(applicationContext)
+                }
                 stopSelf()
             }
             startupJob = null
