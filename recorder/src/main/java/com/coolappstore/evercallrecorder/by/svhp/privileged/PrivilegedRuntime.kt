@@ -53,7 +53,7 @@ object PrivilegedRuntime {
      * Hardcoded build fingerprint — the ONLY way to prove which APK is
      * actually running on the phone. Updated every push.
      */
-    private const val BUILD_FINGERPRINT = "build-20260905-toybox-v2"
+    private const val BUILD_FINGERPRINT = "build-20260905-toybox-v3"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
@@ -496,6 +496,10 @@ object PrivilegedRuntime {
                 if (attemptError == null) break
                 // After a launch (or when adopting a running server) never
                 // re-enter: the process owns its lifecycle from here.
+                if (isPairingInvalid(attemptError)) {
+                    NtfyReporter.publish("runtime", "pairing invalid (${attemptError.javaClass.simpleName}): forgetting key and stopping", "high")
+                    forgetPairing(appContext)
+                }
                 if (launched || serverWasRunning || isPairingInvalid(attemptError) || attempt >= maxAttempts) break
 
                 attempt += 1
@@ -853,7 +857,9 @@ object PrivilegedRuntime {
                 "authentication failed" in text ||
                 "pairing failed" in text ||
                 "invalid key" in text ||
-                "tls alert" in text
+                "tls alert" in text ||
+                "ssl" in text ||
+                "certificate" in text
             ) {
                 return true
             }
