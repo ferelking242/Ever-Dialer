@@ -54,7 +54,7 @@ object PrivilegedRuntime {
      * actually running on the phone. Updated every release that changes the
      * embedded runtime or its pairing state.
      */
-    private const val BUILD_FINGERPRINT = "build-20260905-adb-endpoint-guard-v6"
+    private const val BUILD_FINGERPRINT = "build-20260905-adb-endpoint-guard-v7"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
@@ -98,6 +98,8 @@ object PrivilegedRuntime {
 
     @Volatile
     private var startingJobCount = 0
+    @Volatile
+    private var pairingInProgress = false
     private val startMutex = Mutex()
 
     private fun initialState(): State =
@@ -140,6 +142,10 @@ object PrivilegedRuntime {
      * @return true when a stored pairing was removed.
      */
     fun invalidateStalePairing(context: Context): Boolean {
+        // A new key is created before SPAKE2+ finishes. Never let an app
+        // startup/update migration delete that in-flight key before the
+        // successful pairing marker has been committed.
+        if (pairingInProgress) return false
         val appContext = context.applicationContext
         val preferences = prefs(appContext)
         val hasKey = runCatching {
@@ -301,6 +307,7 @@ object PrivilegedRuntime {
      */
     suspend fun pairWithCode(context: Context, host: String, port: Int, code: String): Result<Unit> =
         withContext(Dispatchers.IO) {
+            pairingInProgress = true
             try {
                 check(isWirelessDebuggingEnabled(context)) {
                     "Débogage sans fil désactivé. Active-le dans les Options pour les développeurs."
@@ -313,9 +320,11 @@ object PrivilegedRuntime {
                 if (ok) {
                     Log.i(TAG, "Pairing succeeded")
                     val identity = pairingIdentity(context)
-                    prefs(context).edit()
+                    check(
+                        prefs(context).edit()
                         .putString(KEY_PAIRING_BUILD, identity)
-                        .apply()
+                        .commit()
+                    ) { "Impossible d'enregistrer l'état du pairing" }
                     NtfyReporter.publish("pairing", "SPAKE2+ handshake succeeded")
                     NtfyReporter.publish(
                         "pairing",
@@ -334,6 +343,8 @@ object PrivilegedRuntime {
                 Log.e(TAG, "Pairing error", e)
                 NtfyReporter.publish("pairing", "error ${e.javaClass.simpleName}: ${e.message ?: "unknown"}", "high")
                 Result.failure(e)
+            } finally {
+                pairingInProgress = false
             }
         }
 
@@ -352,7 +363,7 @@ object PrivilegedRuntime {
     ): Result<Unit> {
         val pairing = pairWithCode(context, host, port, code)
         if (pairing.isFailure) return pairing
-        return ensureServerStarted(context)
+        return ensureServerStarted(context, pairingAlreadySucceeded = true)
     }
 
     /**
@@ -382,7 +393,8 @@ object PrivilegedRuntime {
      */
     suspend fun ensureServerStarted(
         context: Context,
-        log: ((String) -> Unit)? = null
+        log: ((String) -> Unit)? = null,
+        pairingAlreadySucceeded: Boolean = false
     ): Result<Unit> = startMutex.withLock {
         withContext(Dispatchers.IO) {
             startingJobCount++
@@ -393,7 +405,7 @@ object PrivilegedRuntime {
                 _state.value = State.RUNNING
                 return@withContext Result.success(Unit)
             }
-            if (!isPaired(appContext)) {
+            if (!pairingAlreadySucceeded && !isPaired(appContext)) {
                 _state.value = State.NOT_PAIRED
                 return@withContext Result.failure(AdbException("Appareil non apparié"))
             }

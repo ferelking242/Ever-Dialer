@@ -281,7 +281,15 @@ class PreferenceAdbKeyStore(private val preference: SharedPreferences) : AdbKeyS
     private val preferenceKey = "adbkey"
 
     override fun put(bytes: ByteArray) {
-        preference.edit().putString(preferenceKey, String(Base64.encode(bytes, Base64.NO_WRAP))).apply()
+        /*
+         * Pairing immediately starts the runtime in the same foreground
+         * service. Commit the credential before SPAKE2+ returns so a migration
+         * or a process boundary cannot observe the key and build marker in
+         * different states.
+         */
+        preference.edit()
+            .putString(preferenceKey, String(Base64.encode(bytes, Base64.NO_WRAP)))
+            .commit()
     }
 
     override fun get(): ByteArray? {
