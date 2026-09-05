@@ -53,7 +53,7 @@ object PrivilegedRuntime {
      * Hardcoded build fingerprint — the ONLY way to prove which APK is
      * actually running on the phone. Updated every push.
      */
-    private const val BUILD_FINGERPRINT = "build-20260905-cp-fix-v1"
+    private const val BUILD_FINGERPRINT = "build-20260905-toybox-v2"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
@@ -886,11 +886,25 @@ object PrivilegedRuntime {
 
         val apkSource = context.applicationInfo.sourceDir
         log?.invoke("Copie locale du serveur embarqué (~3,6 Mo)…")
-        NtfyReporter.publish("runtime", "payload: TOYBOX CP $apkSource → $REMOTE_APK_PATH.tmp")
+        NtfyReporter.publish("runtime", "payload: source=$apkSource")
+        // On-device copy: the shell UID can read /data/app/ and write
+        // /data/local/tmp/. No ADB sync protocol needed — avoids the
+        // Samsung adbd bug that tears down the sync stream mid-push.
+        val cpResult = StringBuilder()
         client.command(
             "shell:toybox cp '$apkSource' '$REMOTE_APK_PATH.tmp' && " +
-                "toybox chmod 644 '$REMOTE_APK_PATH.tmp'"
+                "toybox chmod 644 '$REMOTE_APK_PATH.tmp' && " +
+                "toybox ls -l '$REMOTE_APK_PATH.tmp' 2>&1",
+            listener = { cpResult.append(String(it)) }
         )
+        NtfyReporter.publish("runtime", "payload: cp result=${cpResult.toString().trim().take(200)}")
+        // Fail fast if the source APK is missing or unreadable.
+        if (cpResult.toString().contains("No such file") ||
+            cpResult.toString().contains("Permission denied")) {
+            val msg = "Le serveur embarqué n'est pas lisible sur l'appareil : ${cpResult.toString().trim().take(300)}"
+            NtfyReporter.publish("runtime", "payload: $msg", "high")
+            throw AdbException(msg)
+        }
         // Atomic rename after the copy is complete and fsynced.
         client.command(
             "shell:toybox mv '$REMOTE_APK_PATH.tmp' '$REMOTE_APK_PATH' && " +
