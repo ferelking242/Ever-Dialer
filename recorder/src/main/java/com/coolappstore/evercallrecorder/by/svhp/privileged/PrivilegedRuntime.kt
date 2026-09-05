@@ -51,13 +51,15 @@ object PrivilegedRuntime {
     private const val TAG = "PrivilegedRuntime"
     /**
      * Hardcoded build fingerprint — the ONLY way to prove which APK is
-     * actually running on the phone. Updated every push.
+     * actually running on the phone. Updated every release that changes the
+     * embedded runtime or its pairing state.
      */
-    private const val BUILD_FINGERPRINT = "build-20260905-toybox-v3"
+    private const val BUILD_FINGERPRINT = "build-20260905-pairing-reset-v4"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
     private const val KEY_LAST_PORT = "last_connect_port"
+    private const val KEY_PAIRING_BUILD = "pairing_build_fingerprint"
     private const val KEY_WATCHDOG_ENABLED = "watchdog_enabled"
     private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
 
@@ -103,10 +105,47 @@ object PrivilegedRuntime {
 
     fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    fun isPaired(context: Context): Boolean =
-        runCatching {
+    fun isPaired(context: Context): Boolean {
+        invalidateStalePairing(context)
+        return runCatching {
             PreferenceAdbKeyStore(prefs(context)).get() != null
         }.getOrDefault(false)
+    }
+
+    /**
+     * Invalidates a pairing created by an older embedded-runtime build.
+     *
+     * A wireless ADB key is tied to the adbd certificate that accepted it.
+     * Keeping that key across an app update can leave the UI in a permanent
+     * "paired" state while every TLS handshake is rejected. Older builds did
+     * not store a pairing fingerprint, so a missing fingerprint is treated as
+     * legacy state and invalidated once.
+     *
+     * This is public so the Application entry point can run the migration
+     * immediately after an update, before any UI or watchdog attempts ADB.
+     *
+     * @return true when a stored pairing was removed.
+     */
+    fun invalidateStalePairing(context: Context): Boolean {
+        val appContext = context.applicationContext
+        val preferences = prefs(appContext)
+        val hasKey = runCatching {
+            PreferenceAdbKeyStore(preferences).get() != null
+        }.getOrDefault(false)
+        if (!hasKey) return false
+
+        val storedBuild = preferences.getString(KEY_PAIRING_BUILD, null)
+        if (storedBuild == BUILD_FINGERPRINT) return false
+
+        val previous = storedBuild ?: "legacy build"
+        NtfyReporter.publish(
+            "pairing",
+            "app update detected ($previous -> $BUILD_FINGERPRINT); invalidating stored ADB pairing",
+            "high"
+        )
+        forgetPairing(appContext)
+        return true
+    }
 
     /**
      * Forget the local wireless-debugging pairing after adbd rejects the key.
@@ -117,6 +156,7 @@ object PrivilegedRuntime {
             .remove(KEY_ADB_KEY)
             .remove(KEY_LAST_HOST)
             .remove(KEY_LAST_PORT)
+            .remove(KEY_PAIRING_BUILD)
             .apply()
         _state.value = State.NOT_PAIRED
     }
@@ -258,7 +298,14 @@ object PrivilegedRuntime {
                 val ok = client.use { it.start() }
                 if (ok) {
                     Log.i(TAG, "Pairing succeeded")
+                    prefs(context).edit()
+                        .putString(KEY_PAIRING_BUILD, BUILD_FINGERPRINT)
+                        .apply()
                     NtfyReporter.publish("pairing", "SPAKE2+ handshake succeeded")
+                    NtfyReporter.publish(
+                        "pairing",
+                        "pairing stored for build $BUILD_FINGERPRINT"
+                    )
                     _state.value = State.PAIRED_IDLE
                     Result.success(Unit)
                 } else {

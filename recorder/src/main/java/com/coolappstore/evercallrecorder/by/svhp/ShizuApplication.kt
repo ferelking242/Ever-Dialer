@@ -10,6 +10,7 @@ package com.coolappstore.evercallrecorder.by.svhp
 
 import android.app.Application
 import com.coolappstore.evercallrecorder.by.svhp.onboarding.OnboardingSession
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.utils.AppLogger
 
 /**
@@ -19,6 +20,9 @@ open class ShizuApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         AppLogger.init(applicationContext)
+        // A previous APK may have stored an ADB key accepted by an older
+        // runtime build. Invalidate it before the UI or watchdog can reuse it.
+        runCatching { PrivilegedRuntime.invalidateStalePairing(applicationContext) }
         // Fresh process => forget any previous "Skip" tap on the permissions screen.
         OnboardingSession.skipped = false
         // Make sure the telephony receiver / notification listener are enabled or disabled to
