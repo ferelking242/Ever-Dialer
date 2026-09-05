@@ -433,9 +433,9 @@ class PairingReplyReceiver : BroadcastReceiver() {
         val port = intent.getIntExtra(PairingNotifier.EXTRA_PAIRING_PORT, 0)
         val host = intent.getStringExtra(PairingNotifier.EXTRA_PAIRING_HOST) ?: "127.0.0.1"
         val code = RemoteInput.getResultsFromIntent(intent)
-            ?.getCharSequence(KEY_PAIRING_CODE)?.toString()
+            ?.getCharSequence(KEY_PAIRING_CODE)?.toString()?.trim()
 
-        if (code.isNullOrBlank() || code.length != 6) {
+        if (code.isNullOrBlank() || code.length != 6 || !code.all(Char::isDigit)) {
             Log.w(TAG, "Invalid pairing code: '${code?.take(3)}...'")
             PairingNotifier.onPairingFailed(context, "Le code doit contenir 6 chiffres")
             return

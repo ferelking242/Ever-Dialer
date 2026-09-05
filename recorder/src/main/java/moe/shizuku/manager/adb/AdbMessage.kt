@@ -41,6 +41,7 @@ class AdbMessage(
 
     fun validate(): Boolean {
         if (command != magic xor -0x1) return false
+        if (data_length < 0 || data_length != (data?.size ?: 0)) return false
         if (data_length != 0 && crc32(data) != data_crc32) return false
         return true
     }

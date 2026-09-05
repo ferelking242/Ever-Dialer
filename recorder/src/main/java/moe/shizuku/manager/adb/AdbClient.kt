@@ -67,6 +67,7 @@ class AdbClient(private val host: String, private val port: Int, private val key
          */
         private const val ADVERTISED_MAXDATA = 64 * 1024
         private const val MIN_MAXDATA = 4096
+        private const val MAX_INBOUND_DATA = ADVERTISED_MAXDATA
 
         private fun syncId(text: String): Int {
             require(text.length == 4)
@@ -130,7 +131,7 @@ class AdbClient(private val host: String, private val port: Int, private val key
 
             message = read()
         } else if (message.command == A_AUTH) {
-            if (message.command != A_AUTH && message.arg0 != ADB_AUTH_TOKEN) error("not A_AUTH ADB_AUTH_TOKEN")
+            if (message.arg0 != ADB_AUTH_TOKEN) error("not A_AUTH ADB_AUTH_TOKEN")
 
             write(A_AUTH, ADB_AUTH_SIGNATURE, 0, key.sign(message.data))
 
@@ -431,11 +432,11 @@ class AdbClient(private val host: String, private val port: Int, private val key
         val magic = buffer.int
 
         val data: ByteArray?
-        if (dataLength >= 0) {
+        if (dataLength !in 0..MAX_INBOUND_DATA) {
+            error("invalid ADB payload length: $dataLength")
+        } else {
             data = ByteArray(dataLength)
             inputStream.readFully(data, 0, dataLength)
-        } else {
-            data = null
         }
 
         val message = AdbMessage(command, arg0, arg1, dataLength, checksum, magic, data)
