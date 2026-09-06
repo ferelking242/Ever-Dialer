@@ -124,7 +124,26 @@ class AppCallNotificationListenerService : NotificationListenerService() {
      */
     private fun looksLikeOngoingCallNotification(notification: Notification): Boolean {
         val isOngoing = (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0
-        return isOngoing && notification.category == Notification.CATEGORY_CALL
+        if (!isOngoing) return false
+
+        // WhatsApp versions and OEM notification adapters do not all preserve
+        // CATEGORY_CALL. Keep the strict documented check, but accept an ongoing
+        // notification whose visible text clearly identifies an active call.
+        if (notification.category == Notification.CATEGORY_CALL) return true
+
+        val text = listOf(
+            notification.extras?.getCharSequence(Notification.EXTRA_TITLE),
+            notification.extras?.getCharSequence(Notification.EXTRA_TEXT),
+            notification.extras?.getCharSequence(Notification.EXTRA_BIG_TEXT),
+            notification.extras?.getCharSequence(Notification.EXTRA_SUB_TEXT)
+        ).filterNotNull().joinToString(" ").lowercase()
+
+        val callWords = listOf(
+            "call", "calling", "voice call", "video call", "incoming call",
+            "outgoing call", "call in progress", "appel", "appel vocal",
+            "appel vidéo", "appel en cours", "llamada", "videollamada"
+        )
+        return callWords.any { text.contains(it) }
     }
 
     /**
