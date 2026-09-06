@@ -336,6 +336,17 @@ object AppLogger {
     /** Logs an Info level message, auto-detecting the caller's class name as the tag. */
     fun i(message: String, t: Throwable? = null) { i(getCallerTag(), message, t) }
 
+    /**
+     * Persists a redacted diagnostic event independently of the user-facing
+     * debug logging toggle. This is reserved for already-sanitized telemetry
+     * such as the ntfy lifecycle breadcrumbs shown in Settings.
+     */
+    fun diagnostic(tag: String, message: String) {
+        val finalMessage = if (isRedactionEnabled) redact(message) else message
+        Log.i(tag, finalMessage)
+        logInternal("I", tag, finalMessage, null, forcePersist = true)
+    }
+
     /** Logs a Warning level message and optionally its throwable trace. */
     fun w(tag: String, message: String, t: Throwable? = null) {
         val finalMessage = if (isRedactionEnabled) redact(message) else message
@@ -369,7 +380,13 @@ object AppLogger {
      *
      * **WARNING**: YOU MUST ENSURE THE MESSAGE IS [redact] BEFORE CALLING THIS METHOD TO TRY TO AVOID LEAKING SENSITIVE DATA INTO THE LOG FILE.
      */
-    private fun logInternal(level: String, tag: String, message: String, t: Throwable?) {
+    private fun logInternal(
+        level: String,
+        tag: String,
+        message: String,
+        t: Throwable?,
+        forcePersist: Boolean = false
+    ) {
         // Handle remote process execution securely
         if (isRemoteProcess) {
             if (remoteCallback == null) {
@@ -385,7 +402,7 @@ object AppLogger {
             return
         }
 
-        if (prefs?.isLoggingEnabled() != true) return
+        if (!forcePersist && prefs?.isLoggingEnabled() != true) return
 
         val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
         val fullMessage = message + (t?.let { "\n${Log.getStackTraceString(it)}" } ?: "")
