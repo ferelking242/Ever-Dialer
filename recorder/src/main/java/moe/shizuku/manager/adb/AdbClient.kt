@@ -228,19 +228,21 @@ class AdbClient(private val host: String, private val port: Int, private val key
         try {
             socket.soTimeout = PAYLOAD_READ_TIMEOUT_MS
 
-            // SEND: ADB sync SEND protocol — the wire format is:
-            //   [id="SEND"][mode u32 LE][path\0]
-            // mode is the file permission (e.g. 0644 octal = 420 decimal).
-            // path must be null-terminated. adbd opens the file here and may
-            // FAIL immediately if the directory is missing.
-            val pathBytes = remotePath.toByteArray(Charsets.US_ASCII)
-            val sendBuf = ByteBuffer.allocate(8 + pathBytes.size + 1)
-                .order(ByteOrder.LITTLE_ENDIAN)
-            sendBuf.putInt(syncId("SEND"))
-            sendBuf.putInt(mode)
-            sendBuf.put(pathBytes)
-            sendBuf.put(0x00.toByte()) // null terminator
-            writeSyncPacket(localId, remoteId, sendBuf.array())
+            /*
+             * SEND_V1 is not a binary mode + NUL-terminated path packet.
+             * adbd reads the sync request as a length-prefixed string and
+             * parses the final comma itself:
+             *
+             *     "/data/local/tmp/file,0755"
+             *
+             * Sending the mode as a little-endian integer (the old code did
+             * this) makes recent adbd report "missing , in ID_SEND_V1".
+             * Keep the leading zero: adbd parses the mode with base 0, so
+             * "755" would otherwise be interpreted as decimal.
+             */
+            val modeString = mode.toString(8).padStart(4, '0')
+            val sendSpec = "$remotePath,$modeString".toByteArray(Charsets.US_ASCII)
+            writeSyncPacket(localId, remoteId, syncMessage("SEND", sendSpec))
 
             // DATA: [id="DATA"][chunk_size u32 LE][chunk bytes]
             // One sync message per WRTE, sized so the WRTE payload never
