@@ -55,7 +55,7 @@ object PrivilegedRuntime {
      * actually running on the phone. Updated every release that changes the
      * embedded runtime or its pairing state.
      */
-    private const val BUILD_FINGERPRINT = "build-20260905-adb-endpoint-guard-v7"
+    private const val BUILD_FINGERPRINT = "build-20260906-runtime-diagnostics-v8"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
@@ -545,7 +545,10 @@ object PrivilegedRuntime {
                              */
                             launchOutput.setLength(0)
                             val launchCmd =
-                                "shell:{ toybox chmod 0755 '$starterPath' 2>&1 || true; " +
+                                "shell:{ echo EVER_LAUNCH_BEGIN; date 2>&1; id 2>&1; " +
+                                    "toybox ls -l '$REMOTE_APK_PATH' '$starterPath' 2>&1; " +
+                                    "toybox sha256sum '$REMOTE_APK_PATH' '$starterPath' 2>&1; " +
+                                    "toybox chmod 0755 '$starterPath' 2>&1 || true; " +
                                     "'$starterPath' --apk='$REMOTE_APK_PATH' 2>&1; " +
                                     "echo EVER_STARTER_EXIT=\$?; } | " +
                                     "toybox tee '$REMOTE_LOG_PATH'"
@@ -693,7 +696,7 @@ object PrivilegedRuntime {
             NtfyReporter.publish(
                 "runtime",
                 "binder timeout; $stateLine; launch=${launchSummary.take(300)}; " +
-                    "remote log=${remoteLog ?: "empty"}",
+                    "diagnostic sections=${remoteLog ?: "empty"}",
                 "high"
             )
 
@@ -918,35 +921,76 @@ object PrivilegedRuntime {
 
     private fun readRemoteStartupLog(endpoint: AdbEndpoint, key: AdbKey): String? {
         val output = StringBuilder()
+        val capturedSections = mutableListOf<String>()
         try {
             AdbClient(endpoint.host, endpoint.port, key).use { client ->
                 client.connect()
 
-                // Each diagnostic is independent: one failing command must not
-                // hide the others (this is why previous reports were empty).
+                /*
+                 * Keep each diagnostic independent and publish sections
+                 * separately. NtfyReporter caps one message at 1,500
+                 * characters; the old aggregate report cut off the useful
+                 * linker/ART/SELinux lines at the end.
+                 */
                 fun collect(title: String, command: String) {
-                    output.append("\n-- $title --\n")
+                    val section = StringBuilder("-- $title --\n")
                     runCatching {
-                        client.command(command) { bytes -> output.append(String(bytes)) }
+                        client.command(command) { bytes -> section.append(String(bytes)) }
                     }.onFailure {
-                        output.append("[erreur: ${it.javaClass.simpleName}: ${it.message}]")
+                        section.append("[erreur: ${it.javaClass.simpleName}: ${it.message}]")
+                    }
+                    val text = section.toString().trim()
+                    output.append('\n').append(text).append('\n')
+                    if (text.length > title.length + 6) {
+                        capturedSections += title
+                        val chunks = text.chunked(1_100)
+                        chunks.forEachIndexed { index, chunk ->
+                            NtfyReporter.publish(
+                                "diagnostic",
+                                "$title [${index + 1}/${chunks.size}]: $chunk",
+                                "high"
+                            )
+                        }
+                    } else {
+                        NtfyReporter.publish("diagnostic", "$title: empty", "high")
                     }
                 }
 
-                collect("starter.log", "shell:toybox tail -c 4000 '$REMOTE_LOG_PATH' 2>&1")
-                // The native starter detaches the Java server and redirects its
-                // stdout/stderr to /dev/null, so the server's own logs (and any
-                // fatal crash, SELinux denial, or app_process error) only land
-                // in logcat. The ring buffer is bounded first (-t 3000) because
-                // Samsung's buffer overflows in seconds and a full dump is both
-                // huge and stale; the filter is narrow enough to skip noise such
-                // as "InterruptionStateProvider" but still catches the fork
-                // server's tags (BinderSender, ShizukuService, ...).
                 collect(
-                    "logcat",
-                    "shell:logcat -d -t 3000 -v brief 2>/dev/null | " +
-                        "grep -aiE 'shizuku|BinderSender|sendBinder|manager package|" +
-                        "app_process|E AndroidRuntime|FATAL EXCEPTION|avc: denied' | " +
+                    "device",
+                    "shell:id 2>&1; getenforce 2>&1; " +
+                        "getprop ro.build.version.sdk 2>&1; " +
+                        "getprop ro.product.manufacturer 2>&1; " +
+                        "getprop ro.product.model 2>&1; uname -a 2>&1"
+                )
+                collect(
+                    "payload-files",
+                    "shell:toybox ls -l '$REMOTE_APK_PATH' '$REMOTE_DIR'/shizuku-starter-* 2>&1; " +
+                        "toybox sha256sum '$REMOTE_APK_PATH' '$REMOTE_DIR'/shizuku-starter-* 2>&1; " +
+                        "toybox stat '$REMOTE_APK_PATH' 2>&1"
+                )
+                collect("starter.log", "shell:toybox tail -c 6000 '$REMOTE_LOG_PATH' 2>&1")
+                /*
+                 * The native starter detaches the Java server and redirects its
+                 * stdout/stderr to /dev/null. Fatal crashes, linker failures,
+                 * ART aborts, and SELinux denials therefore land in logcat.
+                 * Keep stderr visible and query every relevant buffer.
+                 */
+                collect(
+                    "logcat-crash",
+                    "shell:logcat -b crash -d -v threadtime -t 150 2>&1"
+                )
+                collect(
+                    "logcat-main-system",
+                    "shell:logcat -b main -b system -b events -d -v threadtime -t 800 2>&1 | " +
+                        "grep -aiE 'shizuku|binder|app_process|AndroidRuntime|FATAL|DEBUG|linker|" +
+                        "libc|crash_dump|activitymanager|provider|avc|denied|SELinux|permission' | " +
+                        "tail -500"
+                )
+                collect(
+                    "logcat-kernel",
+                    "shell:logcat -b kernel -d -v threadtime -t 300 2>&1 | " +
+                        "grep -aiE 'shizuku|binder|app_process|avc|denied|segfault|killed|oom|linker' | " +
                         "tail -300"
                 )
                 collect(
@@ -963,29 +1007,42 @@ object PrivilegedRuntime {
                         "ps -A -o USER,PID,PPID,NAME,ARGS 2>/dev/null | " +
                         "grep -w shizuku_server | grep -v grep || true"
                 )
+                collect(
+                    "server-proc",
+                    "shell:for p in \$(toybox pidof shizuku_server 2>/dev/null); do " +
+                        "echo PID=\$p; cat /proc/\$p/status 2>&1; " +
+                        "cat /proc/\$p/limits 2>&1 | head -40; done"
+                )
                 // The pushed server publishes its binder into THIS app's
                 // <package>.shizuku provider; verify the provider is actually
                 // registered in the running APK (resolve-content-provider does
                 // not exist on this Samsung ROM, hence dumpsys instead).
                 collect(
                     "provider-package",
-                    "shell:dumpsys package '${BuildConfig.APPLICATION_ID}' 2>/dev/null | " +
-                        "grep -aiE 'shizuku' | head -30"
+                    "shell:dumpsys package '${BuildConfig.APPLICATION_ID}' 2>&1 | " +
+                        "grep -aiE -B 8 -A 24 'EverShizukuProvider|\\.shizuku|provider' | head -160"
                 )
                 collect(
                     "providers-registry",
-                    "shell:dumpsys activity providers 2>/dev/null | " +
-                        "grep -aiE 'shizuku' | head -40"
+                    "shell:dumpsys activity providers 2>&1 | " +
+                        "grep -aiE -B 6 -A 18 'EverShizukuProvider|${BuildConfig.APPLICATION_ID}\\.shizuku|shizuku' | head -160"
                 )
                 collect(
                     "selinux",
-                    "shell:getenforce 2>&1; dmesg 2>/dev/null | grep -i avc | tail -40 || true"
+                    "shell:getenforce 2>&1; dmesg 2>&1 | " +
+                        "grep -aiE 'avc|denied|shizuku|app_process|binder|segfault|killed|oom' | " +
+                        "tail -120 || true"
                 )
             }
         } catch (e: Throwable) {
             output.append("\n[diagnostic reconnect failed: ${e.javaClass.simpleName}: ${e.message}]")
+            NtfyReporter.publish(
+                "diagnostic",
+                "reconnect failed: ${e.javaClass.simpleName}: ${e.message ?: "unknown"}",
+                "high"
+            )
         }
-        return output.toString().trim().takeIf { it.isNotBlank() }
+        return capturedSections.joinToString(",").takeIf { it.isNotBlank() }
     }
 
     private fun isPairingInvalid(error: Throwable): Boolean {
