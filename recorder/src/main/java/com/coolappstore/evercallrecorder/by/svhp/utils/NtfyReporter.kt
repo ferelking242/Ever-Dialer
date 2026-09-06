@@ -43,6 +43,10 @@ object NtfyReporter {
                 }
             }
         }
+        // Keep the same detailed runtime breadcrumb locally. Ntfy is useful
+        // for remote diagnosis, but the user must be able to inspect and copy
+        // the complete sequence from Settings even when the network is down.
+        AppLogger.i("NtfyReporter", "priority=$priority $message")
         Log.i(TAG, "Queue diagnostic: priority=$priority message=$message")
         scope.launch {
             runCatching { post(message, priority) }

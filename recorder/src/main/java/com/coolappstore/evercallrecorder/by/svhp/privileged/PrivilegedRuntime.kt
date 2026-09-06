@@ -40,6 +40,7 @@ import moe.shizuku.manager.adb.AdbMdns
 import moe.shizuku.manager.adb.AdbPairingClient
 import moe.shizuku.manager.adb.PreferenceAdbKeyStore
 import java.io.File
+import java.io.FileInputStream
 import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 import kotlin.coroutines.resume
@@ -1179,16 +1180,36 @@ object PrivilegedRuntime {
                 ?.toLong()
 
         val tempCheck = remoteOutput("shell:toybox ls -l '$remoteStarterTempPath' 2>&1")
-        if (!tempCheck.contains(remoteStarterTempPath)) {
-            val details = tempCheck.ifBlank { "fichier temporaire absent" }.takeLast(700)
-            NtfyReporter.publish("runtime", "starter temp check failed: $details", "high")
-            throw AdbException("Transfert du starter incomplet : $details")
-        }
         val tempSize = remoteByteCount(remoteStarterTempPath)
-        if (tempSize != expectedSize) {
+        if (!tempCheck.contains(remoteStarterTempPath) || tempSize != expectedSize) {
+            /*
+             * Some OEM toybox builds return success from cp before the file
+             * becomes stable over the wireless ADB shell stream. Fall back to
+             * the protocol's native sync service instead of launching with a
+             * truncated executable. The final size and SHA checks below remain
+             * mandatory for both paths.
+             */
             val details = "taille attendue=$expectedSize, obtenue=${tempSize ?: "indisponible"}"
-            NtfyReporter.publish("runtime", "starter temp size mismatch: $details", "high")
-            throw AdbException("Transfert du starter incomplet : $details")
+            NtfyReporter.publish("runtime", "starter shell copy incomplete; trying adb sync: $details", "high")
+            log?.invoke("Copie shell instable, transfert ADB vérifié en secours…")
+            runCatching {
+                remoteOutput("shell:toybox rm -f '$remoteStarterTempPath' 2>/dev/null || true")
+                FileInputStream(localStarter).use { input ->
+                    client.syncSend(remoteStarterTempPath, 0x1ED, input)
+                }
+            }.onFailure { error ->
+                val fallbackDetails = "${error.javaClass.simpleName}: ${error.message ?: "erreur inconnue"}"
+                NtfyReporter.publish("runtime", "starter adb sync fallback failed: $fallbackDetails", "high")
+                throw AdbException("Transfert du starter incomplet : $details; secours: $fallbackDetails")
+            }
+
+            val recoveredSize = remoteByteCount(remoteStarterTempPath)
+            if (recoveredSize != expectedSize) {
+                val recoveredDetails =
+                    "taille attendue=$expectedSize, obtenue=${recoveredSize ?: "indisponible"}"
+                NtfyReporter.publish("runtime", "starter adb sync size mismatch: $recoveredDetails", "high")
+                throw AdbException("Transfert du starter incomplet : $recoveredDetails")
+            }
         }
 
         val copyCheck = remoteOutput(

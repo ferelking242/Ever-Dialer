@@ -86,6 +86,7 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit = {}, onOpen
     val contactPickerViewModel: ContactPickerViewModel = viewModel()
     val contactPickerState by contactPickerViewModel.contactPickerState.collectAsState()
     var showStorageChoiceDialog by remember { mutableStateOf(false) }
+    var showDetailedLogs by remember { mutableStateOf(false) }
 
     val folderPickerLauncher = rememberLauncherForActivityResult(PersistentFolderPickerContract()) { uri ->
         if (uri != null) {
@@ -111,11 +112,16 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit = {}, onOpen
         onConfirmContacts = { numbers -> contactPickerViewModel.confirmContactPicker(numbers); viewModel.refresh() },
         onDismissContacts = { contactPickerViewModel.dismissContactPicker() },
         onExportLogs = { exportLogLauncher.launch("evercallrecorder_bug_report.log") },
+        onOpenDetailedLogs = { showDetailedLogs = true },
         onBack = onBack,
         onOpenWebView = onOpenWebView,
         modifier = modifier,
         extraContent = extraContent
     )
+
+    if (showDetailedLogs) {
+        DetailedLogsScreen(onBack = { showDetailedLogs = false })
+    }
 
     if (showStorageChoiceDialog) {
         StorageLocationDialog(
@@ -146,6 +152,7 @@ fun SettingsContent(
     onConfirmContacts: (Set<String>) -> Unit,
     onDismissContacts: () -> Unit,
     onExportLogs: () -> Unit,
+    onOpenDetailedLogs: () -> Unit = {},
     onBack: () -> Unit = {},
     onOpenWebView: (url: String, enableDownloads: Boolean, extraBottomDp: Int) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier,
@@ -188,7 +195,7 @@ fun SettingsContent(
                     SecuritySection(preferences, updateTrigger, actions)
                     LanguagesSection(preferences, updateTrigger, actions)
                     AboutSection(versionString = actions.getAppVersion(), onShowLicenses = { showLicensesDialog = true })
-                    DebugSection(preferences, updateTrigger, actions, onExportLogs)
+                    DebugSection(preferences, updateTrigger, actions, onExportLogs, onOpenDetailedLogs)
                     extraContent?.invoke()
                     Spacer(Modifier.height(8.dp))
                 }
@@ -885,7 +892,13 @@ private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, act
 // ── Debug section ─────────────────────────────────────────────────────────────
 
 @Composable
-private fun DebugSection(preferences: AppPreferences, updateTrigger: Int, actions: SettingsActions, onExportLogs: () -> Unit) {
+private fun DebugSection(
+    preferences: AppPreferences,
+    updateTrigger: Int,
+    actions: SettingsActions,
+    onExportLogs: () -> Unit,
+    onOpenDetailedLogs: () -> Unit
+) {
     val isDebugEnabled    = remember(updateTrigger) { preferences.isDebugEnabled() }
     val debugCallerNumber = remember(updateTrigger) { preferences.getDebugCallerNumber() }
     val isLoggingEnabled  = remember(updateTrigger) { preferences.isLoggingEnabled() }
@@ -906,6 +919,12 @@ private fun DebugSection(preferences: AppPreferences, updateTrigger: Int, action
                 }
             }
         }
+        SectionListItem(
+            icon = Icons.Outlined.Terminal,
+            headline = "Detailed runtime logs",
+            supporting = "View the complete embedded Shizuku and ntfy diagnostic timeline.",
+            onClick = onOpenDetailedLogs
+        )
         HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), thickness = 0.5.dp)
         ToggleListItem(label = stringResource(R.string.settings_debug_mode), checked = isDebugEnabled, onCheckedChange = { actions.setDebugEnabled(it) }, description = stringResource(R.string.settings_debug_mode_description))
         if (isDebugEnabled) {

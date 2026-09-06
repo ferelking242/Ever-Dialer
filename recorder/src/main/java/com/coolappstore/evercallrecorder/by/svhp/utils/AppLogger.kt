@@ -256,6 +256,20 @@ object AppLogger {
     }
 
     /**
+     * Returns a point-in-time snapshot of the local diagnostic log.
+     *
+     * The UI uses this instead of reading the file directly so the logging
+     * implementation remains the single owner of the log location and
+     * redaction policy.
+     */
+    fun readLogs(): String {
+        flushSync()
+        return runCatching {
+            logFile?.takeIf { it.isFile }?.readText(Charsets.UTF_8).orEmpty()
+        }.getOrDefault("")
+    }
+
+    /**
      * Gathers system/app metadata and concatenates it with the existing debug log history,
      * streaming the complete report to a destination URI via the Storage Access Framework.
      *
@@ -401,7 +415,7 @@ object AppLogger {
      * This ensures that crucial crash traces and late logs are not lost if the process is
      * abruptly killed before the asynchronous IO worker can process them.
      */
-    private fun flushSync() {
+    fun flushSync() {
         val file = logFile ?: return
         try {
             FileWriter(file, true).use { writer ->

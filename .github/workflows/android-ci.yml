@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build APKs — Ever Émetteur (A) + Ever Client (B)
+    name: Build Ever Émetteur APKs
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -31,8 +31,7 @@ jobs:
       - name: Permission d'exécution pour gradlew
         run: chmod +x gradlew
 
-      # Racine = assembleDebug/assembleRelease de TOUS les modules Android :
-      # :app (Ever Dialer+, téléphone A) et :receiver (Ever Call Recording, téléphone B).
+      # Build the active application and library modules from the project root.
       - name: Assemble debug + release (tous modules)
         run: ./gradlew --no-daemon --stacktrace assembleDebug assembleRelease
 
@@ -49,19 +48,4 @@ jobs:
         with:
           name: Ever-Emetteur-release-signed
           path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: error
-
-      # ── Téléphone B : Ever Client (receiver P2P, reçoit les enregistrements) ──
-      - name: APK Téléphone B — debug
-        uses: actions/upload-artifact@v4
-        with:
-          name: Ever-Client-debug
-          path: receiver/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-
-      - name: APK Téléphone B — release signé
-        uses: actions/upload-artifact@v4
-        with:
-          name: Ever-Client-release-signed
-          path: receiver/build/outputs/apk/release/*.apk
           if-no-files-found: error
