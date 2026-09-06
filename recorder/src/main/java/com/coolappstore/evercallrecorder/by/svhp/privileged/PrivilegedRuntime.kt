@@ -1476,7 +1476,7 @@ object PrivilegedRuntime {
         log?.invoke("librish.so transféré et vérifié ✔")
         NtfyReporter.publish(
             "runtime",
-            "librish install OK: $remotePath sha=${transferredSha.take(12)}…"
+            "librish install OK: $remotePath sha=${transferredSha?.take(12) ?: "indisponible"}…"
         )
     }
 
