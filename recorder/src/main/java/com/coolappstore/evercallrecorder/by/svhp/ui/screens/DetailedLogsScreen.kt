@@ -1,6 +1,8 @@
 package com.coolappstore.evercallrecorder.by.svhp.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,6 +14,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,9 +43,16 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DetailedLogsScreen(onBack: () -> Unit) {
+fun DetailedLogsScreen(
+    onBack: () -> Unit,
+    onExportLogs: (android.net.Uri) -> Unit = {}
+) {
     val context = LocalContext.current
     var logs by remember { mutableStateOf(AppLogger.readLogs()) }
+    val exportLogLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain"),
+        onResult = { uri -> if (uri != null) onExportLogs(uri) }
+    )
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -74,6 +84,16 @@ fun DetailedLogsScreen(onBack: () -> Unit) {
                 actions = {
                     IconButton(
                         onClick = {
+                            exportLogLauncher.launch("ever-dialer-runtime-logs.log")
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.FileDownload,
+                            contentDescription = "Download .log file"
+                        )
+                    }
+                    IconButton(
+                        onClick = {
                             context.copyToClipboard(
                                 label = "Ever Dialer logs",
                                 text = logs.ifBlank { "No logs recorded yet." }
@@ -100,7 +120,7 @@ fun DetailedLogsScreen(onBack: () -> Unit) {
         ) {
             Text(
                 text = logs.ifBlank {
-                    "No logs recorded yet.\n\nEnable Debug logging in Settings, reproduce the issue, then return here."
+                    "No logs recorded yet.\n\nEnable log recording in Settings, reproduce the issue, then return here."
                 },
                 modifier = Modifier
                     .fillMaxWidth()

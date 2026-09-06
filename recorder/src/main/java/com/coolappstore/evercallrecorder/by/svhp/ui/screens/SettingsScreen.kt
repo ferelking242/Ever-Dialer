@@ -120,7 +120,10 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit = {}, onOpen
     )
 
     if (showDetailedLogs) {
-        DetailedLogsScreen(onBack = { showDetailedLogs = false })
+        DetailedLogsScreen(
+            onBack = { showDetailedLogs = false },
+            onExportLogs = { uri -> viewModel.exportLogs(uri) }
+        )
     }
 
     if (showStorageChoiceDialog) {

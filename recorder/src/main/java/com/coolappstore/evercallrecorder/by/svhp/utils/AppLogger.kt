@@ -277,7 +277,8 @@ object AppLogger {
      * @param destinationUri Target SAF URI to which the file will be generated.
      */
     fun exportReport(context: Context, destinationUri: Uri) {
-        val file = logFile ?: return
+        flushSync()
+        val file = logFile
         context.contentResolver.openOutputStream(destinationUri, "w")?.use { outputStream ->
             PrintWriter(OutputStreamWriter(outputStream, Charsets.UTF_8)).use { writer ->
                 writer.println("=== ShizuCallRecorder AppLogger Export ===")
@@ -295,7 +296,7 @@ object AppLogger {
                 writer.println()
                 writer.flush()
 
-                if (file.exists()) {
+                if (file?.isFile == true) {
                     file.inputStream().use { inputStream ->
                         inputStream.copyTo(outputStream)
                     }

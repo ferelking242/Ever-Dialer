@@ -55,7 +55,7 @@ object PrivilegedRuntime {
      * actually running on the phone. Updated every release that changes the
      * embedded runtime or its pairing state.
      */
-    private const val BUILD_FINGERPRINT = "build-20260906-runtime-diagnostics-v8"
+    private const val BUILD_FINGERPRINT = "build-20260906-runtime-rish-v9"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
@@ -546,8 +546,8 @@ object PrivilegedRuntime {
                             launchOutput.setLength(0)
                             val launchCmd =
                                 "shell:{ echo EVER_LAUNCH_BEGIN; date 2>&1; id 2>&1; " +
-                                    "toybox ls -l '$REMOTE_APK_PATH' '$starterPath' 2>&1; " +
-                                    "toybox sha256sum '$REMOTE_APK_PATH' '$starterPath' 2>&1; " +
+                                     "toybox ls -l '$REMOTE_APK_PATH' '$REMOTE_DIR'/lib/*/librish.so '$starterPath' 2>&1; " +
+                                     "toybox sha256sum '$REMOTE_APK_PATH' '$REMOTE_DIR'/lib/*/librish.so '$starterPath' 2>&1; " +
                                     "toybox chmod 0755 '$starterPath' 2>&1 || true; " +
                                     "'$starterPath' --apk='$REMOTE_APK_PATH' 2>&1; " +
                                     "echo EVER_STARTER_EXIT=\$?; } | " +
@@ -965,9 +965,14 @@ object PrivilegedRuntime {
                 )
                 collect(
                     "payload-files",
-                    "shell:toybox ls -l '$REMOTE_APK_PATH' '$REMOTE_DIR'/shizuku-starter-* 2>&1; " +
-                        "toybox sha256sum '$REMOTE_APK_PATH' '$REMOTE_DIR'/shizuku-starter-* 2>&1; " +
+                    "shell:toybox ls -l '$REMOTE_APK_PATH' '$REMOTE_DIR'/lib/*/librish.so '$REMOTE_DIR'/shizuku-starter-* 2>&1; " +
+                        "toybox sha256sum '$REMOTE_APK_PATH' '$REMOTE_DIR'/lib/*/librish.so '$REMOTE_DIR'/shizuku-starter-* 2>&1; " +
                         "toybox stat '$REMOTE_APK_PATH' 2>&1"
+                )
+                collect(
+                    "rish-library",
+                    "shell:find '$REMOTE_DIR/lib' -maxdepth 2 -type f -name librish.so -exec " +
+                        "sh -c 'echo FILE={}; toybox ls -l {}; toybox sha256sum {}' \\; 2>&1"
                 )
                 collect("starter.log", "shell:toybox tail -c 6000 '$REMOTE_LOG_PATH' 2>&1")
                 /*
@@ -1085,7 +1090,9 @@ object PrivilegedRuntime {
         if (remoteSha.equals(expectedSha, ignoreCase = true)) {
             log?.invoke("Serveur déjà à jour sur l'appareil.")
             NtfyReporter.publish("runtime", "payload: SHA match → reusing existing APK")
-            return ensureRemoteStarter(client, context, log)
+            val starter = ensureRemoteStarter(client, context, log)
+            ensureRemoteRishLibrary(client, context, log)
+            return starter
         }
 
         val apkSource = context.applicationInfo.sourceDir
@@ -1129,7 +1136,9 @@ object PrivilegedRuntime {
 
         // /data/app/.../libshizuku.so is readable by the app but not reliably
         // executable by the shell UID. Copy the starter beside the server APK.
-        return ensureRemoteStarter(client, context, log)
+        val starter = ensureRemoteStarter(client, context, log)
+        ensureRemoteRishLibrary(client, context, log)
+        return starter
     }
 
     /** Reads the first 64-hex SHA-256 from `sha256sum` output, or null. */
@@ -1360,6 +1369,142 @@ object PrivilegedRuntime {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to extract starter from server asset", e)
+        }
+        return cacheFile
+    }
+
+    private data class RishAbi(
+        val apkAbi: String,
+        val remoteDirectory: String
+    )
+
+    /**
+     * The Shizuku fork's rish launcher looks for librish.so below the
+     * package-named directory using its shortened ABI directory names
+     * (arm64, arm, x86_64 or x86), not Android's APK ABI names.
+     */
+    private fun selectRishAbi(): RishAbi {
+        val supported = Build.SUPPORTED_ABIS.toSet()
+        return listOf(
+            RishAbi("arm64-v8a", "arm64"),
+            RishAbi("armeabi-v7a", "arm"),
+            RishAbi("x86_64", "x86_64"),
+            RishAbi("x86", "x86")
+        ).firstOrNull { it.apkAbi in supported }
+            ?: error("Unsupported device ABI: ${Build.SUPPORTED_ABIS.joinToString()}")
+    }
+
+    /**
+     * Installs the native rish library required by the Java server before the
+     * starter launches it. The server does not load librish.so from the APK:
+     * it resolves it from /data/local/tmp/<package>/lib/<abi>/librish.so.
+     *
+     * This is intentionally checked on every launch, including when the server
+     * APK hash is already present remotely. That repairs devices upgraded from
+     * v8 without forcing a second APK transfer.
+     */
+    private fun ensureRemoteRishLibrary(
+        client: AdbClient,
+        context: Context,
+        log: ((String) -> Unit)?
+    ) {
+        val abi = selectRishAbi()
+        val localRish = extractRishFromServerAsset(context, abi.apkAbi, abi.remoteDirectory)
+        check(localRish.isFile && localRish.length() > 0) {
+            "Embedded Shizuku librish.so is missing for ${abi.apkAbi}"
+        }
+
+        val remoteDirectory = "$REMOTE_DIR/lib/${abi.remoteDirectory}"
+        val remotePath = "$remoteDirectory/librish.so"
+        val remoteTempPath = "$remotePath.tmp"
+        val expectedSha = sha256(localRish)
+
+        client.command("shell:mkdir -p '$remoteDirectory'")
+        val existingSha = remoteSha256(client, remotePath)
+        if (existingSha.equals(expectedSha, ignoreCase = true)) {
+            val mode = StringBuilder()
+            client.command(
+                "shell:toybox chmod 0755 '$remotePath' 2>/dev/null; " +
+                    "if toybox test -x '$remotePath'; then echo EVER_RISH_REUSE_OK; fi"
+            ) { bytes -> mode.append(String(bytes)) }
+            if (mode.toString().contains("EVER_RISH_REUSE_OK")) {
+                log?.invoke("librish.so déjà installé et vérifié ($remotePath).")
+                NtfyReporter.publish(
+                    "runtime",
+                    "rish library verified and reused: $remotePath sha=${expectedSha.take(12)}…"
+                )
+                return
+            }
+        }
+
+        log?.invoke("Transfert de librish.so (${"%.1f".format(localRish.length() / 1_048_576.0)} Mo)…")
+        NtfyReporter.publish(
+            "runtime",
+            "rish install: ABI=${abi.apkAbi} remote=$remotePath expected=${expectedSha.take(12)}…"
+        )
+
+        client.command("shell:rm -f '$remoteTempPath' 2>/dev/null || true")
+        FileInputStream(localRish).use { input ->
+            client.syncSend(remoteTempPath, 0x1ED, input)
+        }
+        client.command(
+            "shell:toybox chmod 0755 '$remoteTempPath' && " +
+                "toybox mv '$remoteTempPath' '$remotePath' && toybox sync"
+        )
+
+        val transferredSha = remoteSha256(client, remotePath)
+        if (!transferredSha.equals(expectedSha, ignoreCase = true)) {
+            val details = "attendu=${expectedSha.take(12)}… " +
+                "obtenu=${transferredSha?.take(12) ?: "indisponible"}…"
+            NtfyReporter.publish("runtime", "rish transfer hash mismatch: $details", "high")
+            throw AdbException("Transfert de librish.so corrompu : $details")
+        }
+
+        val mode = StringBuilder()
+        client.command(
+            "shell:toybox chmod 0755 '$remotePath'; " +
+                "toybox ls -l '$remotePath'; " +
+                "if toybox test -x '$remotePath'; then echo EVER_RISH_INSTALL_OK; " +
+                "else echo EVER_RISH_INSTALL_FAILED; fi"
+        ) { bytes -> mode.append(String(bytes)) }
+        if (!mode.toString().contains("EVER_RISH_INSTALL_OK")) {
+            val details = mode.toString().trim().takeLast(700)
+            NtfyReporter.publish("runtime", "rish chmod failed: $details", "high")
+            throw AdbException("Permission de librish.so échouée : $details")
+        }
+
+        log?.invoke("librish.so transféré et vérifié ✔")
+        NtfyReporter.publish(
+            "runtime",
+            "librish install OK: $remotePath sha=${transferredSha.take(12)}…"
+        )
+    }
+
+    private fun extractRishFromServerAsset(
+        context: Context,
+        apkAbi: String,
+        remoteDirectory: String
+    ): File {
+        val cacheFile = File(context.cacheDir, "shizuku-rish-$remoteDirectory.so")
+        if (cacheFile.isFile && cacheFile.length() > 0) return cacheFile
+
+        try {
+            context.assets.open(BuildConfig.SHIZUKU_ASSET_PATH).use { apkStream ->
+                ZipInputStream(apkStream.buffered()).use { zip ->
+                    var entry = zip.nextEntry
+                    while (entry != null) {
+                        if (!entry.isDirectory && entry.name == "lib/$apkAbi/librish.so") {
+                            Log.i(TAG, "Extracting ${entry.name} from server asset")
+                            cacheFile.outputStream().use { out -> zip.copyTo(out) }
+                            cacheFile.setExecutable(true)
+                            return cacheFile
+                        }
+                        entry = zip.nextEntry
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to extract librish.so from server asset", e)
         }
         return cacheFile
     }
