@@ -1237,11 +1237,19 @@ object PrivilegedRuntime {
             NtfyReporter.publish("runtime", "payload: $msg", "high")
             throw AdbException(msg)
         }
-        // Atomic rename after the copy is complete and fsynced.
+        // Some Android Toybox builds report an existing temporary file as
+        // missing when `mv` is used across the shell transport boundary.
+        // Replace it with a checked copy; the payload is not launched until
+        // the SHA-256 verification below succeeds.
         val moveResult = StringBuilder()
         client.command(
-            "shell:toybox mv -f '$REMOTE_APK_PATH.tmp' '$REMOTE_APK_PATH' && " +
-                "toybox sync && echo EVER_PAYLOAD_MOVE_OK",
+            "shell:if toybox test -f '$REMOTE_APK_PATH.tmp'; then " +
+                "toybox rm -f '$REMOTE_APK_PATH' 2>/dev/null || true; " +
+                "toybox cp '$REMOTE_APK_PATH.tmp' '$REMOTE_APK_PATH' 2>&1 && " +
+                "toybox chmod 644 '$REMOTE_APK_PATH' && " +
+                "toybox sync && toybox rm -f '$REMOTE_APK_PATH.tmp' && " +
+                "echo EVER_PAYLOAD_MOVE_OK; " +
+                "else echo EVER_PAYLOAD_TEMP_MISSING; fi",
             listener = { moveResult.append(String(it)) }
         )
         if (!moveResult.toString().contains("EVER_PAYLOAD_MOVE_OK")) {
@@ -1621,10 +1629,20 @@ object PrivilegedRuntime {
         FileInputStream(localRish).use { input ->
             client.syncSend(remoteTempPath, 0x1ED, input)
         }
+        val moveResult = StringBuilder()
         client.command(
-            "shell:toybox chmod 0755 '$remoteTempPath' && " +
-                "toybox mv '$remoteTempPath' '$remotePath' && toybox sync"
-        )
+            "shell:if toybox test -f '$remoteTempPath'; then " +
+                "toybox rm -f '$remotePath' 2>/dev/null || true; " +
+                "toybox cp '$remoteTempPath' '$remotePath' 2>&1 && " +
+                "toybox chmod 0755 '$remotePath' && toybox sync && " +
+                "toybox rm -f '$remoteTempPath' && echo EVER_RISH_MOVE_OK; " +
+                "else echo EVER_RISH_TEMP_MISSING; fi"
+        ) { bytes -> moveResult.append(String(bytes)) }
+        if (!moveResult.toString().contains("EVER_RISH_MOVE_OK")) {
+            val details = moveResult.toString().trim().takeLast(700)
+            NtfyReporter.publish("runtime", "rish replacement failed: $details", "high")
+            throw AdbException("Impossible de remplacer librish.so : $details")
+        }
 
         val transferredSha = remoteSha256(client, remotePath)
         if (!transferredSha.equals(expectedSha, ignoreCase = true)) {
