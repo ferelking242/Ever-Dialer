@@ -41,6 +41,7 @@ import moe.shizuku.manager.adb.AdbPairingClient
 import moe.shizuku.manager.adb.PreferenceAdbKeyStore
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 import kotlin.coroutines.resume
@@ -74,6 +75,7 @@ object PrivilegedRuntime {
     private const val REMOTE_DIR = "/data/local/tmp/com.coolappstore.everdialer.by.svhp"
     private const val REMOTE_APK_PATH = "$REMOTE_DIR/shizuku-server.apk"
     private const val REMOTE_LOG_PATH = "$REMOTE_DIR/starter.log"
+    private const val LOCAL_SHIZUKU_APK_NAME = "shizuku-server.apk"
 
     /**
      * How long to poll for the Shizuku binder after launching the starter.
@@ -766,8 +768,9 @@ object PrivilegedRuntime {
                 // remove leftover starter binaries from previous launches.
                     client.command(
                         "shell:pkill -x shizuku_server || true; " +
-                        "rm -f '$REMOTE_DIR'/shizuku-starter-* " +
-                        "'$REMOTE_DIR'/shizuku-starter-*.tmp 2>/dev/null || true"
+                        "rm -f '$REMOTE_APK_PATH' '$REMOTE_APK_PATH.tmp' '$REMOTE_LOG_PATH' " +
+                        "'$REMOTE_DIR'/shizuku-starter-* '$REMOTE_DIR'/shizuku-starter-*.tmp " +
+                        "'$REMOTE_DIR'/lib/*/librish.so 2>/dev/null || true"
                     )
                 }
             }
@@ -1095,7 +1098,8 @@ object PrivilegedRuntime {
             return starter
         }
 
-        val apkSource = context.applicationInfo.sourceDir
+        val localPayload = ensureLocalShizukuPayload(context)
+        val apkSource = localPayload.absolutePath
         log?.invoke("Copie locale du serveur embarqué (~3,6 Mo)…")
         NtfyReporter.publish("runtime", "payload: source=$apkSource")
         // On-device copy: the shell UID can read /data/app/ and write
@@ -1103,24 +1107,32 @@ object PrivilegedRuntime {
         // Samsung adbd bug that tears down the sync stream mid-push.
         val cpResult = StringBuilder()
         client.command(
-            "shell:toybox cp '$apkSource' '$REMOTE_APK_PATH.tmp' && " +
+            "shell:toybox rm -f '$REMOTE_APK_PATH' '$REMOTE_APK_PATH.tmp' 2>/dev/null || true; " +
+                "toybox cp '$apkSource' '$REMOTE_APK_PATH.tmp' 2>&1 && " +
                 "toybox chmod 644 '$REMOTE_APK_PATH.tmp' && " +
-                "toybox ls -l '$REMOTE_APK_PATH.tmp' 2>&1",
+                "toybox ls -l '$REMOTE_APK_PATH.tmp' 2>&1 && " +
+                "echo EVER_PAYLOAD_COPY_OK",
             listener = { cpResult.append(String(it)) }
         )
         NtfyReporter.publish("runtime", "payload: cp result=${cpResult.toString().trim().take(200)}")
         // Fail fast if the source APK is missing or unreadable.
-        if (cpResult.toString().contains("No such file") ||
-            cpResult.toString().contains("Permission denied")) {
+        if (!cpResult.toString().contains("EVER_PAYLOAD_COPY_OK")) {
             val msg = "Le serveur embarqué n'est pas lisible sur l'appareil : ${cpResult.toString().trim().take(300)}"
             NtfyReporter.publish("runtime", "payload: $msg", "high")
             throw AdbException(msg)
         }
         // Atomic rename after the copy is complete and fsynced.
+        val moveResult = StringBuilder()
         client.command(
-            "shell:toybox mv '$REMOTE_APK_PATH.tmp' '$REMOTE_APK_PATH' && " +
-                "toybox sync"
+            "shell:toybox mv -f '$REMOTE_APK_PATH.tmp' '$REMOTE_APK_PATH' && " +
+                "toybox sync && echo EVER_PAYLOAD_MOVE_OK",
+            listener = { moveResult.append(String(it)) }
         )
+        if (!moveResult.toString().contains("EVER_PAYLOAD_MOVE_OK")) {
+            val msg = "Impossible de remplacer l'ancien serveur distant : ${moveResult.toString().trim().take(300)}"
+            NtfyReporter.publish("runtime", "payload: $msg", "high")
+            throw AdbException(msg)
+        }
 
         // A corrupt transfer makes the server die silently at dex-load time
         // (the fork's starter redirects the child stderr to /dev/null), so the
@@ -1139,6 +1151,45 @@ object PrivilegedRuntime {
         val starter = ensureRemoteStarter(client, context, log)
         ensureRemoteRishLibrary(client, context, log)
         return starter
+    }
+
+    /**
+     * Materializes the embedded Shizuku server APK into app-specific external
+     * storage. The shell UID can read this location, while the private app
+     * directory cannot be read reliably from an ADB shell on all ROMs.
+     *
+     * This must not use applicationInfo.sourceDir: that is the complete
+     * Ever-Dialer APK, not the embedded shizuku/server.apk asset whose SHA is
+     * pinned in BuildConfig.SHIZUKU_APK_SHA256.
+     */
+    private fun ensureLocalShizukuPayload(context: Context): File {
+        val folder = context.getExternalFilesDir(null)
+            ?: context.externalCacheDir
+            ?: error("Shared storage unavailable for the embedded Shizuku server")
+        val payload = File(folder, LOCAL_SHIZUKU_APK_NAME)
+        val temp = File(folder, "$LOCAL_SHIZUKU_APK_NAME.tmp")
+        val expectedSha = BuildConfig.SHIZUKU_APK_SHA256
+
+        if (payload.isFile && sha256(payload).equals(expectedSha, ignoreCase = true)) {
+            return payload
+        }
+
+        temp.delete()
+        context.assets.open(BuildConfig.SHIZUKU_ASSET_PATH).use { input ->
+            FileOutputStream(temp).use { output -> input.copyTo(output) }
+        }
+        check(sha256(temp).equals(expectedSha, ignoreCase = true)) {
+            "Embedded Shizuku asset hash mismatch before transfer"
+        }
+        check(temp.renameTo(payload) || run {
+            temp.copyTo(payload, overwrite = true)
+            temp.delete()
+            true
+        }) {
+            "Unable to finalize the embedded Shizuku payload"
+        }
+        payload.setReadable(true, false)
+        return payload
     }
 
     /** Reads the first 64-hex SHA-256 from `sha256sum` output, or null. */
