@@ -54,14 +54,15 @@ object PrivilegedRuntime {
     /**
      * Hardcoded build fingerprint — the ONLY way to prove which APK is
      * actually running on the phone. Updated every release that changes the
-     * embedded runtime or its pairing state.
+     * embedded runtime, payload transfer, or cleanup/migration behavior.
      */
-    private const val BUILD_FINGERPRINT = "build-20260906-runtime-rish-v9"
+    private const val BUILD_FINGERPRINT = "build-20260907-runtime-rish-v10-clean-install"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
     private const val KEY_LAST_PORT = "last_connect_port"
     private const val KEY_PAIRING_BUILD = "pairing_build_fingerprint"
+    private const val KEY_RUNTIME_OWNER = "runtime_owner_fingerprint"
     private const val KEY_WATCHDOG_ENABLED = "watchdog_enabled"
     private const val ADB_WIFI_ENABLED = "adb_wifi_enabled"
 
@@ -154,10 +155,14 @@ object PrivilegedRuntime {
         val hasKey = runCatching {
             PreferenceAdbKeyStore(preferences).get() != null
         }.getOrDefault(false)
-        if (!hasKey) return false
-
         val currentIdentity = pairingIdentity(appContext)
         val storedIdentity = preferences.getString(KEY_PAIRING_BUILD, null)
+        if (storedIdentity != currentIdentity) {
+            // Never trust a remote server left by an older APK, including when
+            // the local ADB key was removed by uninstall/restore migration.
+            preferences.edit().remove(KEY_RUNTIME_OWNER).apply()
+        }
+        if (!hasKey) return false
         if (storedIdentity == currentIdentity) return false
 
         val previous = storedIdentity ?: "legacy build"
@@ -180,6 +185,7 @@ object PrivilegedRuntime {
             .remove(KEY_LAST_HOST)
             .remove(KEY_LAST_PORT)
             .remove(KEY_PAIRING_BUILD)
+            .remove(KEY_RUNTIME_OWNER)
             .apply()
         _state.value = State.NOT_PAIRED
     }
@@ -504,6 +510,14 @@ object PrivilegedRuntime {
                             .putInt(KEY_LAST_PORT, endpoint.port)
                             .apply()
 
+                        if (!isRuntimeOwnedByCurrentBuild(appContext)) {
+                            resetRemoteRuntime(client)
+                            NtfyReporter.publish(
+                                "runtime",
+                                "old remote runtime detected; server and payload were removed before install"
+                            )
+                        }
+
                         if (!escalated && isShizukuServerRunning(client)) {
                             /*
                              * A shizuku_server from an earlier attempt is alive
@@ -676,6 +690,9 @@ object PrivilegedRuntime {
                 up = waitForBinder(timeoutMillis = BINDER_GRACE_MS)
             }
             if (up) {
+                prefs(appContext).edit()
+                    .putString(KEY_RUNTIME_OWNER, pairingIdentity(appContext))
+                    .apply()
                 _state.value = State.RUNNING
                 log?.invoke("Privilèges système actifs ✔")
                 NtfyReporter.publish("runtime", "embedded Shizuku binder is running")
@@ -765,18 +782,14 @@ object PrivilegedRuntime {
                 AdbClient(host, port, key).use { client ->
                     client.connect()
                     // Kill the detached server (--nice-name=shizuku_server) and
-                // remove leftover starter binaries from previous launches.
-                    client.command(
-                        "shell:pkill -x shizuku_server || true; " +
-                        "rm -f '$REMOTE_APK_PATH' '$REMOTE_APK_PATH.tmp' '$REMOTE_LOG_PATH' " +
-                        "'$REMOTE_DIR'/shizuku-starter-* '$REMOTE_DIR'/shizuku-starter-*.tmp " +
-                        "'$REMOTE_DIR'/lib/*/librish.so 2>/dev/null || true"
-                    )
+                    // remove every runtime artifact from this app.
+                    resetRemoteRuntime(client)
                 }
             }
         } catch (e: Throwable) {
             Log.w(TAG, "stopServer: ${e.message}")
         }
+        prefs(context).edit().remove(KEY_RUNTIME_OWNER).apply()
         _state.value = if (isPaired(context)) State.PAIRED_IDLE else State.NOT_PAIRED
     }
 
@@ -791,6 +804,24 @@ object PrivilegedRuntime {
 
     private fun adbKey(context: Context): AdbKey =
         AdbKey(PreferenceAdbKeyStore(prefs(context)), context.packageName.take(24))
+
+    private fun isRuntimeOwnedByCurrentBuild(context: Context): Boolean =
+        prefs(context).getString(KEY_RUNTIME_OWNER, null) == pairingIdentity(context)
+
+    /**
+     * Removes the shell-side runtime before a fresh install or runtime
+     * migration. This is only called after a real ADB shell has been
+     * validated, so a stale /data/local/tmp directory cannot be adopted by a
+     * new APK.
+     */
+    private fun resetRemoteRuntime(client: AdbClient) {
+        client.command(
+            "shell:pkill -x shizuku_server 2>/dev/null || true; " +
+                "sleep 1; " +
+                "toybox rm -rf '$REMOTE_DIR' 2>/dev/null || true; " +
+                "toybox mkdir -p '$REMOTE_DIR'"
+        )
+    }
 
     private data class AdbEndpoint(val host: String, val port: Int)
 
