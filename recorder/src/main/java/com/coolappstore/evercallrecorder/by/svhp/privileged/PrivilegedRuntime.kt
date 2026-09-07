@@ -231,6 +231,7 @@ object PrivilegedRuntime {
         val paired = isPaired(appContext)
         _state.value = when {
             ShizukuConnectionManager.isAvailable() &&
+                isWirelessDebuggingEnabled(appContext) &&
                 paired &&
                 isRuntimeOwnedByCurrentBuild(appContext) -> State.RUNNING
             paired -> State.PAIRED_IDLE
@@ -286,6 +287,12 @@ object PrivilegedRuntime {
      */
     fun openManagement(context: Context): Boolean {
         val appContext = context.applicationContext
+        if (!isWirelessDebuggingEnabled(appContext)) {
+            PairingNotifier.showWirelessDebuggingRequiredNotification(appContext)
+            openDeveloperSettings(appContext)
+            return true
+        }
+
         if (isConnected()) {
             val paired = isPaired(appContext)
             if (!paired) {
@@ -322,12 +329,6 @@ object PrivilegedRuntime {
                 return true
             }
             return false
-        }
-
-        if (!isWirelessDebuggingEnabled(appContext)) {
-            PairingNotifier.showWirelessDebuggingRequiredNotification(appContext)
-            openDeveloperSettings(appContext)
-            return true
         }
 
         if (isPaired(appContext)) {
@@ -896,8 +897,7 @@ object PrivilegedRuntime {
         client.command(
             "shell:pkill -x shizuku_server 2>/dev/null || true; " +
                 "sleep 1; " +
-                "toybox rm -rf '$REMOTE_DIR' 2>/dev/null || true; " +
-                "toybox mkdir -p '$REMOTE_DIR'"
+                "toybox rm -rf '$REMOTE_DIR' 2>/dev/null || true"
         )
     }
 
@@ -1194,6 +1194,13 @@ object PrivilegedRuntime {
     ): String {
         NtfyReporter.publish("runtime", "payload: mkdir -p '$REMOTE_DIR'")
         client.command("shell:mkdir -p '$REMOTE_DIR'")
+        // Remove interrupted transfers before checking or creating the
+        // current payload. A leftover .tmp must never be reused.
+        client.command(
+            "shell:toybox rm -f '$REMOTE_APK_PATH.tmp' " +
+                "'$REMOTE_DIR'/shizuku-starter-*.tmp " +
+                "'$REMOTE_DIR'/lib/*/librish.so.tmp 2>/dev/null || true"
+        )
         val expectedSha = BuildConfig.SHIZUKU_APK_SHA256
         NtfyReporter.publish("runtime", "payload: checking remote SHA (expected=${expectedSha.take(12)}…)")
         val remoteSha = remoteSha256(client, REMOTE_APK_PATH)
@@ -1280,6 +1287,7 @@ object PrivilegedRuntime {
         val expectedSha = BuildConfig.SHIZUKU_APK_SHA256
 
         if (payload.isFile && sha256(payload).equals(expectedSha, ignoreCase = true)) {
+            temp.delete()
             return payload
         }
 
@@ -1508,7 +1516,13 @@ object PrivilegedRuntime {
      * We extract it to a cache file so we can push it via ADB.
      */
     private fun extractStarterFromServerAsset(context: Context): File {
-        val cacheFile = File(context.cacheDir, "shizuku-starter-extracted.so")
+        val cacheFile = File(
+            context.cacheDir,
+            "shizuku-starter-extracted-${BUILD_FINGERPRINT}.so"
+        )
+        context.cacheDir.listFiles { file ->
+            file.name.startsWith("shizuku-starter-extracted-") && file != cacheFile
+        }?.forEach { it.delete() }
         if (cacheFile.isFile && cacheFile.length() > 0) return cacheFile
         try {
             context.assets.open(BuildConfig.SHIZUKU_ASSET_PATH).use { apkStream ->
@@ -1645,7 +1659,13 @@ object PrivilegedRuntime {
         apkAbi: String,
         remoteDirectory: String
     ): File {
-        val cacheFile = File(context.cacheDir, "shizuku-rish-$remoteDirectory.so")
+        val cacheFile = File(
+            context.cacheDir,
+            "shizuku-rish-${BUILD_FINGERPRINT}-$remoteDirectory.so"
+        )
+        context.cacheDir.listFiles { file ->
+            file.name.startsWith("shizuku-rish-") && file != cacheFile
+        }?.forEach { it.delete() }
         if (cacheFile.isFile && cacheFile.length() > 0) return cacheFile
 
         try {
