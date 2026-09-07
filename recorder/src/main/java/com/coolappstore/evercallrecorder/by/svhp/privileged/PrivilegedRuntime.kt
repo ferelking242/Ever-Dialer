@@ -56,7 +56,7 @@ object PrivilegedRuntime {
      * actually running on the phone. Updated every release that changes the
      * embedded runtime, payload transfer, or cleanup/migration behavior.
      */
-    private const val BUILD_FINGERPRINT = "build-20260907-runtime-rish-v10-clean-install"
+    private const val BUILD_FINGERPRINT = "build-20260907-runtime-rish-v11-runtime-replacement"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
@@ -143,7 +143,8 @@ object PrivilegedRuntime {
      * This is public so the Application entry point can run the migration
      * immediately after an update, before any UI or watchdog attempts ADB.
      *
-     * @return true when a stored pairing was removed.
+     * @return true when a stale runtime identity was found and marked for
+     * cleanup/replacement.
      */
     fun invalidateStalePairing(context: Context): Boolean {
         // A new key is created before SPAKE2+ finishes. Never let an app
@@ -157,21 +158,36 @@ object PrivilegedRuntime {
         }.getOrDefault(false)
         val currentIdentity = pairingIdentity(appContext)
         val storedIdentity = preferences.getString(KEY_PAIRING_BUILD, null)
-        if (storedIdentity != currentIdentity) {
+        val staleIdentity = storedIdentity != currentIdentity
+        if (staleIdentity) {
             // Never trust a remote server left by an older APK, including when
             // the local ADB key was removed by uninstall/restore migration.
-            preferences.edit().remove(KEY_RUNTIME_OWNER).apply()
+            //
+            // Keep a still-valid ADB key on an in-place update. It is needed
+            // to reach the old runtime and remove it before installing the
+            // current payload. If adbd rejects the key, the normal startup
+            // error path forgets it and asks for a fresh pairing.
+            // Mark the local migration as observed so repeated isPaired()
+            // checks do not emit the same update event forever. The owner
+            // marker remains cleared until the new payload publishes a binder.
+            preferences.edit()
+                .putString(KEY_PAIRING_BUILD, currentIdentity)
+                .remove(KEY_RUNTIME_OWNER)
+                .apply()
+            _state.value = if (hasKey) State.PAIRED_IDLE else State.NOT_PAIRED
         }
         if (!hasKey) return false
-        if (storedIdentity == currentIdentity) return false
+        if (!staleIdentity) return false
 
         val previous = storedIdentity ?: "legacy build"
         NtfyReporter.publish(
             "pairing",
-            "app update detected ($previous -> $currentIdentity); invalidating stored ADB pairing",
+            "app update detected ($previous -> $currentIdentity); old runtime will be replaced before reuse",
             "high"
         )
-        forgetPairing(appContext)
+        // Do not discard the key here. The next startup uses it only for the
+        // authenticated ADB cleanup/reinstall path, never to adopt the old
+        // shizuku_server process.
         return true
     }
 
@@ -211,9 +227,13 @@ object PrivilegedRuntime {
      */
     fun refreshState(context: Context) {
         if (startingJobCount > 0) return
+        val appContext = context.applicationContext
+        val paired = isPaired(appContext)
         _state.value = when {
-            ShizukuConnectionManager.isAvailable() -> State.RUNNING
-            isPaired(context) -> State.PAIRED_IDLE
+            ShizukuConnectionManager.isAvailable() &&
+                paired &&
+                isRuntimeOwnedByCurrentBuild(appContext) -> State.RUNNING
+            paired -> State.PAIRED_IDLE
             else -> State.NOT_PAIRED
         }
     }
@@ -228,7 +248,15 @@ object PrivilegedRuntime {
      * slow first dex compilation on the device), and reports the state change.
      */
     fun notifyBinderDelivered() {
-        if (startingJobCount == 0 && ShizukuConnectionManager.isAvailable()) {
+        // A server from a previous install/update can still push a binder into
+        // the newly installed provider. Do not let that stale push make the
+        // new app display a false "running" state. A startup in progress may
+        // still recover from a late binder after its timeout.
+        if (
+            startingJobCount == 0 &&
+            (_state.value == State.STARTING || _state.value == State.FAILED) &&
+            ShizukuConnectionManager.isAvailable()
+        ) {
             _state.value = State.RUNNING
         }
     }
@@ -259,6 +287,35 @@ object PrivilegedRuntime {
     fun openManagement(context: Context): Boolean {
         val appContext = context.applicationContext
         if (isConnected()) {
+            val paired = isPaired(appContext)
+            if (!paired) {
+                // A binder can survive an uninstall because the server runs
+                // as shell outside this app's private process. Never grant
+                // the freshly installed app access to that orphan binder.
+                _state.value = State.NOT_PAIRED
+                PairingNotifier.showWaitingNotification(appContext)
+                openDeveloperSettings(appContext)
+                return true
+            }
+            if (!isRuntimeOwnedByCurrentBuild(appContext)) {
+                // The binder belongs to an older build. Re-enter the normal
+                // startup path so ensureServerStarted() removes the old
+                // remote directory before launching this build's payload.
+                _state.value = State.STARTING
+                NtfyReporter.publish(
+                    "runtime",
+                    "management requested runtime replacement instead of adopting stale binder",
+                    "high"
+                )
+                PairingNotifier.showStartingNotification(appContext)
+                runCatching {
+                    EmbeddedShizukuService.start(appContext)
+                }.onFailure {
+                    _state.value = State.FAILED
+                    PairingNotifier.onRuntimeFailed(appContext, it)
+                }
+                return true
+            }
             if (!ShizukuConnectionManager.hasPermission(appContext)) {
                 NtfyReporter.publish("runtime", "requesting app Shizuku permission")
                 ShizukuConnectionManager.requestPermission(appContext)
@@ -418,10 +475,30 @@ object PrivilegedRuntime {
             startingJobCount++
             val appContext = context.applicationContext
             try {
-            if (ShizukuConnectionManager.isAvailable()) {
+            /*
+             * A live binder is not sufficient after an update or reinstall:
+             * the old shizuku_server may still be alive while its payload,
+             * starter and librish.so belong to a different APK. Only return
+             * fast when this build previously installed and verified the
+             * remote runtime. Otherwise continue through ADB cleanup and
+             * replacement below.
+             */
+            if (
+                ShizukuConnectionManager.isAvailable() &&
+                isRuntimeOwnedByCurrentBuild(appContext) &&
+                (pairingAlreadySucceeded || isPaired(appContext))
+            ) {
                 log?.invoke("Serveur déjà actif ✔")
                 _state.value = State.RUNNING
                 return@withContext Result.success(Unit)
+            }
+            if (ShizukuConnectionManager.isAvailable()) {
+                log?.invoke("Binder existant détecté, mais runtime obsolète : remplacement contrôlé…")
+                NtfyReporter.publish(
+                    "runtime",
+                    "stale binder detected; refusing adoption and forcing runtime replacement",
+                    "high"
+                )
             }
             if (!pairingAlreadySucceeded && !isPaired(appContext)) {
                 _state.value = State.NOT_PAIRED
@@ -691,6 +768,7 @@ object PrivilegedRuntime {
             }
             if (up) {
                 prefs(appContext).edit()
+                    .putString(KEY_PAIRING_BUILD, pairingIdentity(appContext))
                     .putString(KEY_RUNTIME_OWNER, pairingIdentity(appContext))
                     .apply()
                 _state.value = State.RUNNING

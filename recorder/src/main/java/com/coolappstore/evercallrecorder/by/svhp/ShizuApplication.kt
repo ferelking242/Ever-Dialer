@@ -21,8 +21,11 @@ open class ShizuApplication : Application() {
         super.onCreate()
         AppLogger.init(applicationContext)
         // A previous APK may have stored an ADB key accepted by an older
-        // runtime build. Invalidate it before the UI or watchdog can reuse it.
+        // runtime build. Mark the remote runtime stale before the UI or
+        // watchdog can reuse its binder. The key remains available so the
+        // next startup can clean and replace the old runtime.
         runCatching { PrivilegedRuntime.invalidateStalePairing(applicationContext) }
+        runCatching { PrivilegedRuntime.refreshState(applicationContext) }
         // Fresh process => forget any previous "Skip" tap on the permissions screen.
         OnboardingSession.skipped = false
         // Make sure the telephony receiver / notification listener are enabled or disabled to
