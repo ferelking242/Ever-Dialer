@@ -303,7 +303,10 @@ class ShizukuConnectionManager(
         } else {
             AppLogger.w(TAG, "Cannot bind yet, missing permission, requesting Shizuku permission...")
             Shizuku.addRequestPermissionResultListener(permissionListener)
-            Shizuku.requestPermission(PERMISSION_REQUEST_CODE)
+            // Do not use the raw API here. The embedded server's implicit
+            // manager-activity launch can fail silently on some ROMs; the
+            // explicit local confirmation is the only reliable path.
+            requestPermission(context)
         }
 
         // Cleanup if the coroutine is cancelled before completion

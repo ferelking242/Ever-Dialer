@@ -36,6 +36,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -238,8 +239,12 @@ class RecordingForegroundService : Service() {
                             stopRecordingSessionAndService()
                             return@launch
                         }
-                        val service = shizukuManager.getShellService()
+                        NtfyReporter.publish("recording", "embedded Shizuku ready; binding ShellService")
+                        val service = withTimeoutOrNull(15_000L) {
+                            shizukuManager.getShellService()
+                        } ?: throw IllegalStateException("ShellService binding timed out after 15 seconds")
                         shellService = service // update local ref
+                        NtfyReporter.publish("recording", "ShellService bound; starting audio pipeline")
                         startNewRecordingSession(service, currentMeta)
                     } catch (e: SecurityException) { // Shizuku permission not granted
                         AppLogger.e(TAG, "Shizuku permission was denied / not granted", e)
