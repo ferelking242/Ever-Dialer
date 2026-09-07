@@ -43,12 +43,14 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.coolappstore.evercallrecorder.by.svhp.R
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
-import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.onboarding.OnboardingStatus
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.system.openAppSettings
 import com.coolappstore.evercallrecorder.by.svhp.ui.common.StorageLocationDialog
 import com.coolappstore.evercallrecorder.by.svhp.ui.theme.ShizucallrecorderTheme
 import com.coolappstore.evercallrecorder.by.svhp.ui.viewmodels.PermissionsViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.system.exitProcess
 
 @Composable
@@ -61,6 +63,8 @@ fun PermissionsScreen(
 ) {
     val activityContext = LocalContext.current
     var showStorageChoiceDialog by remember { mutableStateOf(false) }
+    val runtimeState by PrivilegedRuntime.state.collectAsState()
+    var missingServerPermissions by remember { mutableStateOf<List<String>>(emptyList()) }
 
     val permissionRequestLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { result ->
         if (!result) activityContext.openAppSettings()
@@ -80,21 +84,34 @@ fun PermissionsScreen(
         onPermissionGranted()
     }
 
-    if (status.shizukuPermissionGranted && ShizukuConnectionManager.hasPermission(activityContext)) {
-        if (ShizukuConnectionManager.isAvailable()) {
-            val requiredPermissions = listOf(Manifest.permission.CAPTURE_AUDIO_OUTPUT)
-            val missingPermissions = requiredPermissions.filter { !ShizukuConnectionManager.checkServerPermission(it) }
-            if (missingPermissions.isNotEmpty()) {
-                val cleanPermissionsString = missingPermissions.joinToString("\n") { it.substringAfterLast(".") }
-                val dialogMessage = activityContext.getString(R.string.general_system_limitation_message, cleanPermissionsString)
-                AlertDialog.Builder(activityContext)
-                    .setTitle(R.string.general_system_limitation)
-                    .setMessage(dialogMessage)
-                    .setIcon(android.R.drawable.ic_dialog_alert)
-                    .setCancelable(false)
-                    .setPositiveButton("Exit") { _, _ -> exitProcess(0) }
-                    .show()
+    LaunchedEffect(runtimeState) {
+        missingServerPermissions = if (runtimeState == PrivilegedRuntime.State.RUNNING) {
+            withContext(Dispatchers.IO) {
+                listOf(Manifest.permission.CAPTURE_AUDIO_OUTPUT)
+                    .filter { !com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager.checkServerPermission(it) }
             }
+        } else {
+            emptyList()
+        }
+    }
+
+    DisposableEffect(missingServerPermissions) {
+        if (missingServerPermissions.isEmpty()) {
+            onDispose { }
+        } else {
+            val cleanPermissionsString = missingServerPermissions.joinToString("\n") { it.substringAfterLast(".") }
+            val dialogMessage = activityContext.getString(
+                R.string.general_system_limitation_message,
+                cleanPermissionsString
+            )
+            val dialog = AlertDialog.Builder(activityContext)
+                .setTitle(R.string.general_system_limitation)
+                .setMessage(dialogMessage)
+                .setIcon(android.R.drawable.ic_dialog_alert)
+                .setCancelable(false)
+                .setPositiveButton("Exit") { _, _ -> exitProcess(0) }
+                .show()
+            onDispose { dialog.dismiss() }
         }
     }
 

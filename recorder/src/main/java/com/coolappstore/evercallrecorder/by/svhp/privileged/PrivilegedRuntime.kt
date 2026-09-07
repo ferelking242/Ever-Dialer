@@ -269,8 +269,18 @@ object PrivilegedRuntime {
         }
     }
 
-    /** Reads the live binder state for UI indicators and click guards. */
-    fun isConnected(): Boolean = ShizukuConnectionManager.isAvailable()
+    /**
+     * Returns true only after the complete runtime contract has been checked.
+     *
+     * A raw Shizuku binder can outlive the app process, an app update, the
+     * wireless-debugging switch, or the permission state. Callers that decide
+     * whether recording or privileged actions may proceed must use this method,
+     * never pingBinder() directly.
+     */
+    fun isOperational(context: Context): Boolean {
+        refreshState(context.applicationContext)
+        return state.value == State.RUNNING
+    }
 
     /**
      * Called from the in-app [EverShizukuProvider] when the embedded server's
@@ -329,8 +339,8 @@ object PrivilegedRuntime {
             return true
         }
 
-        if (isConnected()) {
-            if (!isRuntimeOwnedByCurrentBuild(appContext)) {
+        when (state.value) {
+            State.RUNTIME_STALE -> {
                 // The binder belongs to an older build. Re-enter the normal
                 // startup path so ensureServerStarted() removes the old
                 // remote directory before launching this build's payload.
@@ -349,13 +359,14 @@ object PrivilegedRuntime {
                 }
                 return true
             }
-            if (!ShizukuConnectionManager.hasPermission(appContext)) {
+            State.PERMISSION_REQUIRED -> {
                 _state.value = State.PERMISSION_REQUIRED
                 NtfyReporter.publish("runtime", "requesting app Shizuku permission")
                 ShizukuConnectionManager.requestPermission(appContext)
                 return true
             }
-            return false
+            State.RUNNING -> return false
+            else -> Unit
         }
 
         _state.value = State.STARTING
@@ -398,10 +409,17 @@ object PrivilegedRuntime {
                 check(isWirelessDebuggingEnabled(context)) {
                     "Débogage sans fil désactivé. Active-le dans les Options pour les développeurs."
                 }
+                val normalizedHost = host.trim()
+                require(isValidEndpointHost(normalizedHost)) {
+                    "Adresse du service de pairing invalide"
+                }
+                require(port in 1..65_535) {
+                    "Port de pairing invalide"
+                }
                 require(code.isNotBlank()) { "empty pairing code" }
-                NtfyReporter.publish("pairing", "starting host=${host.ifBlank { "127.0.0.1" }} port=$port")
+                NtfyReporter.publish("pairing", "starting host=$normalizedHost port=$port")
                 val key = adbKey(context)
-                val client = AdbPairingClient(host.ifBlank { "127.0.0.1" }, port, code.trim(), key)
+                val client = AdbPairingClient(normalizedHost, port, code.trim(), key)
                 val ok = client.use { it.start() }
                 if (ok) {
                     Log.i(TAG, "Pairing succeeded")
@@ -461,7 +479,9 @@ object PrivilegedRuntime {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
         return try {
             val mdns = AdbMdns(context.applicationContext, AdbMdns.TLS_PAIRING) { (host, resolvedPort) ->
-                if (resolvedPort > 0 && host.isNotBlank()) onEndpoint(host, resolvedPort)
+                if (isValidEndpointHost(host) && resolvedPort in 1..65_535) {
+                    onEndpoint(host, resolvedPort)
+                }
             }
             mdns.start()
             mdns
@@ -956,6 +976,16 @@ object PrivilegedRuntime {
     }
 
     private data class AdbEndpoint(val host: String, val port: Int)
+
+    private fun isValidEndpointHost(host: String): Boolean =
+        host.isNotBlank() &&
+            host.length <= 253 &&
+            host == host.trim() &&
+            host.none(Char::isWhitespace) &&
+            '/' !in host &&
+            '\\' !in host &&
+            host != "0.0.0.0" &&
+            host != "::"
 
     private suspend fun resolveConnectEndpoint(
         context: Context,

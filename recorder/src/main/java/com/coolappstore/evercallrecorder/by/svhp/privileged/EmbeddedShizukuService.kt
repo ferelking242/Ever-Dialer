@@ -17,7 +17,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
 import android.util.Log
-import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +34,7 @@ class EmbeddedShizukuService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var watchdogJob: Job? = null
     private var startupJob: Job? = null
+    private var runtimeVerified = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -65,8 +65,12 @@ class EmbeddedShizukuService : Service() {
                         TimeoutException("Le pairing et le démarrage dépassent ${PAIRING_TIMEOUT_MS / 1000}s")
                     )
                     if (result.isSuccess) {
+                        runtimeVerified = true
+                        updateForegroundNotification()
                         PairingNotifier.onPairingSucceeded(this@EmbeddedShizukuService)
                     } else {
+                        runtimeVerified = false
+                        updateForegroundNotification()
                         val error = result.exceptionOrNull() ?: IllegalStateException("Erreur de démarrage")
                         /*
                          * The SPAKE2+ pairing may already have succeeded while
@@ -111,8 +115,12 @@ class EmbeddedShizukuService : Service() {
         startupJob = scope.launch {
             val result = PrivilegedRuntime.ensureServerStarted(applicationContext)
             if (result.isSuccess) {
+                runtimeVerified = true
+                updateForegroundNotification()
                 PairingNotifier.onRuntimeStarted(applicationContext)
             } else {
+                runtimeVerified = false
+                updateForegroundNotification()
                 PairingNotifier.onRuntimeFailed(
                     applicationContext,
                     result.exceptionOrNull() ?: IllegalStateException("Démarrage refusé")
@@ -144,9 +152,7 @@ class EmbeddedShizukuService : Service() {
             ) {
                 continue
             }
-            if (PrivilegedRuntime.state.value == PrivilegedRuntime.State.PAIRED_IDLE &&
-                !ShizukuConnectionManager.isAvailable()
-            ) {
+            if (PrivilegedRuntime.state.value == PrivilegedRuntime.State.PAIRED_IDLE) {
                 // A paired device with no binder is recoverable. The guarded
                 // runtime mutex decides whether a single restart is allowed.
                 Unit
@@ -181,14 +187,46 @@ class EmbeddedShizukuService : Service() {
         val notification: Notification =
             Notification.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_lock_idle_lock)
-                .setContentTitle("Ever Dialer — privilèges actifs")
-                .setContentText("Enregistrement des appels opérationnel")
+                .setContentTitle(
+                    if (runtimeVerified) "Ever Dialer — privilèges actifs"
+                    else "Ever Dialer — vérification du moteur"
+                )
+                .setContentText(
+                    if (runtimeVerified) "Enregistrement des appels opérationnel"
+                    else "Le pairing, le runtime et les permissions sont vérifiés"
+                )
                 .setContentIntent(contentIntent)
                 .setOngoing(true)
                 .build()
 
         // minSdk = 30 → dataSync FGS type always available.
         startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+    }
+
+    private fun updateForegroundNotification() {
+        val manager = getSystemService(NotificationManager::class.java)
+        val contentIntent = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, com.coolappstore.evercallrecorder.by.svhp.MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = Notification.Builder(this, CHANNEL_ID)
+            .setSmallIcon(
+                if (runtimeVerified) android.R.drawable.ic_lock_idle_lock
+                else android.R.drawable.stat_notify_error
+            )
+            .setContentTitle(
+                if (runtimeVerified) "Ever Dialer — privilèges actifs"
+                else "Ever Dialer — moteur à vérifier"
+            )
+            .setContentText(
+                if (runtimeVerified) "Enregistrement des appels opérationnel"
+                else "Appuie sur le badge pour relancer la vérification"
+            )
+            .setContentIntent(contentIntent)
+            .setOngoing(runtimeVerified)
+            .build()
+        manager.notify(NOTIFICATION_ID, notification)
     }
 
     companion object {

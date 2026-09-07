@@ -17,6 +17,7 @@ import com.coolappstore.evercallrecorder.by.svhp.BuildConfig
 import com.coolappstore.evercallrecorder.by.svhp.services.call.CallSessionManager
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
 import com.coolappstore.evercallrecorder.by.svhp.integrations.scrcpy.ScrcpyAudioCodec
+import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -213,9 +214,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val manager = com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager(appContext)
             try {
-                if (!com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager.isAvailable() ||
-                    !com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager.hasPermission(appContext)
-                ) {
+                if (!PrivilegedRuntime.isOperational(appContext)) {
                     onResult(false)
                     return@launch
                 }

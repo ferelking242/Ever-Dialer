@@ -10,7 +10,6 @@ package com.coolappstore.evercallrecorder.by.svhp.onboarding
 
 import android.content.Context
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
-import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.system.permissions.PermissionChecks
 import com.coolappstore.evercallrecorder.by.svhp.system.storage.SafHelper
@@ -78,6 +77,7 @@ object OnboardingStatus {
      * @return A fully populated [Status] reflecting the current device state.
      */
     fun getStatus(context: Context, preferences: AppPreferences): Status {
+        val runtimeOperational = PrivilegedRuntime.isOperational(context)
         return Status(
             disclaimerAccepted       = preferences.isDisclaimerAccepted(),
             notificationsGranted     = PermissionChecks.hasNotificationPermission(context),
@@ -87,8 +87,8 @@ object OnboardingStatus {
             batteryExempted          = PermissionChecks.hasBatteryExemption(context),
             storageSelected          = SafHelper.isStorageConfigured(context, preferences),
             wirelessDebuggingEnabled = PrivilegedRuntime.isWirelessDebuggingEnabled(context),
-            shizukuRunning           = PrivilegedRuntime.isConnected(),
-            shizukuPermissionGranted = ShizukuConnectionManager.hasPermission(context)
+            shizukuRunning           = runtimeOperational,
+            shizukuPermissionGranted = runtimeOperational
         )
     }
 }

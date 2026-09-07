@@ -24,6 +24,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
@@ -40,9 +42,14 @@ object PairingNotifier {
     private const val CHANNEL_DESC = "Notifications pour le pairing du moteur privilégié"
     const val EXTRA_PAIRING_PORT = "pairing_port"
     const val EXTRA_PAIRING_HOST = "pairing_host"
+    const val EXTRA_PAIRING_GENERATION = "pairing_generation"
+    private const val WATCH_TIMEOUT_MS = 120_000L
 
     private var mdnsWatcher: AdbMdns? = null
     private var isWatching = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var watcherTimeout: Runnable? = null
+    @Volatile private var endpointGeneration = 0L
 
     @Volatile var detectedPort: Int = 0
         private set
@@ -54,15 +61,14 @@ object PairingNotifier {
     fun showWaitingNotification(context: Context) {
         val appCtx = context.applicationContext
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-        detectedPort = 0
-        detectedHost = "127.0.0.1"
+        resetEndpoint()
         NtfyReporter.publish("pairing", "waiting for wireless debugging pairing service")
 
         ensureChannel(appCtx)
 
         if (!ensureNotificationPermission(appCtx)) {
             Log.w(TAG, "POST_NOTIFICATIONS not granted — starting mDNS watcher only")
-            startMdnsWatcher(appCtx)
+            startMdnsWatcher(appCtx, restart = true)
             return
         }
 
@@ -90,13 +96,14 @@ object PairingNotifier {
             .build()
 
         post(appCtx, n, "Phase 1: searching")
-        startMdnsWatcher(appCtx)
+        startMdnsWatcher(appCtx, restart = true)
     }
 
     fun showWirelessDebuggingRequiredNotification(context: Context) {
         val appCtx = context.applicationContext
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
-        startMdnsWatcher(appCtx)
+        resetEndpoint()
+        startMdnsWatcher(appCtx, restart = true)
         if (!ensureNotificationPermission(appCtx)) return
         ensureChannel(appCtx)
 
@@ -135,9 +142,8 @@ object PairingNotifier {
     }
 
     fun stopWatching(context: Context) {
-        runCatching { mdnsWatcher?.stop() }
-        mdnsWatcher = null
-        isWatching = false
+        endpointGeneration++
+        stopMdnsWatcher()
         cancel(context.applicationContext)
     }
 
@@ -201,32 +207,51 @@ object PairingNotifier {
 
     // ── Phase 2: mDNS watcher ───────────────────────────────────────────
 
-    private fun startMdnsWatcher(appCtx: Context) {
-        if (isWatching) return
+    private fun startMdnsWatcher(appCtx: Context, restart: Boolean = false) {
+        if (isWatching && !restart) return
+        if (restart) stopMdnsWatcher()
         isWatching = true
+        val generation = endpointGeneration
         Log.d(TAG, "Starting mDNS watcher for _adb-tls-pairing._tcp")
 
         try {
             val watcher = AdbMdns(appCtx, AdbMdns.TLS_PAIRING) { (host, port) ->
                 Log.d(TAG, "mDNS resolved: host=$host port=$port")
-                if (port > 0) {
-                    detectedHost = host.ifBlank { "127.0.0.1" }
+                if (generation == endpointGeneration &&
+                    isWatching &&
+                    isValidEndpoint(host, port)
+                ) {
+                    detectedHost = host
                     detectedPort = port
                     NtfyReporter.publish("pairing", "service discovered host=$detectedHost port=$detectedPort")
                     showPhase2(appCtx)
                 }
             }
             mdnsWatcher = watcher
-            runCatching { watcher.start() }.onFailure {
-                mdnsWatcher = null
-                isWatching = false
-                Log.e(TAG, "mDNS watcher failed to start: ${it.message}", it)
-                NtfyReporter.publish(
-                    "pairing",
-                    "mDNS start error ${it.javaClass.simpleName}: ${it.message ?: "unknown"}",
-                    "high"
-                )
-            }
+            runCatching { watcher.start() }
+                .onSuccess {
+                    watcherTimeout = Runnable {
+                        if (generation == endpointGeneration && isWatching) {
+                            Log.w(TAG, "mDNS pairing watcher timed out")
+                            NtfyReporter.publish(
+                                "pairing",
+                                "mDNS watcher timed out; waiting for a new pairing attempt",
+                                "high"
+                            )
+                            stopMdnsWatcher()
+                        }
+                    }.also { mainHandler.postDelayed(it, WATCH_TIMEOUT_MS) }
+                }
+                .onFailure {
+                    mdnsWatcher = null
+                    isWatching = false
+                    Log.e(TAG, "mDNS watcher failed to start: ${it.message}", it)
+                    NtfyReporter.publish(
+                        "pairing",
+                        "mDNS start error ${it.javaClass.simpleName}: ${it.message ?: "unknown"}",
+                        "high"
+                    )
+                }
         } catch (e: Throwable) {
             Log.e(TAG, "mDNS watcher failed: ${e.message}", e)
             NtfyReporter.publish(
@@ -248,6 +273,7 @@ object PairingNotifier {
         val replyIntent = Intent(appCtx, PairingReplyReceiver::class.java).apply {
             putExtra(EXTRA_PAIRING_PORT, detectedPort)
             putExtra(EXTRA_PAIRING_HOST, detectedHost)
+            putExtra(EXTRA_PAIRING_GENERATION, endpointGeneration)
         }
         val replyPending = PendingIntent.getBroadcast(
             appCtx, 2, replyIntent,
@@ -393,6 +419,38 @@ object PairingNotifier {
         } catch (_: Exception) {}
     }
 
+    fun isCurrentEndpoint(host: String, port: Int, generation: Long): Boolean =
+        generation == endpointGeneration &&
+            isWatching &&
+            host == detectedHost &&
+            port == detectedPort &&
+            isValidEndpoint(host, port)
+
+    private fun resetEndpoint() {
+        endpointGeneration++
+        detectedPort = 0
+        detectedHost = "127.0.0.1"
+    }
+
+    private fun isValidEndpoint(host: String, port: Int): Boolean =
+        host.isNotBlank() &&
+            host.length <= 253 &&
+            host == host.trim() &&
+            host.none(Char::isWhitespace) &&
+            '/' !in host &&
+            '\\' !in host &&
+            host != "0.0.0.0" &&
+            host != "::" &&
+            port in 1..65_535
+
+    private fun stopMdnsWatcher() {
+        watcherTimeout?.let(mainHandler::removeCallbacks)
+        watcherTimeout = null
+        runCatching { mdnsWatcher?.stop() }
+        mdnsWatcher = null
+        isWatching = false
+    }
+
     private fun resetPairingPendingIntent(appCtx: Context): PendingIntent =
         PendingIntent.getBroadcast(
             appCtx,
@@ -432,17 +490,23 @@ class PairingReplyReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val port = intent.getIntExtra(PairingNotifier.EXTRA_PAIRING_PORT, 0)
         val host = intent.getStringExtra(PairingNotifier.EXTRA_PAIRING_HOST) ?: "127.0.0.1"
+        val generation = intent.getLongExtra(PairingNotifier.EXTRA_PAIRING_GENERATION, -1L)
         val code = RemoteInput.getResultsFromIntent(intent)
             ?.getCharSequence(KEY_PAIRING_CODE)?.toString()?.trim()
 
         if (code.isNullOrBlank() || code.length != 6 || !code.all(Char::isDigit)) {
-            Log.w(TAG, "Invalid pairing code: '${code?.take(3)}...'")
+            Log.w(TAG, "Invalid pairing code format")
             PairingNotifier.onPairingFailed(context, "Le code doit contenir 6 chiffres")
             return
         }
         if (port <= 0) {
             Log.w(TAG, "No pairing port available (port=$port)")
             PairingNotifier.onPairingFailed(context, "Port de pairing introuvable")
+            return
+        }
+        if (!PairingNotifier.isCurrentEndpoint(host, port, generation)) {
+            Log.w(TAG, "Stale pairing endpoint rejected: host=$host port=$port generation=$generation")
+            PairingNotifier.onPairingFailed(context, "Le service de pairing a changé. Attends la nouvelle notification.")
             return
         }
 

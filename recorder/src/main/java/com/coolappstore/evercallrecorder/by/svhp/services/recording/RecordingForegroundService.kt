@@ -17,7 +17,6 @@ import android.os.IBinder
 import android.content.pm.ServiceInfo
 import android.provider.CallLog
 import com.coolappstore.evercallrecorder.by.svhp.system.storage.SafHelper
-import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.IShellService
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
 import com.coolappstore.evercallrecorder.by.svhp.R
@@ -312,7 +311,7 @@ class RecordingForegroundService : Service() {
     }
 
     private suspend fun ensureRuntimeForRecording(): Boolean {
-        if (ShizukuConnectionManager.isAvailable()) return true
+        if (PrivilegedRuntime.isOperational(this)) return true
         if (!appPreferences.isShizukuAutoManageEnabled()) return false
 
         val result = PrivilegedRuntime.ensureServerStarted(this) { message ->
