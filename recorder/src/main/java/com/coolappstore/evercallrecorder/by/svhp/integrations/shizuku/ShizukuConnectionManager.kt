@@ -22,6 +22,7 @@ import com.coolappstore.evercallrecorder.by.svhp.BuildConfig
 import com.coolappstore.evercallrecorder.by.svhp.IShellService
 import com.coolappstore.evercallrecorder.by.svhp.services.ShellService
 import com.coolappstore.evercallrecorder.by.svhp.utils.AppLogger
+import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.delay
 import rikka.shizuku.Shizuku
@@ -126,9 +127,24 @@ class ShizukuConnectionManager(
         /**
          * Requests Shizuku permission from the user. This will trigger a system dialog asking the user to allow or deny permission.
          */
-        fun requestPermission() {
+        fun requestPermission(context: Context) {
             if (!hasPermission()) {
                 Shizuku.requestPermission(PERMISSION_REQUEST_CODE)
+                runCatching {
+                    context.startActivity(
+                        com.coolappstore.evercallrecorder.by.svhp.privileged.ShizukuPermissionActivity
+                            .createIntent(context, PERMISSION_REQUEST_CODE)
+                    )
+                    AppLogger.i(TAG, "Explicit embedded Shizuku permission confirmation launched")
+                    NtfyReporter.publish("runtime", "embedded permission confirmation launched explicitly")
+                }.onFailure {
+                    AppLogger.e(TAG, "Could not launch embedded Shizuku permission confirmation", it)
+                    NtfyReporter.publish(
+                        "runtime",
+                        "embedded permission confirmation launch failed: ${it.javaClass.simpleName}: ${it.message}",
+                        "high"
+                    )
+                }
             }
         }
 

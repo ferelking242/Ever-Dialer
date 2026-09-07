@@ -253,7 +253,7 @@ object PrivilegedRuntime {
         if (isConnected()) {
             if (!ShizukuConnectionManager.hasPermission(appContext)) {
                 NtfyReporter.publish("runtime", "requesting app Shizuku permission")
-                ShizukuConnectionManager.requestPermission()
+                ShizukuConnectionManager.requestPermission(appContext)
                 return true
             }
             return false
