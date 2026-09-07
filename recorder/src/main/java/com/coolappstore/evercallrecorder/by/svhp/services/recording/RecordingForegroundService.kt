@@ -115,6 +115,12 @@ class RecordingForegroundService : Service() {
     /** IPC stub to the privileged ShellService running in the shell process. */
     private var shellService: IShellService? = null
 
+    /**
+     * Keeps the embedded runtime from being migrated by the watchdog while
+     * this service is binding ShellService or running the audio pipeline.
+     */
+    private var recordingRuntimeLeaseHeld = false
+
     /** Scope for service lifecycle operations (binding, etc.) */
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
@@ -226,6 +232,8 @@ class RecordingForegroundService : Service() {
                 }
 
                 currentState = RecordingServiceState.Starting(currentMeta)
+                PrivilegedRuntime.beginRecordingSession()
+                recordingRuntimeLeaseHeld = true
 
                 serviceScope.launch {
                     try {
@@ -261,6 +269,7 @@ class RecordingForegroundService : Service() {
                         if (currentState is RecordingServiceState.Starting) {
                             if (!hasSession) {
                                 currentState = RecordingServiceState.Standby(currentMeta)
+                                releaseRecordingRuntimeLease()
                             }
                         }
                     }
@@ -413,6 +422,7 @@ class RecordingForegroundService : Service() {
     private fun stopRecordingSessionAndService() {
         val activeSession = (currentState as? RecordingServiceState.Active)?.engine
         if (activeSession == null) {
+            releaseRecordingRuntimeLease()
             AppLogger.d(TAG, "No active session, exiting standby state, removing foreground notification and stopping service.")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf() // Stop the service since the session is over
@@ -429,6 +439,7 @@ class RecordingForegroundService : Service() {
 
         // Release all resources held by the recording session, and stop the remote shell service, finalizing the recording file.
         activeSession.release(shellService)
+        releaseRecordingRuntimeLease()
 
         if (uriToRename != null) {
             notificationHelper.showPostCallNotification(uriToRename, originalMetadata)
@@ -479,6 +490,12 @@ class RecordingForegroundService : Service() {
         AppLogger.i(TAG, "The recording session has been stopped and resources have been released. Stopping foreground service. Goodbye >3")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf() // Stop the service since the session is over
+    }
+
+    private fun releaseRecordingRuntimeLease() {
+        if (!recordingRuntimeLeaseHeld) return
+        recordingRuntimeLeaseHeld = false
+        PrivilegedRuntime.endRecordingSession()
     }
 
     /**

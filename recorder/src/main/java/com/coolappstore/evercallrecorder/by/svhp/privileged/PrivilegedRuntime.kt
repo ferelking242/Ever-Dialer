@@ -43,6 +43,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipInputStream
 import kotlin.coroutines.resume
 
@@ -56,7 +57,7 @@ object PrivilegedRuntime {
      * actually running on the phone. Updated every release that changes the
      * embedded runtime, payload transfer, or cleanup/migration behavior.
      */
-    private const val BUILD_FINGERPRINT = "build-20260907-runtime-rish-v11-runtime-replacement"
+    private const val BUILD_FINGERPRINT = "build-20260907-runtime-rish-v12-recording-lease"
     private const val PREFS_NAME = "privileged_runtime"
     private const val KEY_ADB_KEY = "adbkey"
     private const val KEY_LAST_HOST = "last_connect_host"
@@ -105,6 +106,23 @@ object PrivilegedRuntime {
     @Volatile
     private var pairingInProgress = false
     private val startMutex = Mutex()
+    /**
+     * Protects a live runtime while the recording service is binding the
+     * elevated ShellService or actively consuming its audio pipe. Without
+     * this lease, the watchdog can observe a short binder transition and run
+     * the migration path concurrently, killing the service being bound.
+     */
+    private val recordingLeaseCount = AtomicInteger(0)
+
+    fun beginRecordingSession() {
+        val count = recordingLeaseCount.incrementAndGet()
+        NtfyReporter.publish("recording", "runtime lease acquired (count=$count)")
+    }
+
+    fun endRecordingSession() {
+        val count = recordingLeaseCount.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+        NtfyReporter.publish("recording", "runtime lease released (count=$count)")
+    }
 
     private fun initialState(): State =
         if (ShizukuConnectionManager.isAvailable()) State.RUNNING else State.NOT_PAIRED
@@ -484,6 +502,15 @@ object PrivilegedRuntime {
              * remote runtime. Otherwise continue through ADB cleanup and
              * replacement below.
              */
+            if (
+                recordingLeaseCount.get() > 0 &&
+                ShizukuConnectionManager.isAvailable() &&
+                isRuntimeOwnedByCurrentBuild(appContext)
+            ) {
+                log?.invoke("Serveur déjà actif ; runtime protégé pendant l’enregistrement ✔")
+                _state.value = State.RUNNING
+                return@withContext Result.success(Unit)
+            }
             if (
                 ShizukuConnectionManager.isAvailable() &&
                 isRuntimeOwnedByCurrentBuild(appContext) &&
@@ -868,7 +895,14 @@ object PrivilegedRuntime {
         } catch (e: Throwable) {
             Log.w(TAG, "stopServer: ${e.message}")
         }
-        prefs(context).edit().remove(KEY_RUNTIME_OWNER).apply()
+        /*
+         * KEY_RUNTIME_OWNER identifies the payload/build installed remotely; it
+         * is not a process-liveness flag. Keep it across a deliberate stop so
+         * a later call can restart the same verified payload without treating
+         * its binder as stale. Update/reinstall migration still clears it via
+         * invalidateStalePairing(), and a fresh start rewrites it after the
+         * binder is verified.
+         */
         _state.value = if (isPaired(context)) State.PAIRED_IDLE else State.NOT_PAIRED
     }
 
