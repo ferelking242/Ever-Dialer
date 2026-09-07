@@ -50,11 +50,14 @@ class EmbeddedShizukuService : Service() {
         NtfyReporter.publish("runtime", "foreground service command=${intent?.action ?: "restart"}")
         when (intent?.action) {
             ACTION_PAIR_AND_START -> {
+                if (startupJob?.isActive == true) {
+                    NtfyReporter.publish("runtime", "pair/start ignored: startup already in progress")
+                    return START_STICKY
+                }
                 val host = intent.getStringExtra(EXTRA_HOST).orEmpty()
                 val port = intent.getIntExtra(EXTRA_PORT, 0)
                 val code = intent.getStringExtra(EXTRA_CODE).orEmpty()
                 PrivilegedRuntime.markStarting()
-                startupJob?.cancel()
                 startupJob = scope.launch {
                     val result: Result<Unit> = withTimeoutOrNull(PAIRING_TIMEOUT_MS) {
                         PrivilegedRuntime.pairAndStart(this@EmbeddedShizukuService, host, port, code)
@@ -129,12 +132,29 @@ class EmbeddedShizukuService : Service() {
             delay(backoffMs)
             val context = applicationContext
             if (!PrivilegedRuntime.isWatchdogEnabled(context)) continue
-            if (PrivilegedRuntime.state.value == PrivilegedRuntime.State.STARTING) continue
-            if (ShizukuConnectionManager.isAvailable()) {
+            PrivilegedRuntime.refreshState(context)
+            when (PrivilegedRuntime.state.value) {
+                PrivilegedRuntime.State.STARTING,
+                PrivilegedRuntime.State.RUNNING,
+                PrivilegedRuntime.State.PERMISSION_REQUIRED -> continue
+                else -> Unit
+            }
+            if (!PrivilegedRuntime.isWirelessDebuggingEnabled(context) ||
+                !PrivilegedRuntime.isPaired(context)
+            ) {
+                continue
+            }
+            if (PrivilegedRuntime.state.value == PrivilegedRuntime.State.PAIRED_IDLE &&
+                !ShizukuConnectionManager.isAvailable()
+            ) {
+                // A paired device with no binder is recoverable. The guarded
+                // runtime mutex decides whether a single restart is allowed.
+                Unit
+            } else if (PrivilegedRuntime.state.value != PrivilegedRuntime.State.RUNTIME_STALE) {
                 backoffMs = POLL_INTERVAL_MS
                 continue
             }
-            Log.w(TAG, "Binder mort — relance automatique du serveur embarqué…")
+            Log.w(TAG, "Runtime absent ou obsolète — relance contrôlée du serveur embarqué…")
             val ok = PrivilegedRuntime.watchdogRestart(context)
             backoffMs = if (ok) POLL_INTERVAL_MS else (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
         }

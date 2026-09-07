@@ -64,9 +64,9 @@
         <!-- Ever Call Recorder's own Activity — no launcher, merged into this app -->
         <activity
             android:name="com.coolappstore.evercallrecorder.by.svhp.MainActivity"
-            tools:node="merge">
-            <intent-filter tools:node="removeAll" />
-        </activity>
+            android:exported="false"
+            android:theme="@style/Theme.EverCallRecorder"
+            tools:node="replace" />
 
     </application>
 

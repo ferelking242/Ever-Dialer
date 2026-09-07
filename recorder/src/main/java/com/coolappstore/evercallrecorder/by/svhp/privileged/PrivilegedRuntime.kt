@@ -49,7 +49,15 @@ import kotlin.coroutines.resume
 
 object PrivilegedRuntime {
 
-    enum class State { NOT_PAIRED, PAIRED_IDLE, STARTING, RUNNING, FAILED }
+    enum class State {
+        NOT_PAIRED,
+        PAIRED_IDLE,
+        RUNTIME_STALE,
+        STARTING,
+        PERMISSION_REQUIRED,
+        RUNNING,
+        FAILED
+    }
 
     private const val TAG = "PrivilegedRuntime"
     /**
@@ -124,8 +132,7 @@ object PrivilegedRuntime {
         NtfyReporter.publish("recording", "runtime lease released (count=$count)")
     }
 
-    private fun initialState(): State =
-        if (ShizukuConnectionManager.isAvailable()) State.RUNNING else State.NOT_PAIRED
+    private fun initialState(): State = State.NOT_PAIRED
 
     fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -233,9 +240,12 @@ object PrivilegedRuntime {
 
     fun refreshState() {
         if (startingJobCount > 0) return
-        _state.value = when {
-            ShizukuConnectionManager.isAvailable() -> State.RUNNING
-            else -> State.NOT_PAIRED
+        // This overload cannot validate pairing, Wireless debugging, ownership,
+        // and permission. Never turn a raw binder into a green state.
+        _state.value = if (ShizukuConnectionManager.isAvailable()) {
+            State.RUNTIME_STALE
+        } else {
+            State.NOT_PAIRED
         }
     }
 
@@ -247,13 +257,15 @@ object PrivilegedRuntime {
         if (startingJobCount > 0) return
         val appContext = context.applicationContext
         val paired = isPaired(appContext)
+        val wirelessDebugging = isWirelessDebuggingEnabled(appContext)
+        val binderAvailable = ShizukuConnectionManager.isAvailable()
         _state.value = when {
-            ShizukuConnectionManager.isAvailable() &&
-                isWirelessDebuggingEnabled(appContext) &&
-                paired &&
-                isRuntimeOwnedByCurrentBuild(appContext) -> State.RUNNING
-            paired -> State.PAIRED_IDLE
-            else -> State.NOT_PAIRED
+            !paired -> State.NOT_PAIRED
+            !wirelessDebugging -> State.PAIRED_IDLE
+            binderAvailable && !isRuntimeOwnedByCurrentBuild(appContext) -> State.RUNTIME_STALE
+            !binderAvailable -> State.PAIRED_IDLE
+            !ShizukuConnectionManager.hasPermission(appContext) -> State.PERMISSION_REQUIRED
+            else -> State.RUNNING
         }
     }
 
@@ -266,18 +278,12 @@ object PrivilegedRuntime {
      * when the binder arrives after a startup attempt already gave up (e.g.
      * slow first dex compilation on the device), and reports the state change.
      */
-    fun notifyBinderDelivered() {
+    fun notifyBinderDelivered(context: Context) {
         // A server from a previous install/update can still push a binder into
         // the newly installed provider. Do not let that stale push make the
         // new app display a false "running" state. A startup in progress may
         // still recover from a late binder after its timeout.
-        if (
-            startingJobCount == 0 &&
-            (_state.value == State.STARTING || _state.value == State.FAILED) &&
-            ShizukuConnectionManager.isAvailable()
-        ) {
-            _state.value = State.RUNNING
-        }
+        if (startingJobCount == 0) refreshState(context.applicationContext)
     }
 
     /**
@@ -305,23 +311,25 @@ object PrivilegedRuntime {
      */
     fun openManagement(context: Context): Boolean {
         val appContext = context.applicationContext
+        refreshState(appContext)
         if (!isWirelessDebuggingEnabled(appContext)) {
             PairingNotifier.showWirelessDebuggingRequiredNotification(appContext)
             openDeveloperSettings(appContext)
             return true
         }
 
+        val paired = isPaired(appContext)
+        if (!paired) {
+            // A binder can survive an uninstall because the server runs
+            // as shell outside this app's private process. Never grant
+            // the freshly installed app access to that orphan binder.
+            _state.value = State.NOT_PAIRED
+            PairingNotifier.showWaitingNotification(appContext)
+            openDeveloperSettings(appContext)
+            return true
+        }
+
         if (isConnected()) {
-            val paired = isPaired(appContext)
-            if (!paired) {
-                // A binder can survive an uninstall because the server runs
-                // as shell outside this app's private process. Never grant
-                // the freshly installed app access to that orphan binder.
-                _state.value = State.NOT_PAIRED
-                PairingNotifier.showWaitingNotification(appContext)
-                openDeveloperSettings(appContext)
-                return true
-            }
             if (!isRuntimeOwnedByCurrentBuild(appContext)) {
                 // The binder belongs to an older build. Re-enter the normal
                 // startup path so ensureServerStarted() removes the old
@@ -342,6 +350,7 @@ object PrivilegedRuntime {
                 return true
             }
             if (!ShizukuConnectionManager.hasPermission(appContext)) {
+                _state.value = State.PERMISSION_REQUIRED
                 NtfyReporter.publish("runtime", "requesting app Shizuku permission")
                 ShizukuConnectionManager.requestPermission(appContext)
                 return true
@@ -349,23 +358,15 @@ object PrivilegedRuntime {
             return false
         }
 
-        if (isPaired(appContext)) {
-            _state.value = State.STARTING
-            NtfyReporter.publish("runtime", "startup requested from header badge")
-            PairingNotifier.showStartingNotification(appContext)
-            runCatching {
-                EmbeddedShizukuService.start(appContext)
-            }.onFailure {
-                _state.value = State.FAILED
-                PairingNotifier.onRuntimeFailed(appContext, it)
-            }
-            return true
+        _state.value = State.STARTING
+        NtfyReporter.publish("runtime", "startup requested from header badge")
+        PairingNotifier.showStartingNotification(appContext)
+        runCatching {
+            EmbeddedShizukuService.start(appContext)
+        }.onFailure {
+            _state.value = State.FAILED
+            PairingNotifier.onRuntimeFailed(appContext, it)
         }
-
-        // Pairing is notification-only. The notification opens Android's
-        // developer settings and receives the code inline through RemoteInput.
-        PairingNotifier.showWaitingNotification(appContext)
-        openDeveloperSettings(appContext)
         return true
     }
 
@@ -494,6 +495,37 @@ object PrivilegedRuntime {
             startingJobCount++
             val appContext = context.applicationContext
             try {
+            val wirelessDebugging = isWirelessDebuggingEnabled(appContext)
+            if (!wirelessDebugging) {
+                _state.value = if (isPaired(appContext)) State.PAIRED_IDLE else State.NOT_PAIRED
+                val msg = "Débogage sans fil désactivé. Active-le dans les Options pour les développeurs."
+                log?.invoke(msg)
+                NtfyReporter.publish("runtime", "wireless debugging is disabled; startup blocked", "high")
+                return@withContext Result.failure(AdbException(msg))
+            }
+
+            val paired = pairingAlreadySucceeded || isPaired(appContext)
+            if (!paired) {
+                _state.value = State.NOT_PAIRED
+                return@withContext Result.failure(AdbException("Appareil non apparié"))
+            }
+
+            val binderAvailable = ShizukuConnectionManager.isAvailable()
+            val runtimeOwned = isRuntimeOwnedByCurrentBuild(appContext)
+            if (recordingLeaseCount.get() > 0) {
+                if (binderAvailable &&
+                    runtimeOwned &&
+                    ShizukuConnectionManager.hasPermission(appContext)
+                ) {
+                    log?.invoke("Serveur déjà actif ; runtime protégé pendant l’enregistrement ✔")
+                    _state.value = State.RUNNING
+                    return@withContext Result.success(Unit)
+                }
+                val msg = "Démarrage refusé : runtime protégé pendant un enregistrement."
+                log?.invoke(msg)
+                NtfyReporter.publish("runtime", "replacement blocked by active recording lease", "high")
+                return@withContext Result.failure(IllegalStateException(msg))
+            }
             /*
              * A live binder is not sufficient after an update or reinstall:
              * the old shizuku_server may still be alive while its payload,
@@ -503,24 +535,20 @@ object PrivilegedRuntime {
              * replacement below.
              */
             if (
-                recordingLeaseCount.get() > 0 &&
-                ShizukuConnectionManager.isAvailable() &&
-                isRuntimeOwnedByCurrentBuild(appContext)
+                binderAvailable &&
+                runtimeOwned
             ) {
-                log?.invoke("Serveur déjà actif ; runtime protégé pendant l’enregistrement ✔")
-                _state.value = State.RUNNING
-                return@withContext Result.success(Unit)
-            }
-            if (
-                ShizukuConnectionManager.isAvailable() &&
-                isRuntimeOwnedByCurrentBuild(appContext) &&
-                (pairingAlreadySucceeded || isPaired(appContext))
-            ) {
+                if (!ShizukuConnectionManager.hasPermission(appContext)) {
+                    _state.value = State.PERMISSION_REQUIRED
+                    val msg = "Le runtime est actif, mais la permission Shizuku n’est pas accordée."
+                    log?.invoke(msg)
+                    return@withContext Result.failure(SecurityException(msg))
+                }
                 log?.invoke("Serveur déjà actif ✔")
                 _state.value = State.RUNNING
                 return@withContext Result.success(Unit)
             }
-            if (ShizukuConnectionManager.isAvailable()) {
+            if (binderAvailable) {
                 log?.invoke("Binder existant détecté, mais runtime obsolète : remplacement contrôlé…")
                 NtfyReporter.publish(
                     "runtime",
@@ -528,18 +556,6 @@ object PrivilegedRuntime {
                     "high"
                 )
             }
-            if (!pairingAlreadySucceeded && !isPaired(appContext)) {
-                _state.value = State.NOT_PAIRED
-                return@withContext Result.failure(AdbException("Appareil non apparié"))
-            }
-            if (!isWirelessDebuggingEnabled(appContext)) {
-                _state.value = State.FAILED
-                val msg = "Débogage sans fil désactivé. Active-le dans les Options pour les développeurs."
-                log?.invoke(msg)
-                NtfyReporter.publish("runtime", "wireless debugging is disabled", "high")
-                return@withContext Result.failure(AdbException(msg))
-            }
-
             _state.value = State.STARTING
             NtfyReporter.publish("runtime", "*** FINGERPRINT=$BUILD_FINGERPRINT ***")
             NtfyReporter.publish(
@@ -799,7 +815,11 @@ object PrivilegedRuntime {
                     .putString(KEY_PAIRING_BUILD, pairingIdentity(appContext))
                     .putString(KEY_RUNTIME_OWNER, pairingIdentity(appContext))
                     .apply()
-                _state.value = State.RUNNING
+                _state.value = if (ShizukuConnectionManager.hasPermission(appContext)) {
+                    State.RUNNING
+                } else {
+                    State.PERMISSION_REQUIRED
+                }
                 log?.invoke("Privilèges système actifs ✔")
                 NtfyReporter.publish("runtime", "embedded Shizuku binder is running")
                 return@withContext Result.success(Unit)

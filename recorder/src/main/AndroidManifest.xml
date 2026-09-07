@@ -70,10 +70,8 @@
             android:exported="true"
             android:theme="@style/Theme.EverCallRecorder">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
                 <action android:name="android.intent.action.APPLICATION_PREFERENCES" /> <!-- Show "Additional settings in the app" button in Settings App Info -->
                 <category android:name="android.intent.category.NOTIFICATION_PREFERENCES" /> <!-- Show "Additional settings in the app" button in Settings App Info -> notifications -->
-                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 

@@ -41,7 +41,7 @@ class EverShizukuProvider : ShizukuProvider() {
                 val reply = super.call(method, arg, extras)
                 if (Shizuku.pingBinder()) {
                     NtfyReporter.publish("provider", "binder stored; pingBinder=true")
-                    PrivilegedRuntime.notifyBinderDelivered()
+                    PrivilegedRuntime.notifyBinderDelivered(context)
                 } else {
                     NtfyReporter.publish(
                         "provider",

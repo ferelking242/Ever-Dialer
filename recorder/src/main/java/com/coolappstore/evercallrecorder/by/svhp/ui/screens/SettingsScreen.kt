@@ -839,10 +839,7 @@ private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, act
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val runtimeState by PrivilegedRuntime.state.collectAsState()
-    var shizukuConnected by remember { mutableStateOf(runtimeState == PrivilegedRuntime.State.RUNNING) }
-    LaunchedEffect(runtimeState) {
-        shizukuConnected = runtimeState == PrivilegedRuntime.State.RUNNING
-    }
+    val shizukuConnected = runtimeState == PrivilegedRuntime.State.RUNNING
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -868,7 +865,13 @@ private fun SecuritySection(preferences: AppPreferences, updateTrigger: Int, act
                     else MaterialTheme.colorScheme.surfaceContainerHigh
                 ) {
                     Text(
-                        text = if (shizukuConnected) "Actif" else "Non connecté",
+                        text = when (runtimeState) {
+                            PrivilegedRuntime.State.RUNNING -> "Actif"
+                            PrivilegedRuntime.State.PERMISSION_REQUIRED -> "Autoriser"
+                            PrivilegedRuntime.State.RUNTIME_STALE -> "Mise à jour"
+                            PrivilegedRuntime.State.STARTING -> "Démarrage…"
+                            else -> "Non connecté"
+                        },
                         color = if (shizukuConnected) Color(0xFF81C784)
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.labelSmall,
