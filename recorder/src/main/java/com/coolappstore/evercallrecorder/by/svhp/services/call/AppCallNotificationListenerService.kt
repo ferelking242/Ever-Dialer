@@ -10,6 +10,7 @@ package com.coolappstore.evercallrecorder.by.svhp.services.call
 
 import android.app.Notification
 import android.content.Intent
+import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
@@ -19,7 +20,6 @@ import com.coolappstore.evercallrecorder.by.svhp.services.recording.RecordingFor
 import com.coolappstore.evercallrecorder.by.svhp.utils.AppLogger
 import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
 import java.util.concurrent.ConcurrentHashMap
-import android.os.SystemClock
 
 /**
  * Detects ongoing voice/video calls inside WhatsApp and Telegram, and drives [RecordingForegroundService]
@@ -78,16 +78,36 @@ class AppCallNotificationListenerService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        val hadActiveCall = activeCalls.isNotEmpty()
         AppLogger.w(TAG, "Notification listener disconnected.")
         NtfyReporter.publish("calls", "WhatsApp/Telegram notification listener disconnected", "high")
         activeCalls.clear()
+        if (hadActiveCall) {
+            AppLogger.w(TAG, "Listener disconnected while an app call was tracked; stopping recording defensively.")
+            NtfyReporter.publish("calls", "Listener disconnected during an app call; stopping recording", "high")
+            sendServiceCommand(RecordingForegroundService.ACTION_STOP_RECORDING)
+        }
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification) = handlePosted(sbn)
+    override fun onNotificationPosted(sbn: StatusBarNotification) {
+        try {
+            handlePosted(sbn)
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Unexpected notification processing failure for ${sbn.packageName}", e)
+            NtfyReporter.publish(
+                "calls",
+                "Notification processing failed: ${e.javaClass.simpleName}: ${e.message ?: "unknown error"}",
+                "high"
+            )
+        }
+    }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         val target = activeCalls.remove(sbn.key) ?: return
-        if (activeCalls.values.any { it == target }) return
+        if (activeCalls.isNotEmpty()) {
+            AppLogger.d(TAG, "${target.key} notification removed but another app call notification is still tracked.")
+            return
+        }
         AppLogger.i(TAG, "${target.key} call notification ended (key=${sbn.key}). Stopping recording session.")
         NtfyReporter.publish("calls", "${target.key} call notification ended; stopping recording")
         sendServiceCommand(RecordingForegroundService.ACTION_STOP_RECORDING)

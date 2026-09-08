@@ -32,6 +32,7 @@ import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.privileged.EmbeddedShizukuService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -124,6 +125,9 @@ class RecordingForegroundService : Service() {
     /** Scope for service lifecycle operations (binding, etc.) */
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
+    /** The single asynchronous start operation currently owned by this service, if any. */
+    private var startJob: Job? = null
+
     // ── Recording session state ────────────────────────────────────────────────────────
 
     /** The current state of the service. */
@@ -141,6 +145,10 @@ class RecordingForegroundService : Service() {
     /** True while a recording session object is present (initializing, active, or pending teardown). */
     private val hasSession: Boolean
         get() = currentState is RecordingServiceState.Active
+
+    /** True while ShellService or the audio pipeline is being initialized. */
+    private val isStarting: Boolean
+        get() = currentState is RecordingServiceState.Starting
 
     /** True only if the pipeline is actively reading and capturing audio. */
     private val isCurrentlyRecording: Boolean
@@ -218,8 +226,9 @@ class RecordingForegroundService : Service() {
 
         when (action) {
             ACTION_START_RECORDING, ACTION_MANUAL_START -> {
-                if (hasSession || isCurrentlyRecording) {
-                    AppLogger.w(TAG, "Start request ignored. A session is already on-going.")
+                if (hasSession || isCurrentlyRecording || isStarting) {
+                    AppLogger.w(TAG, "Start request ignored. A recording session is already active or starting.")
+                    NtfyReporter.publish("recording", "Duplicate start ignored; recording session already active or starting")
                     return START_NOT_STICKY
                 }
 
@@ -235,7 +244,7 @@ class RecordingForegroundService : Service() {
                 PrivilegedRuntime.beginRecordingSession()
                 recordingRuntimeLeaseHeld = true
 
-                serviceScope.launch {
+                startJob = serviceScope.launch {
                     try {
                         // The recording pipeline needs the privileged ShellService. Do not
                         // independently wait here while another coroutine starts the runtime:
@@ -276,6 +285,7 @@ class RecordingForegroundService : Service() {
                         notificationHelper.showErrorNotification(getString(R.string.recording_shizuku_not_started) + "\nLocalized: " + e.localizedMessage)
                         stopRecordingSessionAndService()
                     } finally {
+                        startJob = null
                         if (currentState is RecordingServiceState.Starting) {
                             if (!hasSession) {
                                 currentState = RecordingServiceState.Standby(currentMeta)
@@ -439,15 +449,22 @@ class RecordingForegroundService : Service() {
      * removes the foreground notification, and stops the service.
      */
     private fun stopRecordingSessionAndService() {
+        startJob?.let {
+            AppLogger.d(TAG, "Cancelling pending recording start operation before stopping service.")
+            it.cancel()
+            startJob = null
+        }
+
         val activeSession = (currentState as? RecordingServiceState.Active)?.engine
         if (activeSession == null) {
             releaseRecordingRuntimeLease()
-            AppLogger.d(TAG, "No active session, exiting standby state, removing foreground notification and stopping service.")
+            AppLogger.d(TAG, "No active session, removing foreground notification and stopping service.")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf() // Stop the service since the session is over
             return
         }
         AppLogger.i(TAG, "Stopping active recording session, remove foreground notification and stopping service...")
+        NtfyReporter.publish("recording", "Stopping active recording session")
 
         // Capture metadata before releasing resources, in case we need to query call logs for the final file name if phone number is empty.
         val originalMetadata = activeSession.initializationMetadata
