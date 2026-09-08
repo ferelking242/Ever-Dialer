@@ -3,3 +3,4 @@
 - [Embedded runtime startup](embedded-runtime-startup.md) — run pairing and server startup in a foreground service, with bounded waits and remote failure output.
 - [ADB endpoint selection](adb-endpoint-selection.md) — pairing and connect ports are different; validate shell before startup and do not erase keys for one refused stream.
 - [Runtime state validation](runtime-state-validation.md) — a live Shizuku binder alone never proves that the current paired, wireless-debugged, owned runtime is operational.
+- [VoIP notification lifecycle](voip-notification-lifecycle.md) — notification-key replacement can represent one call, so removal must allow a short cancellable grace period.
