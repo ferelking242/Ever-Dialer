@@ -438,6 +438,22 @@ class RecordingForegroundService : Service() {
             activeSession.cancel(this, shellService)
             currentState = RecordingServiceState.Standby(metadata)
             stopRecordingSessionAndService()
+        } catch (e: CancellationException) {
+            AppLogger.d(TAG, "Recording pipeline start cancelled.")
+            activeSession.cancel(this, shellService)
+            throw e
+        } catch (e: Exception) {
+            val message = e.localizedMessage ?: e.message ?: "unexpected pipeline error"
+            AppLogger.e(TAG, "Unexpected recording pipeline failure", e)
+            NtfyReporter.publish(
+                "recording",
+                "Unexpected recording pipeline failure: ${e.javaClass.simpleName}: $message",
+                "high"
+            )
+            notificationHelper.showErrorNotification(message)
+            activeSession.cancel(this, shellService)
+            currentState = RecordingServiceState.Standby(metadata)
+            stopRecordingSessionAndService()
         }
     }
 

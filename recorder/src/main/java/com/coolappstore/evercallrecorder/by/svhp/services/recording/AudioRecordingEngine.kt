@@ -24,6 +24,7 @@ import com.coolappstore.evercallrecorder.by.svhp.integrations.scrcpy.ScrcpyConfi
 import com.coolappstore.evercallrecorder.by.svhp.system.storage.SafHelper
 import com.coolappstore.evercallrecorder.by.svhp.integrations.scrcpy.ServerExtractor
 import com.coolappstore.evercallrecorder.by.svhp.utils.AppLogger
+import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
 import com.coolappstore.evercallrecorder.by.svhp.utils.RecordingFileNameFormatter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -121,6 +122,16 @@ class AudioRecordingEngine {
     @Volatile
     var isPaused: Boolean = false
 
+    /** Number of packets observed from the privileged audio stream in this session. */
+    @Volatile
+    var audioPacketCount: Long = 0L
+        private set
+
+    /** Total payload bytes observed from the privileged audio stream in this session. */
+    @Volatile
+    var audioPayloadBytes: Long = 0L
+        private set
+
     /**
      * Orchestrates the initialization and connection of the entire recording pipeline.
      * @throws PipelineInitializationException if any step of the initialization fails, with details for user-friendly and technical error reporting.
@@ -158,6 +169,10 @@ class AudioRecordingEngine {
         }
 
         AppLogger.i(TAG, "Starting recording pipeline: source=${audioSourceEnum.cliKey} codec=${codecEnum.cliKey} bitrate=$bitRate")
+        NtfyReporter.publish(
+            "recording",
+            "Pipeline init: source=${audioSourceEnum.cliKey} codec=${codecEnum.cliKey} bitrate=$bitRate"
+        )
 
         val fileName = RecordingFileNameFormatter.formatFileName(context, metadata, codecEnum, startTimeMillis = System.currentTimeMillis().also { recordingStartTimeMillis = it })
 
@@ -168,6 +183,7 @@ class AudioRecordingEngine {
             )
 
         AppLogger.d(TAG, "Created SAF recording file: ${safResult.uri}")
+        NtfyReporter.publish("recording", "Recording output file created")
 
         currentRecordingUri = safResult.uri
         outputPfd = safResult.descriptor
@@ -179,6 +195,7 @@ class AudioRecordingEngine {
                 technicalLogMessage = "scrcpy-server missing or SHA256 check was invalid at $serverPath"
             )
         }
+        NtfyReporter.publish("recording", "scrcpy server verified")
 
         scrcpyAudioMuxer = ScrcpyAudioMuxer(outputPfd!!.fileDescriptor, safResult.displayName)
 
@@ -191,6 +208,7 @@ class AudioRecordingEngine {
                 preferences.isDebugEnabled(),
                 AppLogger.callback
             )
+            NtfyReporter.publish("recording", "ShellService returned audio pipe")
         } catch (e: Exception) {
             throw PipelineInitializationException(
                 userFriendlyMessage = e.localizedMessage ?: context.getString(R.string.recording_error_start_failed),
@@ -217,12 +235,15 @@ class AudioRecordingEngine {
                  */
                 override fun onMetadataReceived(codec: ScrcpyAudioCodec) {
                     AppLogger.d(TAG, "Stream metadata confirmed: codec=${codec.cliKey} fourCC=0x${codec.codecFourCC.toString(16)}")
+                    NtfyReporter.publish("recording", "Audio stream metadata received: codec=${codec.cliKey}")
                     currentCodecEnum = codec
                     scrcpyAudioMuxer?.initialize(codec)
                 }
 
                 /** Called for every audio frame received from the pipe. */
                 override fun onAudioPacket(packet: ScrcpyClient.AudioPacket) {
+                    audioPacketCount++
+                    audioPayloadBytes += packet.data.size.toLong()
                     if (isPaused) return // Drop packets while paused, do not write to muxer
                     scrcpyAudioMuxer?.writePacket(packet, currentCodecEnum)
                 }
@@ -234,6 +255,11 @@ class AudioRecordingEngine {
                     } else {
                         AppLogger.d(TAG, "Scrcpy-client reported our pipe read stream ended normally (EOF)")
                     }
+                    NtfyReporter.publish(
+                        "recording",
+                        "Audio stream ended: packets=$audioPacketCount bytes=$audioPayloadBytes " +
+                            "result=${if (error == null) "eof" else "error"}"
+                    )
                 }
             }
         )
@@ -262,6 +288,10 @@ class AudioRecordingEngine {
      */
     fun release(shellService: IShellService?) {
         AppLogger.i(TAG, "Releasing session resources and recording pipeline...")
+        NtfyReporter.publish(
+            "recording",
+            "Releasing audio pipeline: packets=$audioPacketCount bytes=$audioPayloadBytes"
+        )
         runCatching { shellService?.stopRecording() }
 
         runCatching {
