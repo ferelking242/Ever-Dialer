@@ -117,18 +117,30 @@ class AppCallNotificationListenerService : NotificationListenerService() {
 
     private fun handlePosted(sbn: StatusBarNotification) {
         val target = AppCallTarget.fromPackageName(sbn.packageName) ?: return
-        if (!isTargetEnabled(target)) return
-        if (!looksLikeOngoingCallNotification(sbn)) return
+        if (!isTargetEnabled(target)) {
+            diagnosticConfiguration(target)
+            return
+        }
+        val decision = classifyNotification(sbn)
+        if (!decision.accepted) {
+            diagnosticNotification(sbn, decision)
+            return
+        }
 
         // putIfAbsent: if this key is already tracked, this is just the call-duration ticking the
         // notification text every second, not a new call. Ignore it to avoid sending duplicate START intents.
         if (activeCalls.putIfAbsent(sbn.key, target) != null) return
 
         val metadata = buildMetadata(target, sbn.notification)
-        AppLogger.i(TAG, "Detected ongoing ${target.key} call (notification key=${sbn.key}, direction=${metadata.direction}). Starting recording session.")
+        AppLogger.i(
+            TAG,
+            "Detected ${target.key} call (key=${sbn.key}, direction=${metadata.direction}, " +
+                "reason=${decision.reason}, evidence=${decision.evidence.joinToString("+")}). Starting recording."
+        )
         NtfyReporter.publish(
             "calls",
-            "Detected ${target.key} call notification; starting recording (${metadata.direction.name.lowercase()})"
+            "Detected ${target.key} call; starting recording " +
+                "(${metadata.direction.name.lowercase()}, evidence=${decision.evidence.joinToString("+")})"
         )
         sendServiceCommand(RecordingForegroundService.ACTION_START_RECORDING, metadata)
     }
@@ -142,73 +154,50 @@ class AppCallNotificationListenerService : NotificationListenerService() {
         }
     }
 
-    /**
-     * Decides whether [notification] represents an in-progress call rather than some other notification
-     * from the same app (a new-message ping, a missed-call notice, an incoming-ringing alert that the user
-     * hasn't answered yet, etc).
-     *
-     * We require both:
-     *  - [Notification.CATEGORY_CALL]: the category every well-behaved call app sets on its in-call notification
-     *    (mandatory for Android 12+'s CallStyle, and what WhatsApp/Telegram use on versions that support it).
-     *  - [Notification.FLAG_ONGOING_EVENT]: sets it apart from a *missed*-call notification, which uses the same
-     *    category but is dismissible and not ongoing.
-     */
-    private fun looksLikeOngoingCallNotification(sbn: StatusBarNotification): Boolean {
+    private fun classifyNotification(sbn: StatusBarNotification): AppCallNotificationDecision {
         val notification = sbn.notification
-        val isOngoing = sbn.isOngoing ||
-            (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0
-        val hasCallCategory = notification.category == Notification.CATEGORY_CALL
-        val text = listOf(
-            notification.extras?.getCharSequence(Notification.EXTRA_TITLE),
-            notification.extras?.getCharSequence(Notification.EXTRA_TEXT),
-            notification.extras?.getCharSequence(Notification.EXTRA_BIG_TEXT),
-            notification.extras?.getCharSequence(Notification.EXTRA_SUB_TEXT)
-        ).filterNotNull().joinToString(" ").lowercase()
-
-        val callWords = listOf(
-            "call", "calling", "voice call", "video call", "incoming call",
-            "outgoing call", "call in progress", "appel", "appel vocal",
-            "appel vidéo", "appel en cours", "llamada", "videollamada",
-            "arama", "sesli arama", "görüntülü arama", "gelen arama",
-            "çıkış araması", "arama devam ediyor"
+        return AppCallNotificationClassifier.classify(
+            AppCallNotificationSnapshot(
+                category = notification.category,
+                template = notification.extras?.getString(Notification.EXTRA_TEMPLATE),
+                isOngoing = sbn.isOngoing || (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0,
+                isClearable = sbn.isClearable,
+                texts = listOf(
+                    notification.extras?.getCharSequence(Notification.EXTRA_TITLE),
+                    notification.extras?.getCharSequence(Notification.EXTRA_TEXT),
+                    notification.extras?.getCharSequence(Notification.EXTRA_BIG_TEXT),
+                    notification.extras?.getCharSequence(Notification.EXTRA_SUB_TEXT)
+                ).filterNotNull().map(CharSequence::toString),
+                actionTitles = notification.actions.orEmpty().mapNotNull { it.title?.toString() }
+            )
         )
-        val hasCallText = callWords.any { text.contains(it) }
-        val hasCallAction = notification.actions.orEmpty().any { action ->
-            action.title?.toString()?.lowercase()?.let { actionText ->
-                listOf(
-                    "answer", "accept", "decline", "reject", "hang up", "end call",
-                    "répondre", "refuser", "raccrocher", "accepter",
-                    "yanıtla", "reddet", "kapat"
-                ).any(actionText::contains)
-            } == true
-        }
-
-        // Android/OEM notification adapters disagree about CATEGORY_CALL and
-        // FLAG_ONGOING_EVENT. Do not require one exact representation, but keep
-        // enough call evidence to avoid treating normal WhatsApp messages as calls.
-        if (hasCallCategory && (isOngoing || !sbn.isClearable)) return true
-        if (hasCallText && (isOngoing || !sbn.isClearable || hasCallAction)) return true
-
-        diagnosticNotification(sbn, isOngoing, hasCallCategory, hasCallText, hasCallAction)
-        return false
     }
 
     private fun diagnosticNotification(
         sbn: StatusBarNotification,
-        isOngoing: Boolean,
-        hasCallCategory: Boolean,
-        hasCallText: Boolean,
-        hasCallAction: Boolean
+        decision: AppCallNotificationDecision
     ) {
         val now = SystemClock.elapsedRealtime()
-        val key = sbn.packageName
+        val key = "${sbn.packageName}:${decision.reason}"
         val previous = lastDiagnosticAt.putIfAbsent(key, now)
         if (previous != null && now - previous < 15_000L) return
         lastDiagnosticAt[key] = now
         NtfyReporter.publish(
             "calls",
-            "Ignored ${sbn.packageName} notification: ongoing=$isOngoing " +
-                "categoryCall=$hasCallCategory textCall=$hasCallText actionCall=$hasCallAction"
+            "Ignored ${sbn.packageName} notification: reason=${decision.reason} " +
+                "evidence=${decision.evidence.joinToString("+")}"
+        )
+    }
+
+    private fun diagnosticConfiguration(target: AppCallTarget) {
+        val now = SystemClock.elapsedRealtime()
+        val key = "configuration:${target.key}"
+        val previous = lastDiagnosticAt.putIfAbsent(key, now)
+        if (previous != null && now - previous < 30_000L) return
+        lastDiagnosticAt[key] = now
+        NtfyReporter.publish(
+            "calls",
+            "Ignored ${target.key} notification because app-call recording is disabled"
         )
     }
 
