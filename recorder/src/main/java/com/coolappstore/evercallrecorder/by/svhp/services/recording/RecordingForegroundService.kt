@@ -26,6 +26,7 @@ import com.coolappstore.evercallrecorder.by.svhp.utils.AppLogger
 import com.coolappstore.evercallrecorder.by.svhp.utils.PhoneNumberManager
 import com.coolappstore.evercallrecorder.by.svhp.utils.RecordingFileNameFormatter
 import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
+import com.coolappstore.evercallrecorder.by.svhp.integrations.shizuku.ShizukuConnectionManager
 import com.coolappstore.evercallrecorder.by.svhp.privileged.PairingNotifier
 import com.coolappstore.evercallrecorder.by.svhp.privileged.PrivilegedRuntime
 import com.coolappstore.evercallrecorder.by.svhp.privileged.EmbeddedShizukuService
