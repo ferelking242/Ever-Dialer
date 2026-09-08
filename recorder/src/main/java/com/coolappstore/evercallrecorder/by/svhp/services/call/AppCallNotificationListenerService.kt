@@ -10,6 +10,8 @@ package com.coolappstore.evercallrecorder.by.svhp.services.call
 
 import android.app.Notification
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
@@ -50,6 +52,7 @@ class AppCallNotificationListenerService : NotificationListenerService() {
 
     companion object {
         private const val TAG = "SCR:AppCallNotifListener"
+        private const val CALL_NOTIFICATION_REPLACEMENT_GRACE_MS = 1_500L
     }
 
     /**
@@ -62,6 +65,8 @@ class AppCallNotificationListenerService : NotificationListenerService() {
      */
     private val activeCalls = ConcurrentHashMap<String, AppCallTarget>()
     private val lastDiagnosticAt = ConcurrentHashMap<String, Long>()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var pendingStop: Runnable? = null
 
     override fun onListenerConnected() {
         super.onListenerConnected()
@@ -78,6 +83,7 @@ class AppCallNotificationListenerService : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
+        cancelPendingStop()
         val hadActiveCall = activeCalls.isNotEmpty()
         AppLogger.w(TAG, "Notification listener disconnected.")
         NtfyReporter.publish("calls", "WhatsApp/Telegram notification listener disconnected", "high")
@@ -87,6 +93,12 @@ class AppCallNotificationListenerService : NotificationListenerService() {
             NtfyReporter.publish("calls", "Listener disconnected during an app call; stopping recording", "high")
             sendServiceCommand(RecordingForegroundService.ACTION_STOP_RECORDING)
         }
+    }
+
+    override fun onDestroy() {
+        cancelPendingStop()
+        activeCalls.clear()
+        super.onDestroy()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
@@ -108,9 +120,7 @@ class AppCallNotificationListenerService : NotificationListenerService() {
             AppLogger.d(TAG, "${target.key} notification removed but another app call notification is still tracked.")
             return
         }
-        AppLogger.i(TAG, "${target.key} call notification ended (key=${sbn.key}). Stopping recording session.")
-        NtfyReporter.publish("calls", "${target.key} call notification ended; stopping recording")
-        sendServiceCommand(RecordingForegroundService.ACTION_STOP_RECORDING)
+        scheduleStop(target, sbn.key)
     }
 
     // -- Private helpers
@@ -126,6 +136,7 @@ class AppCallNotificationListenerService : NotificationListenerService() {
             diagnosticNotification(sbn, decision)
             return
         }
+        cancelPendingStop()
 
         // putIfAbsent: if this key is already tracked, this is just the call-duration ticking the
         // notification text every second, not a new call. Ignore it to avoid sending duplicate START intents.
@@ -199,6 +210,30 @@ class AppCallNotificationListenerService : NotificationListenerService() {
             "calls",
             "Ignored ${target.key} notification because app-call recording is disabled"
         )
+    }
+
+    /**
+     * Give a VoIP app a short grace period to replace its notification key.
+     * WhatsApp/OEM adapters commonly remove the ringing notification and post
+     * the answered-call notification as a new StatusBarNotification. Stopping
+     * immediately would split one call into a false end/start pair.
+     */
+    private fun scheduleStop(target: AppCallTarget, notificationKey: String) {
+        cancelPendingStop()
+        val stop = Runnable {
+            pendingStop = null
+            if (activeCalls.isNotEmpty()) return@Runnable
+            AppLogger.i(TAG, "${target.key} call notification ended (key=$notificationKey). Stopping recording session.")
+            NtfyReporter.publish("calls", "${target.key} call notification ended; stopping recording")
+            sendServiceCommand(RecordingForegroundService.ACTION_STOP_RECORDING)
+        }
+        pendingStop = stop
+        mainHandler.postDelayed(stop, CALL_NOTIFICATION_REPLACEMENT_GRACE_MS)
+    }
+
+    private fun cancelPendingStop() {
+        pendingStop?.let(mainHandler::removeCallbacks)
+        pendingStop = null
     }
 
     /**
