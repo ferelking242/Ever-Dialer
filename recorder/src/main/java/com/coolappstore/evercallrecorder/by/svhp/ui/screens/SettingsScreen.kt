@@ -625,6 +625,7 @@ private fun RecordingSection(
 
     if (showAppCallRecordingDialog) {
         AppCallRecordingDialog(
+            callRecordingEnabled = preferences.isCallRecordingEnabled(),
             whatsAppEnabled = recordWhatsAppCalls,
             telegramEnabled = recordTelegramCalls,
             onWhatsAppToggle = { enabled -> actions.setRecordCallsFromApp(AppCallTarget.WHATSAPP, enabled) },

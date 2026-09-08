@@ -157,6 +157,7 @@
     <string name="settings_app_call_recording_off">Off</string>
     <string name="settings_app_call_recording_dialog_title">Record Calls From Apps</string>
     <string name="settings_app_call_recording_dialog_description">Automatically record voice and video calls placed through the apps below, using the same privileged audio capture mechanism this app already uses for normal calls.</string>
+    <string name="settings_app_call_recording_master_switch_off">Call recording is globally disabled. Enable the main call-recording switch above before these app-call settings can take effect.</string>
     <string name="settings_app_call_recording_permission_title">Notification access required</string>
     <string name="settings_app_call_recording_permission_description">To detect when a call starts in these apps, Ever Call Recorder needs permission to read notifications.</string>
     <string name="settings_app_call_recording_grant_access">Grant Access</string>

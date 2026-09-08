@@ -73,6 +73,7 @@ import com.coolappstore.evercallrecorder.by.svhp.ui.theme.ShizucallrecorderTheme
  */
 @Composable
 fun AppCallRecordingDialog(
+    callRecordingEnabled: Boolean,
     whatsAppEnabled: Boolean,
     telegramEnabled: Boolean,
     onWhatsAppToggle: (Boolean) -> Unit,
@@ -105,6 +106,21 @@ fun AppCallRecordingDialog(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                if (!callRecordingEnabled) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = stringResource(R.string.settings_app_call_recording_master_switch_off),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(14.dp)
+                        )
+                    }
+                }
 
                 if (hasNotificationAccess) {
                     Surface(
@@ -219,6 +235,7 @@ private fun AppCallTargetCheckboxRow(
 private fun AppCallRecordingDialogPreview() {
     ShizucallrecorderTheme {
         AppCallRecordingDialog(
+            callRecordingEnabled = true,
             whatsAppEnabled = false,
             telegramEnabled = true,
             onWhatsAppToggle = {},

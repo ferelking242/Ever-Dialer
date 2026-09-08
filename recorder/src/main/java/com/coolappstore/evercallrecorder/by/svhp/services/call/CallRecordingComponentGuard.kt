@@ -11,7 +11,9 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import com.coolappstore.evercallrecorder.by.svhp.data.AppPreferences
 import com.coolappstore.evercallrecorder.by.svhp.services.recording.RecordingForegroundService
+import com.coolappstore.evercallrecorder.by.svhp.system.permissions.PermissionChecks
 import com.coolappstore.evercallrecorder.by.svhp.utils.AppLogger
+import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
 
 /**
  * Keeps the manifest-declared call-monitoring components — the telephony state broadcast
@@ -44,10 +46,33 @@ object CallRecordingComponentGuard {
         val recordingEnabled = prefs.isCallRecordingEnabled()
         val notificationListenerNeeded = recordingEnabled && prefs.isAnyAppCallRecordingEnabled()
         val usingInCallService = recordingEnabled && prefs.getCallDetectionMode() == AppPreferences.CallDetectionMode.IN_CALL_SERVICE
+        val notificationAccessGranted = PermissionChecks.hasNotificationListenerPermission(appContext)
 
         setComponentEnabled(appContext, PhoneStateReceiver::class.java, recordingEnabled && !usingInCallService)
         setComponentEnabled(appContext, AppInCallService::class.java, usingInCallService)
         setComponentEnabled(appContext, AppCallNotificationListenerService::class.java, notificationListenerNeeded)
+
+        AppLogger.i(
+            TAG,
+            "Synced call components: recording=$recordingEnabled " +
+                "appCalls=${prefs.isAnyAppCallRecordingEnabled()} " +
+                "listenerNeeded=$notificationListenerNeeded " +
+                "notificationAccess=$notificationAccessGranted " +
+                "inCallService=$usingInCallService"
+        )
+        NtfyReporter.publish(
+            "calls",
+            "Component guard synced: recording=$recordingEnabled " +
+                "listenerNeeded=$notificationListenerNeeded access=$notificationAccessGranted " +
+                "mode=${prefs.getCallDetectionMode().key}"
+        )
+        if (notificationListenerNeeded && !notificationAccessGranted) {
+            NtfyReporter.publish(
+                "calls",
+                "App-call listener enabled but Notification Access is not granted",
+                "high"
+            )
+        }
 
         if (!recordingEnabled) {
             try {
@@ -60,7 +85,7 @@ object CallRecordingComponentGuard {
         try {
             val componentName = ComponentName(context, clazz)
             val newState = if (enabled)
-                PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+                PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             else
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED
             context.packageManager.setComponentEnabledSetting(
@@ -68,6 +93,7 @@ object CallRecordingComponentGuard {
                 newState,
                 PackageManager.DONT_KILL_APP
             )
+            AppLogger.d(TAG, "${clazz.simpleName} enabled=$enabled")
         } catch (e: Exception) {
             AppLogger.w(TAG, "Failed to set enabled=$enabled for ${clazz.simpleName}: ${e.message}")
         }
