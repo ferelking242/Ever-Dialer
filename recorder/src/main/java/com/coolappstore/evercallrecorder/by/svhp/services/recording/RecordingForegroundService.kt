@@ -256,6 +256,11 @@ class RecordingForegroundService : Service() {
                         startNewRecordingSession(service, currentMeta)
                     } catch (e: SecurityException) { // Shizuku permission not granted
                         AppLogger.e(TAG, "Shizuku permission was denied / not granted", e)
+                        NtfyReporter.publish(
+                            "recording",
+                            "ShellService permission denied: ${e.message ?: "Shizuku permission missing"}",
+                            "high"
+                        )
                         notificationHelper.showErrorNotification(getString(R.string.recording_shizuku_permission_denied))
                         stopRecordingSessionAndService()
                     } catch (e: Exception) { // Shizuku not running or other binding connection errors
@@ -263,6 +268,11 @@ class RecordingForegroundService : Service() {
                         if (e is CancellationException) throw e
 
                         AppLogger.e(TAG, "Failed to perform ShellService binding with Shizuku. Ensure it is running, else look at error related to failed binding.", e)
+                        NtfyReporter.publish(
+                            "recording",
+                            "ShellService binding failed: ${e.javaClass.simpleName}: ${e.message ?: "unknown error"}",
+                            "high"
+                        )
                         notificationHelper.showErrorNotification(getString(R.string.recording_shizuku_not_started) + "\nLocalized: " + e.localizedMessage)
                         stopRecordingSessionAndService()
                     } finally {
@@ -402,8 +412,17 @@ class RecordingForegroundService : Service() {
             // 3. Success
             currentState = RecordingServiceState.Active(activeSession, false, metadata)
             AppLogger.i(TAG, "Recording pipeline started successfully")
+            NtfyReporter.publish(
+                "recording",
+                "Recording pipeline started${metadata.sourceApp?.let { " via $it" } ?: ""}"
+            )
         } catch (e: PipelineInitializationException) {
             AppLogger.e(TAG, e.message ?: "", e.cause ?: e)
+            NtfyReporter.publish(
+                "recording",
+                "Recording pipeline failed: ${e.message ?: e.userFriendlyMessage}",
+                "high"
+            )
             notificationHelper.showErrorNotification(e.userFriendlyMessage)
             // Ensure partial resources are cleaned up
             activeSession.cancel(this, shellService)

@@ -17,7 +17,9 @@ import com.coolappstore.evercallrecorder.by.svhp.data.recordings.RecordingDirect
 import com.coolappstore.evercallrecorder.by.svhp.data.recordings.RecordingMetadata
 import com.coolappstore.evercallrecorder.by.svhp.services.recording.RecordingForegroundService
 import com.coolappstore.evercallrecorder.by.svhp.utils.AppLogger
+import com.coolappstore.evercallrecorder.by.svhp.utils.NtfyReporter
 import java.util.concurrent.ConcurrentHashMap
+import android.os.SystemClock
 
 /**
  * Detects ongoing voice/video calls inside WhatsApp and Telegram, and drives [RecordingForegroundService]
@@ -59,10 +61,12 @@ class AppCallNotificationListenerService : NotificationListenerService() {
      * which keys we've already reacted to here, and only stop when that key is actually removed.
      */
     private val activeCalls = ConcurrentHashMap<String, AppCallTarget>()
+    private val lastDiagnosticAt = ConcurrentHashMap<String, Long>()
 
     override fun onListenerConnected() {
         super.onListenerConnected()
         AppLogger.d(TAG, "Notification listener connected. Scanning currently active notifications for in-progress calls...")
+        NtfyReporter.publish("calls", "WhatsApp/Telegram notification listener connected")
         // Covers the case where the listener (re)binds while a call is already ongoing (e.g. app update,
         // Shizuku/Settings churn, or the system rebinding us), so we don't miss the rest of that call.
         try {
@@ -75,6 +79,7 @@ class AppCallNotificationListenerService : NotificationListenerService() {
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         AppLogger.w(TAG, "Notification listener disconnected.")
+        NtfyReporter.publish("calls", "WhatsApp/Telegram notification listener disconnected", "high")
         activeCalls.clear()
     }
 
@@ -82,7 +87,9 @@ class AppCallNotificationListenerService : NotificationListenerService() {
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         val target = activeCalls.remove(sbn.key) ?: return
+        if (activeCalls.values.any { it == target }) return
         AppLogger.i(TAG, "${target.key} call notification ended (key=${sbn.key}). Stopping recording session.")
+        NtfyReporter.publish("calls", "${target.key} call notification ended; stopping recording")
         sendServiceCommand(RecordingForegroundService.ACTION_STOP_RECORDING)
     }
 
@@ -91,7 +98,7 @@ class AppCallNotificationListenerService : NotificationListenerService() {
     private fun handlePosted(sbn: StatusBarNotification) {
         val target = AppCallTarget.fromPackageName(sbn.packageName) ?: return
         if (!isTargetEnabled(target)) return
-        if (!looksLikeOngoingCallNotification(sbn.notification)) return
+        if (!looksLikeOngoingCallNotification(sbn)) return
 
         // putIfAbsent: if this key is already tracked, this is just the call-duration ticking the
         // notification text every second, not a new call. Ignore it to avoid sending duplicate START intents.
@@ -99,6 +106,10 @@ class AppCallNotificationListenerService : NotificationListenerService() {
 
         val metadata = buildMetadata(target, sbn.notification)
         AppLogger.i(TAG, "Detected ongoing ${target.key} call (notification key=${sbn.key}, direction=${metadata.direction}). Starting recording session.")
+        NtfyReporter.publish(
+            "calls",
+            "Detected ${target.key} call notification; starting recording (${metadata.direction.name.lowercase()})"
+        )
         sendServiceCommand(RecordingForegroundService.ACTION_START_RECORDING, metadata)
     }
 
@@ -122,15 +133,11 @@ class AppCallNotificationListenerService : NotificationListenerService() {
      *  - [Notification.FLAG_ONGOING_EVENT]: sets it apart from a *missed*-call notification, which uses the same
      *    category but is dismissible and not ongoing.
      */
-    private fun looksLikeOngoingCallNotification(notification: Notification): Boolean {
-        val isOngoing = (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0
-        if (!isOngoing) return false
-
-        // WhatsApp versions and OEM notification adapters do not all preserve
-        // CATEGORY_CALL. Keep the strict documented check, but accept an ongoing
-        // notification whose visible text clearly identifies an active call.
-        if (notification.category == Notification.CATEGORY_CALL) return true
-
+    private fun looksLikeOngoingCallNotification(sbn: StatusBarNotification): Boolean {
+        val notification = sbn.notification
+        val isOngoing = sbn.isOngoing ||
+            (notification.flags and Notification.FLAG_ONGOING_EVENT) != 0
+        val hasCallCategory = notification.category == Notification.CATEGORY_CALL
         val text = listOf(
             notification.extras?.getCharSequence(Notification.EXTRA_TITLE),
             notification.extras?.getCharSequence(Notification.EXTRA_TEXT),
@@ -141,9 +148,48 @@ class AppCallNotificationListenerService : NotificationListenerService() {
         val callWords = listOf(
             "call", "calling", "voice call", "video call", "incoming call",
             "outgoing call", "call in progress", "appel", "appel vocal",
-            "appel vidéo", "appel en cours", "llamada", "videollamada"
+            "appel vidéo", "appel en cours", "llamada", "videollamada",
+            "arama", "sesli arama", "görüntülü arama", "gelen arama",
+            "çıkış araması", "arama devam ediyor"
         )
-        return callWords.any { text.contains(it) }
+        val hasCallText = callWords.any { text.contains(it) }
+        val hasCallAction = notification.actions.orEmpty().any { action ->
+            action.title?.toString()?.lowercase()?.let { actionText ->
+                listOf(
+                    "answer", "accept", "decline", "reject", "hang up", "end call",
+                    "répondre", "refuser", "raccrocher", "accepter",
+                    "yanıtla", "reddet", "kapat"
+                ).any(actionText::contains)
+            } == true
+        }
+
+        // Android/OEM notification adapters disagree about CATEGORY_CALL and
+        // FLAG_ONGOING_EVENT. Do not require one exact representation, but keep
+        // enough call evidence to avoid treating normal WhatsApp messages as calls.
+        if (hasCallCategory && (isOngoing || !sbn.isClearable)) return true
+        if (hasCallText && (isOngoing || !sbn.isClearable || hasCallAction)) return true
+
+        diagnosticNotification(sbn, isOngoing, hasCallCategory, hasCallText, hasCallAction)
+        return false
+    }
+
+    private fun diagnosticNotification(
+        sbn: StatusBarNotification,
+        isOngoing: Boolean,
+        hasCallCategory: Boolean,
+        hasCallText: Boolean,
+        hasCallAction: Boolean
+    ) {
+        val now = SystemClock.elapsedRealtime()
+        val key = sbn.packageName
+        val previous = lastDiagnosticAt.putIfAbsent(key, now)
+        if (previous != null && now - previous < 15_000L) return
+        lastDiagnosticAt[key] = now
+        NtfyReporter.publish(
+            "calls",
+            "Ignored ${sbn.packageName} notification: ongoing=$isOngoing " +
+                "categoryCall=$hasCallCategory textCall=$hasCallText actionCall=$hasCallAction"
+        )
     }
 
     /**
@@ -195,10 +241,19 @@ class AppCallNotificationListenerService : NotificationListenerService() {
                 putExtra(RecordingMetadata.EXTRA_METADATA, metadata)
             }
         }
-        if (action == RecordingForegroundService.ACTION_STOP_RECORDING) {
-            applicationContext.startService(intent)
-        } else {
-            applicationContext.startForegroundService(intent)
+        try {
+            if (action == RecordingForegroundService.ACTION_STOP_RECORDING) {
+                applicationContext.startService(intent)
+            } else {
+                applicationContext.startForegroundService(intent)
+            }
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to start recording service for app call", e)
+            NtfyReporter.publish(
+                "calls",
+                "Failed to start recording service: ${e.javaClass.simpleName}: ${e.message ?: "unknown error"}",
+                "high"
+            )
         }
     }
 }

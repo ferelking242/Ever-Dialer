@@ -163,12 +163,22 @@ fun AppCallRecordingDialog(
                 AppCallTargetCheckboxRow(
                     label = stringResource(R.string.app_call_target_whatsapp),
                     checked = whatsAppEnabled,
-                    onCheckedChange = onWhatsAppToggle
+                    onCheckedChange = { enabled ->
+                        onWhatsAppToggle(enabled)
+                        if (enabled && !hasNotificationAccess) {
+                            context.openNotificationListenerSettings()
+                        }
+                    }
                 )
                 AppCallTargetCheckboxRow(
                     label = stringResource(R.string.app_call_target_telegram),
                     checked = telegramEnabled,
-                    onCheckedChange = onTelegramToggle
+                    onCheckedChange = { enabled ->
+                        onTelegramToggle(enabled)
+                        if (enabled && !hasNotificationAccess) {
+                            context.openNotificationListenerSettings()
+                        }
+                    }
                 )
             }
         },
